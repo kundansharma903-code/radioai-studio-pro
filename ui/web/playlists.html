@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Playlists — RadioAI Studio Pro</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+/* ── Playlists-specific styles ────────────────────── */
+
+/* Playlist list items */
+.playlist-list{padding:6px 0;flex:1;overflow-y:auto}
+.playlist-list::-webkit-scrollbar{width:6px}
+.playlist-list::-webkit-scrollbar-thumb{background:var(--b2);border-radius:3px}
+.playlist-item{padding:10px 14px;cursor:pointer;border-left:3px solid transparent;transition:background 0.15s}
+.playlist-item:hover{background:rgba(139,92,246,0.06)}
+.playlist-item.active{background:var(--p4);border-left-color:var(--p1)}
+.playlist-name{font-size:12px;font-weight:600;color:var(--t1);margin-bottom:2px}
+.playlist-meta{font-size:10px;color:var(--t3)}
+
+/* Center panel header */
+.center-header{padding:14px 16px 0;display:flex;flex-direction:column;gap:2px}
+.center-title{font-size:16px;font-weight:700}
+.center-subtitle{font-size:11px;color:var(--t3)}
+
+/* Action row */
+.action-row{display:flex;align-items:center;gap:8px;padding:10px 16px;border-bottom:1px solid var(--b1);flex-wrap:wrap}
+.action-btn{padding:5px 12px;border-radius:var(--radius);font-family:'Inter',sans-serif;font-size:11px;font-weight:600;cursor:pointer;border:1px solid var(--b1);background:var(--card);color:var(--t2);display:flex;align-items:center;gap:5px;white-space:nowrap;transition:background 0.15s}
+.action-btn:hover{background:var(--card2)}
+.action-btn-green{background:var(--gn);color:#fff;border-color:var(--gn)}
+.action-btn-green:hover{opacity:0.85}
+.action-btn-cyan{color:var(--cy);border-color:var(--cy);background:transparent}
+.action-btn-cyan:hover{background:var(--cyD)}
+.action-btn-red{color:var(--rs);border-color:transparent;background:transparent}
+.action-btn-red:hover{background:var(--rsD)}
+.action-btn-purple{color:var(--p2);border-color:var(--p1);background:transparent}
+.action-btn-purple:hover{background:var(--p4)}
+
+/* Star cell */
+.star-cell{color:var(--am);font-size:13px;text-align:center}
+.star-cell.empty{color:var(--t4)}
+
+/* More songs row */
+.more-songs{padding:12px 16px;text-align:center;font-size:12px;color:var(--t3);border-top:1px solid var(--b1)}
+
+/* ── Right panel settings ─────────────────────────── */
+.rp-title{font-size:13px;font-weight:700;padding:12px 14px;border-bottom:1px solid var(--b1);text-transform:uppercase;letter-spacing:1px;color:var(--t2)}
+
+.field-group{margin-bottom:10px}
+.field-label{font-size:9px;color:var(--t3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px}
+.field-input{width:100%;padding:6px 10px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);color:var(--t1);font-size:12px;font-family:'Inter',sans-serif}
+.field-input:focus{outline:none;border-color:var(--p1)}
+.field-select{width:100%;padding:6px 10px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);color:var(--t1);font-size:12px;font-family:'Inter',sans-serif;appearance:none;cursor:pointer}
+.field-select:focus{outline:none;border-color:var(--p1)}
+.field-textarea{width:100%;padding:6px 10px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);color:var(--t1);font-size:12px;font-family:'Inter',sans-serif;resize:vertical;min-height:48px}
+.field-textarea:focus{outline:none;border-color:var(--p1)}
+
+/* Override toggle */
+.override-row{display:flex;align-items:center;justify-content:space-between;padding:8px 0}
+.override-label{font-size:11px;color:var(--t2)}
+.override-value{font-size:11px;font-weight:600;color:var(--gn)}
+
+/* AI insight */
+.ai-insight{background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);padding:10px 12px;margin-bottom:10px;display:flex;gap:8px;align-items:flex-start}
+.ai-dot{width:8px;height:8px;border-radius:50%;background:var(--p1);flex-shrink:0;margin-top:3px}
+.ai-text{font-size:11px;color:var(--t2);line-height:1.5}
+.ai-text b{color:var(--p2);font-weight:600}
+.ai-info{font-size:10px;color:var(--t3);margin-top:4px}
+
+/* Save button */
+.save-btn{display:block;width:100%;padding:10px;background:var(--gn);color:#fff;border:none;border-radius:var(--radius);font-family:'Inter',sans-serif;font-size:12px;font-weight:600;cursor:pointer;margin-top:12px}
+.save-btn:hover{opacity:0.85}
+
+/* Schedule section divider */
+.section-divider{font-size:9px;font-weight:600;color:var(--t3);letter-spacing:1.5px;text-transform:uppercase;margin:14px 0 8px;padding-top:10px;border-top:1px solid var(--b1)}
+
+/* Row number */
+.row-num{font-family:'Roboto Mono',monospace;font-size:11px;color:var(--t3);text-align:center;width:32px}
+</style>
+</head>
+<body>
+
+<!-- ═══ HEADER ═══════════════════════════════════════ -->
+<header class="header">
+  <div class="logo" onclick="goBack()">
+    <div class="logo-icon">R</div>
+    <div class="logo-text">
+      <div class="logo-title">RadioAI</div>
+      <div class="logo-sub">STUDIO PRO</div>
+    </div>
+  </div>
+
+  <nav class="breadcrumb">
+    <a onclick="goBack()">Control Panel</a>
+    <span class="bc-sep">/</span>
+    <a onclick="goToScheduling()">Scheduling</a>
+    <span class="bc-sep">/</span>
+    <span class="active">Playlists</span>
+  </nav>
+
+  <div class="page-title-area">
+    <div class="page-title">Playlists</div>
+    <div class="page-subtitle">RadioAI Studio &bull; <span class="station-name">KISS FM 91.5</span> &bull; <span class="station-loc">Jaipur</span></div>
+  </div>
+
+  <div class="header-spacer"></div>
+
+  <div style="text-align:right">
+    <div class="clock-time" id="clockTime">21:34:18</div>
+    <div class="clock-date" id="clockDate">Tue, 08 Apr 2026</div>
+  </div>
+
+  <div class="station-box">
+    <div class="station-label">ON AIR</div>
+    <div class="station-name">KISS FM 91.5</div>
+    <div class="station-loc">Jaipur, Rajasthan</div>
+  </div>
+
+  <button class="open-studio-btn">Open Studio</button>
+</header>
+
+<!-- ═══ MAIN 3-COLUMN LAYOUT ════════════════════════ -->
+<div class="main">
+
+  <!-- ── LEFT PANEL ─────────────────────────────────── -->
+  <aside class="left-panel">
+    <div class="lp-header">
+      <div class="lp-count"><b>5</b> Playlists</div>
+      <button class="lp-btn lp-btn-green">+ New Playlist</button>
+    </div>
+
+    <div class="playlist-list" id="playlistList">
+      <!-- Populated by JS -->
+    </div>
+
+    <div class="lp-actions">
+      <button class="lp-action-btn" style="background:var(--tl);color:#fff;border:none">Edit</button>
+      <button class="lp-action-btn" style="background:var(--p1);color:#fff;border:none">Duplicate</button>
+      <button class="lp-action-btn" style="background:transparent;color:var(--rs);border:1px solid var(--b1)">Delete</button>
+      <button class="lp-action-btn" style="background:var(--gn);color:#fff;border:none">Export</button>
+    </div>
+  </aside>
+
+  <!-- ── CENTER PANEL ───────────────────────────────── -->
+  <section class="center-panel">
+    <div class="center-header">
+      <div class="center-title" id="centerTitle">Top 30 Countdown</div>
+      <div class="center-subtitle" id="centerSubtitle">30 songs &bull; Ordered playback &bull; Sun 19:00 &bull; Duration: 1h 54min</div>
+    </div>
+
+    <div class="action-row">
+      <button class="action-btn action-btn-green">+ Add Songs</button>
+      <button class="action-btn action-btn-cyan">Move Up</button>
+      <button class="action-btn action-btn-cyan">Move Down</button>
+      <button class="action-btn action-btn-red">&times; Remove</button>
+      <button class="action-btn action-btn-purple">Shuffle Order</button>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:32px;text-align:center">#</th>
+            <th>Artist</th>
+            <th>Title</th>
+            <th style="text-align:right">Duration</th>
+            <th>Category</th>
+            <th style="width:32px;text-align:center"></th>
+          </tr>
+        </thead>
+        <tbody id="songTableBody">
+          <!-- Populated by JS -->
+        </tbody>
+      </table>
+      <div class="more-songs" id="moreSongs">...20 more songs</div>
+    </div>
+
+    <!-- Playback bar -->
+    <div class="playback-bar">
+      <button class="play-btn">&#9654;</button>
+      <div class="playback-info">
+        <div class="playback-title" id="pbTitle">Amy Winehouse — You Know I'm No Good</div>
+        <div class="playback-sub" id="pbSub">Preview &bull; Top 30 Countdown</div>
+      </div>
+      <div class="progress-bar">
+        <div class="progress-fill" style="width:35%"></div>
+      </div>
+      <div class="playback-time">1:18 / 3:45</div>
+    </div>
+  </section>
+
+  <!-- ── RIGHT PANEL ────────────────────────────────── -->
+  <aside class="right-panel">
+    <div class="rp-title">Playlist Settings</div>
+    <div class="rp-content" id="rpContent">
+
+      <div class="field-group">
+        <div class="field-label">Playlist Name</div>
+        <input class="field-input" type="text" value="Top 30 Countdown" id="fieldName">
+      </div>
+
+      <div class="field-group">
+        <div class="field-label">Description</div>
+        <textarea class="field-textarea" id="fieldDesc">Weekly countdown of the top 30 most requested songs</textarea>
+      </div>
+
+      <div class="field-group">
+        <div class="field-label">Playback Mode</div>
+        <select class="field-select" id="fieldPlayback">
+          <option selected>Ordered 1&#8594;30</option>
+          <option>Shuffle</option>
+          <option>Random</option>
+        </select>
+      </div>
+
+      <div class="field-group">
+        <div class="field-label">Repeat Mode</div>
+        <select class="field-select" id="fieldRepeat">
+          <option selected>Play Once</option>
+          <option>Loop</option>
+          <option>Loop with Shuffle</option>
+        </select>
+      </div>
+
+      <div class="field-group">
+        <div class="field-label">On Finish</div>
+        <select class="field-select" id="fieldOnFinish">
+          <option selected>Return to Clock Schedule</option>
+          <option>Stop Playback</option>
+          <option>Play Next Playlist</option>
+        </select>
+      </div>
+
+      <div class="field-group">
+        <div class="field-label">Crossfade</div>
+        <select class="field-select" id="fieldCrossfade">
+          <option>0 seconds</option>
+          <option>1 second</option>
+          <option>2 seconds</option>
+          <option selected>3 seconds</option>
+          <option>4 seconds</option>
+          <option>5 seconds</option>
+        </select>
+      </div>
+
+      <div class="field-group">
+        <div class="field-label">Volume Offset</div>
+        <select class="field-select" id="fieldVolume">
+          <option>-6 dB</option>
+          <option>-3 dB</option>
+          <option selected>0 dB Normal</option>
+          <option>+3 dB</option>
+          <option>+6 dB</option>
+        </select>
+      </div>
+
+      <!-- Schedule section -->
+      <div class="section-divider">Schedule</div>
+
+      <div class="field-group">
+        <div class="field-label">Schedule Type</div>
+        <select class="field-select" id="fieldSchedType">
+          <option selected>Specific Day &amp; Time</option>
+          <option>Daily</option>
+          <option>Weekly Recurring</option>
+          <option>Manual Only</option>
+        </select>
+      </div>
+
+      <div class="field-group">
+        <div class="field-label">Day</div>
+        <select class="field-select" id="fieldDay">
+          <option>Monday</option>
+          <option>Tuesday</option>
+          <option>Wednesday</option>
+          <option>Thursday</option>
+          <option>Friday</option>
+          <option>Saturday</option>
+          <option selected>Sunday</option>
+        </select>
+      </div>
+
+      <div class="field-group">
+        <div class="field-label">Time</div>
+        <input class="field-input" type="time" value="19:00" id="fieldTime">
+      </div>
+
+      <div class="override-row">
+        <span class="override-label">Override active clock?</span>
+        <span class="override-value">Yes &mdash; playlist takes priority</span>
+      </div>
+
+      <!-- AI Insight -->
+      <div class="section-divider">AI Insight</div>
+
+      <div class="ai-insight">
+        <div class="ai-dot"></div>
+        <div>
+          <div class="ai-text">Last Sunday &mdash; <b>94% listener retention</b> during this playlist</div>
+          <div class="ai-info">Best performance 19:00&ndash;19:30 slot</div>
+        </div>
+      </div>
+
+      <button class="save-btn">Save Playlist Settings</button>
+    </div>
+  </aside>
+
+</div>
+
+<!-- ═══ STATUS BAR ══════════════════════════════════ -->
+<footer class="status-bar">
+  <div class="status-indicator">
+    <span class="status-dot" style="background:var(--gn)"></span>
+    AUTO MODE
+  </div>
+  <div class="status-indicator">
+    <span class="status-dot" style="background:var(--p1)"></span>
+    5 Playlists
+  </div>
+  <div class="status-indicator">
+    <span class="status-dot" style="background:var(--gn)"></span>
+    AI Active
+  </div>
+  <div class="status-spacer"></div>
+  <div class="status-info">RadioAI Studio Pro v1.0</div>
+</footer>
+
+<!-- ═══ JAVASCRIPT ══════════════════════════════════ -->
+<script>
+/* ── Navigation ─────────────────────────────────── */
+function goBack(){ window.location.href='control_panel.html'; }
+function goToScheduling(){ window.location.href='control_panel.html#scheduling'; }
+
+/* ── Clock ──────────────────────────────────────── */
+function updateClock(){
+  const now=new Date();
+  const h=String(now.getHours()).padStart(2,'0');
+  const m=String(now.getMinutes()).padStart(2,'0');
+  const s=String(now.getSeconds()).padStart(2,'0');
+  document.getElementById('clockTime').textContent=h+':'+m+':'+s;
+  const days=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  document.getElementById('clockDate').textContent=days[now.getDay()]+', '+String(now.getDate()).padStart(2,'0')+' '+months[now.getMonth()]+' '+now.getFullYear();
+}
+updateClock();
+setInterval(updateClock,1000);
+
+/* ── Seed data ──────────────────────────────────── */
+const playlists=[
+  {id:1,name:'Top 30 Countdown',songs:30,mode:'Ordered',schedule:'Sun 19:00',duration:'1h 54min'},
+  {id:2,name:'Breakfast Best Hits',songs:18,mode:'Shuffle',schedule:'Mon-Fri 07:00',duration:'1h 02min'},
+  {id:3,name:'Late Night Classics',songs:24,mode:'Shuffle',schedule:'Sat 23:00',duration:'1h 28min'},
+  {id:4,name:'Weekend Vibes',songs:15,mode:'Ordered',schedule:'Sat 14:00',duration:'52min'},
+  {id:5,name:'Diwali Special',songs:20,mode:'Ordered',schedule:'Nov 01 18:00',duration:'1h 12min'}
+];
+
+const songs=[
+  {num:1,artist:'Amy Winehouse',title:"You Know I'm No Good",dur:'3:45',cat:'Hot Curr',catColor:'var(--rs)',star:false},
+  {num:2,artist:'Billie Eilish',title:'Bury a Friend',dur:'3:26',cat:'Hot Curr',catColor:'var(--rs)',star:false},
+  {num:3,artist:'Harry Styles',title:'As It Was',dur:'2:37',cat:'Hot Curr',catColor:'var(--rs)',star:false},
+  {num:4,artist:'Drake',title:"God's Plan",dur:'3:18',cat:'Hot Curr',catColor:'var(--rs)',star:false},
+  {num:5,artist:'Coldplay',title:'Clocks',dur:'5:07',cat:'Classics',catColor:'var(--am)',star:true},
+  {num:6,artist:'Bangles',title:'Walk Like An Egyptian',dur:'3:58',cat:'Classics',catColor:'var(--am)',star:false},
+  {num:7,artist:'Rick Astley',title:'Never Gonna Give You Up',dur:'3:33',cat:'Classics',catColor:'var(--am)',star:false},
+  {num:8,artist:'Eagle Eye Cherry',title:'Save Tonight',dur:'3:56',cat:'Classics',catColor:'var(--am)',star:false},
+  {num:9,artist:'Kylie Minogue',title:'Step Back In Time',dur:'3:46',cat:'Classics',catColor:'var(--am)',star:false},
+  {num:10,artist:'Britney Spears',title:'You Drive Me Crazy',dur:'3:14',cat:'Pop',catColor:'var(--p1)',star:false}
+];
+
+let selectedPlaylist=0;
+let selectedSong=0;
+
+/* ── Render playlist list ───────────────────────── */
+function renderPlaylists(){
+  const el=document.getElementById('playlistList');
+  el.innerHTML='';
+  playlists.forEach((p,i)=>{
+    const div=document.createElement('div');
+    div.className='playlist-item'+(i===selectedPlaylist?' active':'');
+    div.innerHTML='<div class="playlist-name">'+p.name+'</div><div class="playlist-meta">'+p.songs+' songs &bull; '+p.mode+'</div>';
+    div.onclick=()=>{
+      selectedPlaylist=i;
+      renderPlaylists();
+      updateCenter(p);
+    };
+    el.appendChild(div);
+  });
+}
+
+/* ── Update center panel ────────────────────────── */
+function updateCenter(p){
+  document.getElementById('centerTitle').textContent=p.name;
+  document.getElementById('centerSubtitle').textContent=p.songs+' songs \u2022 '+p.mode+' playback \u2022 '+p.schedule+' \u2022 Duration: '+p.duration;
+  document.getElementById('moreSongs').textContent='...'+(p.songs-10)+' more songs';
+}
+
+/* ── Render song table ──────────────────────────── */
+function renderSongs(){
+  const tbody=document.getElementById('songTableBody');
+  tbody.innerHTML='';
+  songs.forEach((s,i)=>{
+    const tr=document.createElement('tr');
+    if(i===selectedSong) tr.className='selected';
+    const starHtml=s.star?'<span class="star-cell">\u2605</span>':'<span class="star-cell empty">\u2606</span>';
+
+    let badgeBg='rgba(139,92,246,0.15)';
+    let badgeColor='var(--p2)';
+    if(s.cat==='Hot Curr'){badgeBg='rgba(244,63,94,0.15)';badgeColor='var(--rs)';}
+    else if(s.cat==='Classics'){badgeBg='rgba(245,158,11,0.15)';badgeColor='var(--am)';}
+
+    tr.innerHTML=
+      '<td class="row-num">'+s.num+'</td>'+
+      '<td style="font-weight:600">'+s.artist+'</td>'+
+      '<td style="color:var(--t2)">'+s.title+'</td>'+
+      '<td class="dur-cell">'+s.dur+'</td>'+
+      '<td><span class="cat-badge" style="background:'+badgeBg+';color:'+badgeColor+'">'+s.cat+'</span></td>'+
+      '<td>'+starHtml+'</td>';
+    tr.onclick=()=>{
+      selectedSong=i;
+      renderSongs();
+      document.getElementById('pbTitle').textContent=s.artist+' \u2014 '+s.title;
+    };
+    tbody.appendChild(tr);
+  });
+}
+
+/* ── Init ────────────────────────────────────────── */
+renderPlaylists();
+renderSongs();
+</script>
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script src="js/bridge_helper.js"></script>
+</body>
+</html>

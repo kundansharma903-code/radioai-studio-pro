@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Weather &amp; API &mdash; RadioAI Studio Pro</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+/* ── Weather & API overrides ───────────────────── */
+.breadcrumb .active{color:var(--tl);font-weight:600}
+
+/* Two-column layout */
+.main{display:flex;overflow:hidden}
+.col-left{flex:1;min-width:0;overflow-y:auto;padding:24px 28px;border-right:1px solid var(--b1)}
+.col-left::-webkit-scrollbar{width:6px}
+.col-left::-webkit-scrollbar-thumb{background:var(--b2);border-radius:3px}
+.col-right{flex:1;min-width:0;overflow-y:auto;padding:24px 28px}
+.col-right::-webkit-scrollbar{width:6px}
+.col-right::-webkit-scrollbar-thumb{background:var(--b2);border-radius:3px}
+
+/* Section titles */
+.section-title{font-size:16px;font-weight:700;color:var(--t1);margin-bottom:4px}
+.section-subtitle{font-size:12px;color:var(--t3);margin-bottom:24px;line-height:1.5}
+
+/* Config sections */
+.config-section{margin-bottom:24px;padding-left:14px;border-left:3px solid var(--tl)}
+.config-section.purple{border-left-color:var(--p1)}
+.config-section.green{border-left-color:var(--gn)}
+.config-section.amber{border-left-color:var(--am)}
+.config-section.rose{border-left-color:var(--rs)}
+.config-section-title{font-size:11px;font-weight:700;color:var(--tl);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:14px}
+.config-section.purple .config-section-title{color:var(--p1)}
+
+/* Radio options (horizontal) */
+.radio-options{display:flex;flex-direction:column;gap:6px;margin-bottom:12px}
+.radio-option{display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);cursor:pointer;transition:border-color 0.15s}
+.radio-option:hover{border-color:var(--b2)}
+.radio-option.selected{border-color:var(--gn);background:var(--gnD)}
+.radio-circle{width:14px;height:14px;border-radius:50%;border:2px solid var(--b2);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.radio-circle .dot{width:6px;height:6px;border-radius:50%;background:var(--gn);display:none}
+.radio-option.selected .radio-circle{border-color:var(--gn)}
+.radio-option.selected .radio-circle .dot{display:block}
+.radio-label{font-size:12px;font-weight:600;color:var(--t1)}
+
+/* Form fields */
+.form-row{margin-bottom:14px}
+.form-label{font-size:10px;font-weight:600;color:var(--t3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:5px}
+.form-input-row{display:flex;gap:8px;align-items:center}
+.form-input{flex:1;padding:8px 12px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);color:var(--t1);font-size:13px;font-family:'Inter',sans-serif}
+.form-input:focus{outline:none;border-color:var(--tl)}
+.form-select{flex:1;padding:8px 12px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);color:var(--t1);font-size:13px;font-family:'Inter',sans-serif;appearance:none;cursor:pointer}
+.form-select:focus{outline:none;border-color:var(--p1)}
+.test-btn{padding:7px 14px;background:var(--tl);color:#fff;border:none;border-radius:var(--radius);font-family:'Inter',sans-serif;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;display:flex;align-items:center;gap:4px}
+.test-btn:hover{opacity:0.85}
+
+/* Weather card */
+.weather-card{background:var(--card);border:1px solid var(--b1);border-radius:var(--radius-lg);padding:16px 18px;margin-bottom:16px;position:relative}
+.weather-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.weather-title{font-size:13px;font-weight:700;color:var(--t1)}
+.weather-live{font-size:9px;font-weight:700;padding:3px 10px;border-radius:6px;background:var(--gnD);color:var(--gn);letter-spacing:0.5px}
+.weather-main{display:flex;align-items:center;gap:14px;margin-bottom:12px}
+.weather-icon{font-size:36px}
+.weather-temp{font-family:'Roboto Mono',monospace;font-size:32px;font-weight:700;color:var(--t1)}
+.weather-condition{font-size:14px;color:var(--t2);font-weight:500}
+.weather-city{font-size:12px;color:var(--t3)}
+.weather-details{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid var(--b1)}
+.weather-detail{text-align:center}
+.weather-detail-value{font-family:'Roboto Mono',monospace;font-size:12px;font-weight:600;color:var(--t1)}
+.weather-detail-label{font-size:9px;color:var(--t3);text-transform:uppercase;letter-spacing:0.5px}
+
+/* Action buttons */
+.action-btns{display:flex;gap:10px;margin-top:16px}
+.action-btn{padding:10px 18px;border:none;border-radius:var(--radius);font-family:'Inter',sans-serif;font-size:12px;font-weight:600;cursor:pointer}
+.action-btn.teal{background:var(--tl);color:#fff}
+.action-btn.teal:hover{opacity:0.85}
+.action-btn.green{background:var(--gn);color:#fff}
+.action-btn.green:hover{opacity:0.85}
+.save-btn{width:100%;padding:12px;background:var(--gn);color:#fff;border:none;border-radius:var(--radius);font-family:'Inter',sans-serif;font-size:14px;font-weight:700;cursor:pointer;margin-top:16px;letter-spacing:0.3px}
+.save-btn:hover{opacity:0.85}
+
+/* ── Right column — Claude API ─────────────────── */
+/* API status */
+.api-status{display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);margin-bottom:14px}
+.api-dot{width:8px;height:8px;border-radius:50%;background:var(--gn);flex-shrink:0;animation:pulse 2s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+.api-text{font-size:12px;color:var(--gn);font-weight:600}
+.api-model{font-size:11px;color:var(--t2);font-weight:400}
+
+/* Stats row */
+.stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:16px 0}
+.stat-box{background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);padding:12px 10px;text-align:center}
+.stat-value{font-family:'Roboto Mono',monospace;font-size:18px;font-weight:700;margin-bottom:2px}
+.stat-label{font-size:9px;color:var(--t3);text-transform:uppercase;letter-spacing:0.5px}
+.stat-value.purple{color:var(--p1)}
+.stat-value.cyan{color:var(--cy)}
+.stat-value.green{color:var(--gn)}
+.stat-value.amber{color:var(--am)}
+
+/* Feature items */
+.feature-list{margin-bottom:12px}
+.feature-item{display:flex;align-items:center;gap:10px;padding:8px 0;padding-left:12px;margin-bottom:6px}
+.feature-item.green-border{border-left:3px solid var(--gn)}
+.feature-item.purple-border{border-left:3px solid var(--p1)}
+.feature-item.amber-border{border-left:3px solid var(--am)}
+.feature-item.rose-border{border-left:3px solid var(--rs)}
+.feature-name{font-size:12px;font-weight:600;color:var(--t1)}
+.feature-desc{font-size:10px;color:var(--t3)}
+
+/* Note */
+.note-text{font-size:11px;color:var(--t3);font-style:italic;margin:12px 0 16px;line-height:1.5}
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="header">
+  <div class="logo" onclick="goBack()">
+    <div class="logo-icon">((&#9679;))</div>
+    <div class="logo-text"><div class="logo-title">RadioAI</div><div class="logo-sub">STUDIO PRO</div></div>
+  </div>
+  <div class="breadcrumb">
+    <a onclick="goBack()">Control Panel</a><span class="bc-sep">&gt;</span>
+    <a onclick="goToSettings()">Settings</a><span class="bc-sep">&gt;</span>
+    <span class="active">Weather &amp; API</span>
+  </div>
+  <div class="page-title-area">
+    <div class="page-title">Weather &amp; API</div>
+    <div class="page-subtitle">External data feeds &mdash; weather service and Claude AI API configuration</div>
+  </div>
+  <div class="header-spacer"></div>
+  <div style="display:flex;flex-direction:column;align-items:center;gap:1px">
+    <div class="clock-time" id="clock-time">00:00:00</div>
+    <div class="clock-date" id="clock-date"></div>
+  </div>
+  <div class="station-box">
+    <div class="station-label">ACTIVE STATION</div>
+    <div class="station-name">KISS FM 91.5</div>
+    <div class="station-loc">Jaipur, Rajasthan</div>
+  </div>
+  <button class="open-studio-btn" onclick="openStudio()">&#9654; Open Studio</button>
+</div>
+
+<!-- MAIN 2-COLUMN LAYOUT -->
+<div class="main">
+
+  <!-- LEFT COLUMN — Weather Service -->
+  <div class="col-left">
+    <div class="section-title">Weather &amp; Location</div>
+    <div class="section-subtitle">Configure the weather data source for on-air weather updates</div>
+
+    <!-- WEATHER SERVICE -->
+    <div class="config-section">
+      <div class="config-section-title">Weather Service</div>
+
+      <div class="form-row">
+        <div class="form-label">Provider</div>
+        <div class="radio-options">
+          <div class="radio-option selected" onclick="selectProvider(this)">
+            <div class="radio-circle"><div class="dot"></div></div>
+            <div class="radio-label">OpenWeatherMap</div>
+          </div>
+          <div class="radio-option" onclick="selectProvider(this)">
+            <div class="radio-circle"><div class="dot"></div></div>
+            <div class="radio-label">AccuWeather</div>
+          </div>
+          <div class="radio-option" onclick="selectProvider(this)">
+            <div class="radio-circle"><div class="dot"></div></div>
+            <div class="radio-label">WeatherAPI.com</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">API Key</div>
+        <div class="form-input-row">
+          <input class="form-input" type="password" id="weather-key" value="sk-weather-xxxxx" style="font-family:'Roboto Mono',monospace">
+          <button class="test-btn" onclick="testField(this)">Test &#9654;</button>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">Station City</div>
+        <div class="form-input-row">
+          <input class="form-input" type="text" value="Jaipur, Rajasthan, IN">
+          <button class="test-btn" onclick="testField(this)">Test &#9654;</button>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">Latitude</div>
+        <div class="form-input-row">
+          <input class="form-input" type="text" value="26.9124&deg; N" style="font-family:'Roboto Mono',monospace">
+          <button class="test-btn" onclick="testField(this)">Test &#9654;</button>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">Longitude</div>
+        <div class="form-input-row">
+          <input class="form-input" type="text" value="75.7873&deg; E" style="font-family:'Roboto Mono',monospace">
+          <button class="test-btn" onclick="testField(this)">Test &#9654;</button>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">Update Interval</div>
+        <input class="form-input" type="text" value="Every 30 minutes" readonly style="color:var(--t2)">
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">Display Format</div>
+        <input class="form-input" type="text" value="{temp}&deg;C, {condition} &mdash; {city}" style="font-family:'Roboto Mono',monospace;font-size:12px">
+      </div>
+    </div>
+
+    <!-- LIVE WEATHER -->
+    <div class="config-section green">
+      <div class="config-section-title">Live Weather &mdash; Right Now</div>
+
+      <div class="weather-card">
+        <div class="weather-header">
+          <div class="weather-title">Current Conditions</div>
+          <div class="weather-live">Live</div>
+        </div>
+        <div class="weather-main">
+          <div class="weather-icon">&#9728;</div>
+          <div>
+            <div class="weather-temp">38&deg;C</div>
+            <div class="weather-condition">Partly Cloudy</div>
+            <div class="weather-city">Jaipur, Rajasthan, India</div>
+          </div>
+        </div>
+        <div class="weather-details">
+          <div class="weather-detail">
+            <div class="weather-detail-value">22%</div>
+            <div class="weather-detail-label">Humidity</div>
+          </div>
+          <div class="weather-detail">
+            <div class="weather-detail-value">12 km/h</div>
+            <div class="weather-detail-label">Wind</div>
+          </div>
+          <div class="weather-detail">
+            <div class="weather-detail-value">42&deg;C</div>
+            <div class="weather-detail-label">Feels Like</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="action-btns">
+        <button class="action-btn teal" onclick="fetchWeather()">Fetch Weather Now</button>
+        <button class="action-btn green" onclick="saveWeatherConfig()">Save Weather Config</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT COLUMN — Claude AI API -->
+  <div class="col-right">
+    <div class="section-title">AI &amp; API Configuration</div>
+    <div class="section-subtitle">Claude AI integration and API usage monitoring</div>
+
+    <!-- CLAUDE AI API -->
+    <div class="config-section purple">
+      <div class="config-section-title">Claude AI API &mdash; Anthropic</div>
+
+      <div class="api-status">
+        <span class="api-dot"></span>
+        <span class="api-text">CONNECTED</span>
+        <span class="api-model">&bull; claude-sonnet-4-20250514</span>
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">API Key</div>
+        <input class="form-input" type="password" value="sk-ant-xxxxxxxxxxxxx" style="font-family:'Roboto Mono',monospace">
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">Model</div>
+        <select class="form-select">
+          <option selected>claude-sonnet-4-20250514 (Recommended)</option>
+          <option>claude-opus-4-20250514</option>
+          <option>claude-haiku-4-20250514</option>
+        </select>
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">Max Tokens per Request</div>
+        <input class="form-input" type="text" value="1000" style="font-family:'Roboto Mono',monospace">
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">Request Timeout</div>
+        <input class="form-input" type="text" value="30 seconds" readonly style="color:var(--t2)">
+      </div>
+    </div>
+
+    <!-- AI USAGE TODAY -->
+    <div style="font-size:11px;font-weight:700;color:var(--t3);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:10px">AI Usage Today</div>
+    <div class="stats-row">
+      <div class="stat-box">
+        <div class="stat-value purple">47</div>
+        <div class="stat-label">API Calls</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value cyan">4,820</div>
+        <div class="stat-label">Tokens Used</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value green">1.2s</div>
+        <div class="stat-label">Avg Response</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value amber">0</div>
+        <div class="stat-label">Errors</div>
+      </div>
+    </div>
+
+    <!-- WHICH FEATURES USE CLAUDE API -->
+    <div style="font-size:11px;font-weight:700;color:var(--t3);letter-spacing:1.5px;text-transform:uppercase;margin:20px 0 12px">Which Features Use Claude API</div>
+    <div class="feature-list">
+      <div class="feature-item green-border">
+        <div>
+          <div class="feature-name">Metadata Auto-fill</div>
+          <div class="feature-desc">Genre detection and missing tag completion via AI</div>
+        </div>
+      </div>
+      <div class="feature-item purple-border">
+        <div>
+          <div class="feature-name">Smart Clock Builder</div>
+          <div class="feature-desc">AI-optimized hourly clock generation based on library health</div>
+        </div>
+      </div>
+      <div class="feature-item amber-border">
+        <div>
+          <div class="feature-name">Autonomous Log Generation</div>
+          <div class="feature-desc">Full daily log creation with intelligent song selection</div>
+        </div>
+      </div>
+      <div class="feature-item rose-border">
+        <div>
+          <div class="feature-name">Break Conflict Resolution</div>
+          <div class="feature-desc">AI-assisted scheduling conflict detection and resolution</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="note-text">All other AI functions use local algorithms &mdash; no API needed.</div>
+
+    <button class="save-btn" onclick="saveApiConfig()">Save API Configuration</button>
+  </div>
+
+</div>
+
+<!-- STATUS BAR -->
+<div class="status-bar">
+  <span class="status-indicator"><span class="status-dot" style="background:var(--p1)"></span> AUTO MODE</span>
+  <span class="status-indicator"><span class="status-dot" style="background:var(--gn)"></span> Weather: Live</span>
+  <span class="status-indicator"><span class="status-dot" style="background:var(--gn)"></span> Claude API: OK</span>
+  <span class="status-spacer"></span>
+  <span class="status-info">47 API calls today</span>
+</div>
+
+<script>
+// ── Bridge ──────────────────────────────────────
+var bridge = window.radioBridge || null;
+
+function goBack(){ window.location.href='control_panel.html'; }
+function goToSettings(){ window.location.href='control_panel.html#settings'; }
+function openStudio(){ if(bridge){ try { navigateTo('studio_screen'); } catch(e){} } }
+
+// ── Clock ───────────────────────────────────────
+function updateClock(){
+  var now = new Date();
+  var hh = String(now.getHours()).padStart(2,'0');
+  var mm = String(now.getMinutes()).padStart(2,'0');
+  var ss = String(now.getSeconds()).padStart(2,'0');
+  document.getElementById('clock-time').textContent = hh+':'+mm+':'+ss;
+  var days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  var months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  document.getElementById('clock-date').textContent = days[now.getDay()]+', '+now.getDate()+' '+months[now.getMonth()]+' '+now.getFullYear();
+}
+
+// ── Weather Provider Selection ──────────────────
+function selectProvider(el){
+  document.querySelectorAll('.radio-option').forEach(function(opt){ opt.classList.remove('selected'); });
+  el.classList.add('selected');
+}
+
+// ── Test Button ─────────────────────────────────
+function testField(btn){
+  var origText = btn.innerHTML;
+  btn.innerHTML = 'OK &#10003;';
+  btn.style.background = 'var(--gn)';
+  setTimeout(function(){
+    btn.innerHTML = origText;
+    btn.style.background = '';
+  }, 1500);
+}
+
+// ── Fetch Weather ───────────────────────────────
+function fetchWeather(){
+  var btn = event.target;
+  var orig = btn.textContent;
+  btn.textContent = 'Fetching...';
+  btn.style.opacity = '0.7';
+  setTimeout(function(){
+    btn.textContent = 'Updated!';
+    btn.style.opacity = '1';
+    btn.style.background = 'var(--gn)';
+    setTimeout(function(){
+      btn.textContent = orig;
+      btn.style.background = '';
+    }, 1500);
+  }, 1000);
+}
+
+// ── Save Configs ────────────────────────────────
+function saveWeatherConfig(){
+  var btn = event.target;
+  var orig = btn.textContent;
+  btn.textContent = 'Saved!';
+  setTimeout(function(){ btn.textContent = orig; }, 1500);
+}
+
+function saveApiConfig(){
+  var btn = document.querySelector('.save-btn');
+  var orig = btn.textContent;
+  btn.textContent = 'Saved Successfully!';
+  btn.style.background = 'var(--tl)';
+  setTimeout(function(){
+    btn.textContent = orig;
+    btn.style.background = '';
+  }, 2000);
+}
+
+// ── Init ────────────────────────────────────────
+function init(){
+  updateClock();
+  setInterval(updateClock, 1000);
+}
+document.addEventListener('DOMContentLoaded', init);
+</script>
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script src="js/bridge_helper.js"></script>
+</body>
+</html>

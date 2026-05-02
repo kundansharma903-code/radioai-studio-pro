@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Database Settings &mdash; RadioAI Studio Pro</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+/* ── Database Settings overrides ───────────────── */
+.breadcrumb .active{color:var(--tl);font-weight:600}
+
+/* Two-column layout */
+.main{display:flex;overflow:hidden}
+.col-left{flex:1;min-width:0;overflow-y:auto;padding:24px 28px;border-right:1px solid var(--b1)}
+.col-left::-webkit-scrollbar{width:6px}
+.col-left::-webkit-scrollbar-thumb{background:var(--b2);border-radius:3px}
+.col-right{flex:1;min-width:0;overflow-y:auto;padding:24px 28px}
+.col-right::-webkit-scrollbar{width:6px}
+.col-right::-webkit-scrollbar-thumb{background:var(--b2);border-radius:3px}
+
+/* Section titles */
+.section-title{font-size:16px;font-weight:700;color:var(--t1);margin-bottom:4px}
+.section-subtitle{font-size:12px;color:var(--t3);margin-bottom:24px;line-height:1.5}
+
+/* Config sections */
+.config-section{margin-bottom:24px;padding-left:14px;border-left:3px solid var(--tl)}
+.config-section.green{border-left-color:var(--gn)}
+.config-section.cyan{border-left-color:var(--cy)}
+.config-section-title{font-size:11px;font-weight:700;color:var(--tl);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:14px}
+.config-section.green .config-section-title{color:var(--gn)}
+.config-section.cyan .config-section-title{color:var(--cy)}
+
+/* Radio options */
+.radio-options{display:flex;flex-direction:column;gap:8px;margin-bottom:8px}
+.radio-option{display:flex;align-items:center;gap:10px;padding:12px 14px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);cursor:pointer;transition:border-color 0.15s}
+.radio-option:hover{border-color:var(--b2)}
+.radio-option.selected{border-color:var(--gn);background:var(--gnD)}
+.radio-option.disabled{opacity:0.5;cursor:not-allowed}
+.radio-circle{width:16px;height:16px;border-radius:50%;border:2px solid var(--b2);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.radio-circle .dot{width:8px;height:8px;border-radius:50%;background:var(--gn);display:none}
+.radio-option.selected .radio-circle{border-color:var(--gn)}
+.radio-option.selected .radio-circle .dot{display:block}
+.radio-label{font-size:13px;font-weight:600;color:var(--t1)}
+.radio-desc{font-size:10px;color:var(--t3)}
+.radio-badge{margin-left:auto;font-size:9px;font-weight:600;padding:2px 8px;border-radius:6px}
+.badge-recommended{background:var(--gnD);color:var(--gn)}
+
+/* DB info rows */
+.db-info{margin-bottom:8px}
+.db-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--b1)}
+.db-row:last-child{border-bottom:none}
+.db-label{font-size:12px;color:var(--t3)}
+.db-value{font-family:'Roboto Mono',monospace;font-size:12px;font-weight:500;color:var(--gn)}
+
+/* Action buttons */
+.action-btns{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px;margin-bottom:12px}
+.action-btn{padding:10px 14px;border:none;border-radius:var(--radius);font-family:'Inter',sans-serif;font-size:12px;font-weight:600;cursor:pointer;text-align:center}
+.action-btn.green{background:var(--gn);color:#fff}
+.action-btn.green:hover{opacity:0.85}
+.action-btn.cyan{background:var(--cy);color:#fff}
+.action-btn.cyan:hover{opacity:0.85}
+.action-btn.red{background:var(--rs);color:#fff}
+.action-btn.red:hover{opacity:0.85}
+.action-btn.outline-green{background:transparent;color:var(--gn);border:1px solid var(--gn)}
+.action-btn.outline-green:hover{background:var(--gnD)}
+
+/* Warning box */
+.warning-box{background:var(--rsD);border:1px solid rgba(244,63,94,0.3);border-radius:var(--radius);padding:10px 14px;font-size:11px;color:var(--rs);line-height:1.5;margin-top:8px}
+
+/* Form fields */
+.form-row{margin-bottom:14px}
+.form-label{font-size:10px;font-weight:600;color:var(--t3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:5px}
+.form-input{width:100%;padding:8px 12px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);color:var(--t1);font-size:13px;font-family:'Inter',sans-serif}
+.form-input:focus{outline:none;border-color:var(--tl)}
+.form-input.disabled{opacity:0.35;cursor:not-allowed;color:var(--t3)}
+
+/* Disabled buttons */
+.action-btn.disabled{opacity:0.35;cursor:not-allowed}
+
+/* Info box */
+.info-box{background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);padding:14px;margin-top:16px}
+.info-box-title{font-size:12px;font-weight:600;color:var(--t1);margin-bottom:6px;display:flex;align-items:center;gap:6px}
+.info-box-text{font-size:11px;color:var(--t3);line-height:1.6}
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="header">
+  <div class="logo" onclick="goBack()">
+    <div class="logo-icon">((&#9679;))</div>
+    <div class="logo-text"><div class="logo-title">RadioAI</div><div class="logo-sub">STUDIO PRO</div></div>
+  </div>
+  <div class="breadcrumb">
+    <a onclick="goBack()">Control Panel</a><span class="bc-sep">&gt;</span>
+    <a onclick="goToSettings()">Settings</a><span class="bc-sep">&gt;</span>
+    <span class="active">Database Settings</span>
+  </div>
+  <div class="page-title-area">
+    <div class="page-title">Database Settings</div>
+    <div class="page-subtitle">Configure storage engine &mdash; SQLite (default) or SQL Server (enterprise)</div>
+  </div>
+  <div class="header-spacer"></div>
+  <div style="display:flex;flex-direction:column;align-items:center;gap:1px">
+    <div class="clock-time" id="clock-time">00:00:00</div>
+    <div class="clock-date" id="clock-date"></div>
+  </div>
+  <div class="station-box">
+    <div class="station-label">ACTIVE STATION</div>
+    <div class="station-name">KISS FM 91.5</div>
+    <div class="station-loc">Jaipur, Rajasthan</div>
+  </div>
+  <button class="open-studio-btn" onclick="openStudio()">&#9654; Open Studio</button>
+</div>
+
+<!-- MAIN 2-COLUMN LAYOUT -->
+<div class="main">
+
+  <!-- LEFT COLUMN -->
+  <div class="col-left">
+    <div class="section-title">Database Configuration</div>
+    <div class="section-subtitle">Choose your storage engine and manage database operations</div>
+
+    <!-- DATABASE ENGINE -->
+    <div class="config-section">
+      <div class="config-section-title">Database Engine</div>
+      <div class="radio-options">
+        <div class="radio-option selected" onclick="selectEngine(this, 'sqlite')">
+          <div class="radio-circle"><div class="dot"></div></div>
+          <div>
+            <div class="radio-label">SQLite (Default &amp; Recommended)</div>
+            <div class="radio-desc">Single-file database, zero configuration, perfect for single-station setups</div>
+          </div>
+          <span class="radio-badge badge-recommended">Recommended</span>
+        </div>
+        <div class="radio-option" onclick="selectEngine(this, 'sqlserver')">
+          <div class="radio-circle"><div class="dot"></div></div>
+          <div>
+            <div class="radio-label">Microsoft SQL Server</div>
+            <div class="radio-desc">Enterprise database for multi-station or networked environments</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CURRENT DATABASE — SQLite -->
+    <div class="config-section green">
+      <div class="config-section-title">Current Database &mdash; SQLite</div>
+      <div class="db-info">
+        <div class="db-row">
+          <span class="db-label">Database file</span>
+          <span class="db-value" id="db-path">Loading...</span>
+        </div>
+        <div class="db-row">
+          <span class="db-label">Database size</span>
+          <span class="db-value" id="db-size">--</span>
+        </div>
+        <div class="db-row">
+          <span class="db-label">Total records</span>
+          <span class="db-value" id="db-records">--</span>
+        </div>
+        <div class="db-row">
+          <span class="db-label">Last backup</span>
+          <span class="db-value" id="db-last-backup">Never</span>
+        </div>
+        <div class="db-row">
+          <span class="db-label">Integrity check</span>
+          <span class="db-value" id="db-integrity">--</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Action Buttons -->
+    <div class="action-btns">
+      <button class="action-btn green" onclick="backupNow()">Backup Now</button>
+      <button class="action-btn cyan" onclick="restoreDb()">Restore</button>
+      <button class="action-btn outline-green" onclick="integrityCheck()">Integrity Check</button>
+      <button class="action-btn red" onclick="resetAllData()">Reset All Data</button>
+    </div>
+
+    <div class="warning-box">
+      Reset All Data will permanently delete ALL songs, logs, campaigns and settings. This action cannot be undone.
+    </div>
+  </div>
+
+  <!-- RIGHT COLUMN -->
+  <div class="col-right">
+    <div class="section-title">Enterprise Database</div>
+    <div class="section-subtitle">SQL Server configuration for multi-station deployments</div>
+
+    <!-- SQL SERVER CONFIGURATION -->
+    <div class="config-section cyan">
+      <div class="config-section-title">SQL Server Configuration</div>
+
+      <div class="form-row">
+        <div class="form-label">Host / Server Address</div>
+        <input class="form-input disabled" type="text" placeholder="e.g. 192.168.1.100 or db.kissfm.in" disabled>
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">Port</div>
+        <input class="form-input disabled" type="text" value="1433" disabled>
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">Database Name</div>
+        <input class="form-input disabled" type="text" placeholder="e.g. RadioAI_Production" disabled>
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">Username</div>
+        <input class="form-input disabled" type="text" placeholder="e.g. radioai_admin" disabled>
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">Password</div>
+        <input class="form-input disabled" type="password" placeholder="Enter password" disabled>
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">Connection Timeout (seconds)</div>
+        <input class="form-input disabled" type="text" value="30" disabled>
+      </div>
+    </div>
+
+    <div class="action-btns">
+      <button class="action-btn disabled" disabled>Test Connection</button>
+      <button class="action-btn disabled" disabled>Migrate from SQLite</button>
+    </div>
+
+    <div class="info-box">
+      <div class="info-box-title"><span style="color:var(--gn)">&#9679;</span> Currently using SQLite</div>
+      <div class="info-box-text">
+        SQLite is the active storage engine. To switch to SQL Server, select it above, fill in the connection details, test the connection, then use &ldquo;Migrate from SQLite&rdquo; to transfer all existing data. SQL Server requires a separate server installation and is recommended only for multi-station or networked environments.
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- STATUS BAR -->
+<div class="status-bar">
+  <span class="status-indicator"><span class="status-dot" style="background:var(--p1)"></span> AUTO MODE</span>
+  <span class="status-indicator"><span class="status-dot" style="background:var(--gn)"></span> SQLite Active</span>
+  <span class="status-indicator"><span class="status-dot" style="background:var(--gn)"></span> DB Healthy</span>
+  <span class="status-spacer"></span>
+  <span class="status-info">RadioAI Studio Pro v1.0</span>
+</div>
+
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script src="js/bridge_helper.js"></script>
+<script>
+// goBack, goToSettings, updateClock from bridge_helper.js
+function openStudio(){ navigateTo('studio_screen'); }
+
+// ── Load real DB stats on bridge ready ───────────
+onBridgeReady(function(){
+  loadDbStats();
+});
+
+function loadDbStats(){
+  callBridgeAsync('get_db_stats', [], function(data){
+    if(!data) return;
+    document.getElementById('db-path').textContent = data.path || '--';
+    document.getElementById('db-size').textContent = data.size_mb + ' MB';
+    document.getElementById('db-records').textContent = data.total_records.toLocaleString() + ' entries';
+    document.getElementById('db-last-backup').textContent = data.last_backup || 'Never';
+  });
+  // Also run integrity check on load
+  callBridgeAsync('check_integrity', [], function(data){
+    if(!data) return;
+    var el = document.getElementById('db-integrity');
+    if(data.passed){
+      el.textContent = 'Passed \u2014 no errors';
+      el.style.color = 'var(--gn)';
+    } else {
+      el.textContent = 'Issues: ' + data.result;
+      el.style.color = 'var(--rs)';
+    }
+  });
+}
+
+// ── Engine Selection ────────────────────────────
+function selectEngine(el, engine){
+  document.querySelectorAll('.radio-option').forEach(function(opt){ opt.classList.remove('selected'); });
+  el.classList.add('selected');
+  var sqlFields = document.querySelectorAll('.col-right .form-input');
+  var sqlBtns = document.querySelectorAll('.col-right .action-btn');
+  if(engine === 'sqlserver'){
+    sqlFields.forEach(function(f){ f.disabled=false; f.classList.remove('disabled'); });
+    sqlBtns.forEach(function(b){ b.disabled=false; b.classList.remove('disabled'); });
+  } else {
+    sqlFields.forEach(function(f){ f.disabled=true; f.classList.add('disabled'); });
+    sqlBtns.forEach(function(b){ b.disabled=true; b.classList.add('disabled'); });
+  }
+}
+
+// ── Backup Now ──────────────────────────────────
+function backupNow(){
+  var btn = event.target;
+  var orig = btn.textContent;
+  btn.textContent = 'Backing up...';
+  btn.style.opacity = '0.7';
+  callBridgeAsync('backup_database', [], function(data){
+    btn.style.opacity = '1';
+    if(data){
+      btn.textContent = 'Backup Complete!';
+      btn.style.background = 'var(--gn)';
+      showToast('Backup saved: ' + data.path + ' (' + data.size_mb + ' MB)', true);
+      // Refresh stats to show updated backup time
+      loadDbStats();
+    } else {
+      btn.textContent = 'Backup Failed!';
+      btn.style.background = 'var(--rs)';
+      showToast('Backup failed', false);
+    }
+    setTimeout(function(){ btn.textContent=orig; btn.style.background=''; }, 2500);
+  });
+}
+
+// ── Restore ─────────────────────────────────────
+function restoreDb(){
+  alert('To restore, manually copy a backup file to replace:\n\n' + (document.getElementById('db-path').textContent) + '\n\nThen restart the application.');
+}
+
+// ── Integrity Check ─────────────────────────────
+function integrityCheck(){
+  var btn = event.target;
+  var orig = btn.textContent;
+  btn.textContent = 'Checking...';
+  callBridgeAsync('check_integrity', [], function(data){
+    if(data && data.passed){
+      btn.textContent = 'Passed!';
+      btn.style.color = 'var(--gn)';
+      btn.style.borderColor = 'var(--gn)';
+      document.getElementById('db-integrity').textContent = 'Passed \u2014 no errors';
+      document.getElementById('db-integrity').style.color = 'var(--gn)';
+      showToast('Database integrity: OK', true);
+    } else {
+      btn.textContent = 'Issues Found!';
+      btn.style.color = 'var(--rs)';
+      showToast('Integrity issues: ' + (data ? data.result : 'unknown'), false);
+    }
+    setTimeout(function(){ btn.textContent=orig; btn.style.color=''; btn.style.borderColor=''; }, 2500);
+  });
+}
+
+// ── Reset All Data ──────────────────────────────
+function resetAllData(){
+  if(!confirm('WARNING: This will permanently delete ALL songs, logs, campaigns and settings.\n\nAre you sure?')) return;
+  var typed = prompt('Type RESET to confirm:');
+  if(typed !== 'RESET'){ alert('Reset cancelled.'); return; }
+  callBridgeAsync('reset_database', [], function(data){
+    if(data){
+      showToast('Database reset complete. Please restart the application.', true);
+      alert('Database has been reset.\n\nPlease close and restart RadioAI Studio Pro.');
+    } else {
+      showToast('Reset failed', false);
+    }
+  });
+}
+
+// ── Toast ────────────────────────────────────────
+function showToast(msg, success){
+  var t = document.getElementById('toast');
+  if(!t){ t=document.createElement('div'); t.id='toast';
+    t.style.cssText='position:fixed;bottom:60px;left:50%;transform:translateX(-50%);padding:10px 24px;border-radius:8px;font-size:12px;font-weight:600;z-index:999;transition:opacity 0.3s;pointer-events:none;';
+    document.body.appendChild(t); }
+  t.textContent=msg; t.style.background=success?'#10B981':'#F43F5E'; t.style.color='#fff'; t.style.opacity='1';
+  clearTimeout(t._timer); t._timer=setTimeout(function(){t.style.opacity='0';},3000);
+}
+</script>
+</body>
+</html>

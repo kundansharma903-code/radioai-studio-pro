@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>New Sweeper — RadioAI Studio Pro</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+body{overflow:hidden}
+body::before,body::after{display:none!important}
+.page-wrap{display:flex;flex-direction:column;height:100vh;position:relative;z-index:1}
+.page-header{display:flex;align-items:center;gap:12px;padding:12px 24px;background:var(--surf);border-bottom:1px solid var(--b1)}
+.page-icon{font-size:22px;color:var(--cy)}
+.page-title{font-size:18px;font-weight:700;letter-spacing:1px}
+.page-subtitle{font-size:10px;color:var(--t3)}
+.auto-code{margin-left:auto;text-align:right;background:var(--card);padding:6px 12px;border-radius:var(--radius);border:1px solid var(--cy)}
+.auto-code-label{font-size:8px;color:var(--t3);letter-spacing:1px}
+.auto-code-val{font-family:'Roboto Mono',monospace;font-size:16px;font-weight:700;color:var(--cy)}
+.close-btn{width:30px;height:30px;border-radius:50%;background:var(--card);border:1px solid var(--b1);display:flex;align-items:center;justify-content:center;color:var(--t2);font-size:14px;cursor:pointer;margin-left:12px}
+.close-btn:hover{background:var(--b1);color:var(--t1)}
+
+.page-body{flex:1;display:flex;overflow:hidden}
+.col-left{flex:1;padding:14px 24px;overflow-y:auto;min-width:0}
+.col-left::-webkit-scrollbar{width:6px}
+.col-left::-webkit-scrollbar-thumb{background:var(--b2);border-radius:3px}
+.col-right{width:310px;min-width:280px;border-left:1px solid var(--b1);padding:14px 18px;overflow-y:auto}
+.col-right::-webkit-scrollbar{width:6px}
+.col-right::-webkit-scrollbar-thumb{background:var(--b2);border-radius:3px}
+
+.form-row{display:flex;gap:12px;margin-bottom:10px}
+.form-row .form-group{flex:1}
+.form-group{margin-bottom:10px}
+.form-label{font-size:10px;color:var(--t3);margin-bottom:3px;text-transform:uppercase;letter-spacing:0.5px}
+.form-label .req{color:var(--rs)}
+.form-input{width:100%;padding:8px 12px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);color:var(--t1);font-size:12px;font-family:'Inter',sans-serif}
+.form-input:focus{outline:none;border-color:var(--cy)}
+.form-input::placeholder{color:var(--t4)}
+.form-input:read-only{color:var(--t3)}
+.form-select{width:100%;padding:8px 12px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);color:var(--t1);font-size:12px;font-family:'Inter',sans-serif;appearance:none;cursor:pointer}
+.form-textarea{width:100%;padding:8px 12px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);color:var(--t1);font-size:12px;font-family:'Inter',sans-serif;resize:vertical;min-height:55px}
+
+.section-title{font-size:10px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;padding:8px 0 6px;border-bottom:1px solid var(--b1);margin:10px 0 10px;border-left:3px solid;padding-left:10px}
+.section-title.cyan{color:var(--cy);border-left-color:var(--cy)}
+.section-title.gray{color:var(--t2);border-left-color:var(--b2)}
+.section-title.amber{color:var(--am);border-left-color:var(--am)}
+.section-title.green{color:var(--gn);border-left-color:var(--gn)}
+.section-title.purple{color:var(--p1);border-left-color:var(--p1)}
+.section-title.rose{color:var(--rs);border-left-color:var(--rs)}
+
+/* Category pills */
+.cat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.cat-pill{padding:12px 10px;border-radius:var(--radius);font-size:11px;font-weight:600;cursor:pointer;border:1px solid var(--b1);background:var(--card);color:var(--t3);transition:all 0.15s;text-align:center}
+.cat-pill:hover{opacity:0.85}
+.cat-pill.active{color:#fff;border-color:transparent;box-shadow:0 0 0 2px rgba(255,255,255,0.1)}
+
+/* Position diagram */
+.pos-diagram{background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);padding:14px;margin-bottom:10px}
+.pos-song-row{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.pos-song-label{font-size:9px;color:var(--t3);font-weight:600;letter-spacing:1px;width:40px}
+.pos-song-bar{flex:1;height:32px;background:linear-gradient(90deg,var(--p4),var(--p3));border-radius:var(--radius);position:relative}
+.pos-marker{position:absolute;top:0;bottom:0;width:3px;border-radius:2px}
+.pos-marker-label{position:absolute;bottom:-18px;font-size:8px;white-space:nowrap;transform:translateX(-50%)}
+.pos-marker.start{left:0;background:var(--gn)}
+.pos-marker.start .pos-marker-label{color:var(--gn)}
+.pos-marker.intro{left:15%;background:var(--cy)}
+.pos-marker.intro .pos-marker-label{color:var(--cy)}
+.pos-marker.bridge{left:50%;background:var(--am)}
+.pos-marker.bridge .pos-marker-label{color:var(--am)}
+.pos-marker.end{left:75%;background:var(--rs)}
+.pos-marker.end .pos-marker-label{color:var(--rs)}
+.pos-marker.mix{right:0;background:var(--p1)}
+.pos-marker.mix .pos-marker-label{color:var(--p1);right:0;left:auto;transform:none}
+
+.pos-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:20px}
+.pos-btn{padding:12px;border-radius:var(--radius);font-size:11px;font-weight:600;cursor:pointer;border:1px solid var(--b1);background:var(--card);color:var(--t3);transition:all 0.15s;display:flex;align-items:center;gap:8px;border-left:3px solid transparent}
+.pos-btn:hover{opacity:0.85}
+.pos-btn.active{color:#fff;border-color:transparent}
+.pos-btn.active .pos-icon{color:#fff}
+.pos-icon{font-size:14px}
+
+/* Audio file */
+.file-row{display:flex;gap:6px;align-items:center}
+.file-input{flex:1}
+.file-btn{padding:8px 14px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);color:var(--t2);font-size:12px;cursor:pointer;font-family:'Inter',sans-serif}
+.file-btn:hover{background:var(--b1)}
+.file-btn.edit{border-color:var(--p1);color:var(--p1)}
+.file-btn.edit:hover{background:var(--p4)}
+
+/* Right panel */
+.avail-box{background:var(--gnD);border:1px solid var(--gn);border-radius:var(--radius);padding:12px}
+.avail-row{display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer}
+.avail-check{width:16px;height:16px;border-radius:4px;border:2px solid var(--b2);display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--gn)}
+.avail-check.active{background:var(--gn);border-color:var(--gn);color:#000}
+.avail-label{font-size:12px;font-weight:600;color:var(--gn)}
+.avail-desc{font-size:10px;color:var(--t3)}
+
+.overlay-box{background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);padding:12px}
+.overlay-title{font-size:10px;color:var(--t3);margin-bottom:10px}
+.vol-row{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.vol-label{font-size:10px;color:var(--t2);width:52px}
+.vol-slider-wrap{flex:1;position:relative;height:8px;background:var(--b1);border-radius:4px;cursor:pointer}
+.vol-slider-fill{height:100%;border-radius:4px}
+.vol-slider-fill.song{background:var(--p1)}
+.vol-slider-fill.sweeper{background:var(--cy)}
+.vol-value{font-family:'Roboto Mono',monospace;font-size:11px;color:var(--t1);width:36px;text-align:right}
+.overlay-note{font-size:10px;color:var(--cy);margin-top:8px}
+.vol-input{display:none}
+
+.sched-box,.sep-box{background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);padding:12px}
+
+.ai-btn{display:block;width:100%;padding:12px;background:var(--p4);border:1px solid var(--p1);border-radius:var(--radius);color:var(--p1);font-size:12px;font-weight:600;cursor:pointer;font-family:'Inter',sans-serif;margin-top:12px;text-align:left}
+.ai-btn:hover{background:var(--p3)}
+.ai-btn-sub{font-size:10px;color:var(--t3);font-weight:400;margin-top:2px}
+
+/* Footer */
+.page-footer{display:flex;align-items:center;padding:10px 24px;background:var(--surf);border-top:1px solid var(--b1);gap:12px}
+.footer-note{font-size:10px;color:var(--t3);flex:1}
+.footer-note .req{color:var(--rs)}
+.btn-cancel{padding:8px 24px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);color:var(--t2);font-size:13px;font-weight:600;cursor:pointer;font-family:'Inter',sans-serif}
+.btn-cancel:hover{background:var(--b1);color:var(--t1)}
+.btn-save{padding:8px 24px;background:var(--cy);border:none;border-radius:var(--radius);color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:'Inter',sans-serif;display:flex;align-items:center;gap:6px}
+.btn-save:hover{opacity:0.85}
+</style>
+</head>
+<body>
+<div class="page-wrap">
+
+  <div class="page-header">
+    <div class="page-icon">〜</div>
+    <div>
+      <div class="page-title">NEW SWEEPER</div>
+      <div class="page-subtitle">Add a new audio overlay sweeper to the library</div>
+    </div>
+    <div class="auto-code">
+      <div class="auto-code-label">AUTO CODE</div>
+      <div class="auto-code-val" id="auto-code">SWP-----</div>
+    </div>
+    <div class="close-btn" onclick="cancelSweeper()">✕</div>
+  </div>
+
+  <div class="page-body">
+
+    <!-- LEFT COLUMN -->
+    <div class="col-left">
+
+      <div class="form-group">
+        <div class="form-label">Sweeper Title <span class="req">*</span></div>
+        <input class="form-input" type="text" id="s-name" placeholder="Enter sweeper name...">
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <div class="form-label">Author</div>
+          <input class="form-input" type="text" id="s-author" placeholder="e.g. RadioAI">
+        </div>
+        <div class="form-group">
+          <div class="form-label">Playlister Code</div>
+          <input class="form-input" type="text" id="s-playcode" readonly>
+        </div>
+        <div class="form-group">
+          <div class="form-label">Entry Date</div>
+          <input class="form-input" type="text" value="Now  (Auto)" readonly>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <div class="form-label">Comments</div>
+        <textarea class="form-textarea" id="s-comments"></textarea>
+      </div>
+
+      <div class="section-title cyan">CATEGORY</div>
+      <div class="cat-grid" id="cat-grid">
+        <div class="cat-pill" data-cat="Station" data-color="#06B6D4">Station</div>
+        <div class="cat-pill" data-cat="Music" data-color="#8B5CF6">Music</div>
+        <div class="cat-pill" data-cat="News" data-color="#F43F5E">News</div>
+        <div class="cat-pill" data-cat="Promo" data-color="#10B981">Promo</div>
+        <div class="cat-pill" data-cat="Weather" data-color="#14B8A6">Weather</div>
+        <div class="cat-pill" data-cat="Traffic" data-color="#3B82F6">Traffic</div>
+        <div class="cat-pill" data-cat="Sports" data-color="#F59E0B">Sports</div>
+        <div class="cat-pill" data-cat="Custom" data-color="#8891B8">Custom</div>
+      </div>
+
+      <div class="section-title gray">TRACK PROPERTIES</div>
+      <div class="form-row">
+        <div class="form-group">
+          <div class="form-label">Properties</div>
+          <select class="form-select" id="s-properties">
+            <option>Regular</option><option>Special</option><option>Top of Hour</option>
+            <option>News</option><option>Info</option><option>Signature</option>
+            <option>Ads</option><option>Promo</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <div class="form-label">Duration</div>
+          <input class="form-input" type="text" id="s-duration" value="0:08">
+        </div>
+        <div class="form-group">
+          <div class="form-label">BPM</div>
+          <input class="form-input" type="number" id="s-bpm" placeholder="Optional">
+        </div>
+        <div class="form-group">
+          <div class="form-label">Era / Year</div>
+          <input class="form-input" type="number" id="s-year" value="2026">
+        </div>
+      </div>
+
+      <div class="section-title amber">POSITION SETTINGS</div>
+      <div class="pos-diagram">
+        <div class="pos-song-row">
+          <div class="pos-song-label">SONG</div>
+          <div class="pos-song-bar">
+            <div class="pos-marker start"><div class="pos-marker-label">Start</div></div>
+            <div class="pos-marker intro"><div class="pos-marker-label">Before Intro</div></div>
+            <div class="pos-marker bridge"><div class="pos-marker-label">Bridge</div></div>
+            <div class="pos-marker end"><div class="pos-marker-label">Before End</div></div>
+            <div class="pos-marker mix"><div class="pos-marker-label">Mix Point</div></div>
+          </div>
+        </div>
+      </div>
+      <div class="pos-grid" id="pos-grid">
+        <div class="pos-btn" data-pos="Start of Song" data-color="#10B981"><span class="pos-icon">→</span> Start of Song</div>
+        <div class="pos-btn" data-pos="Before Intro" data-color="#06B6D4"><span class="pos-icon">⤷</span> Before Intro</div>
+        <div class="pos-btn" data-pos="Before End" data-color="#F43F5E"><span class="pos-icon">←</span> Before End</div>
+        <div class="pos-btn" data-pos="Bridge at End" data-color="#F59E0B"><span class="pos-icon">⇌</span> Bridge at End</div>
+        <div class="pos-btn" data-pos="Independent" data-color="#8B5CF6"><span class="pos-icon">◈</span> Independent</div>
+        <div class="pos-btn" data-pos="Custom Position" data-color="#8891B8"><span class="pos-icon">⊕</span> Custom Position</div>
+      </div>
+
+      <div class="section-title amber">AUDIO FILE</div>
+      <div class="file-row">
+        <input class="form-input file-input" type="text" id="s-filepath" placeholder="C:\Audio\Sweepers\select file..." readonly>
+        <button class="file-btn" onclick="browseAudio()">...</button>
+        <button class="file-btn edit" onclick="editAudio()">Edit</button>
+      </div>
+
+    </div>
+
+    <!-- RIGHT COLUMN -->
+    <div class="col-right">
+
+      <div class="section-title green">AVAILABILITY</div>
+      <div class="avail-box">
+        <div class="avail-row" onclick="setAvail(true)">
+          <div class="avail-check active" id="avail-enabled">✓</div>
+          <div>
+            <div class="avail-label">Enabled</div>
+            <div class="avail-desc">Sweeper will play in rotation</div>
+          </div>
+        </div>
+        <div class="avail-row" onclick="setAvail(false)">
+          <div class="avail-check" id="avail-disabled"></div>
+          <div>
+            <div class="avail-label" style="color:var(--t2)">Disabled (Inactive)</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section-title cyan">OVERLAY BEHAVIOR</div>
+      <div class="overlay-box">
+        <div class="overlay-title">Volume during overlay</div>
+        <div class="vol-row">
+          <div class="vol-label">Song Vol:</div>
+          <div class="vol-slider-wrap" id="song-slider-wrap" onclick="setVol('song',event)">
+            <div class="vol-slider-fill song" id="song-slider-fill" style="width:60%"></div>
+          </div>
+          <div class="vol-value" id="song-vol-val">60%</div>
+        </div>
+        <div class="vol-row">
+          <div class="vol-label">Swpr Vol:</div>
+          <div class="vol-slider-wrap" id="swpr-slider-wrap" onclick="setVol('sweeper',event)">
+            <div class="vol-slider-fill sweeper" id="swpr-slider-fill" style="width:100%"></div>
+          </div>
+          <div class="vol-value" id="swpr-vol-val">100%</div>
+        </div>
+        <div class="overlay-note">↕ Plays simultaneously with song</div>
+      </div>
+
+      <div class="section-title amber">POSITION OFFSET</div>
+      <div class="form-row">
+        <div class="form-group">
+          <div class="form-label">Offset from position (seconds)</div>
+          <input class="form-input" type="text" id="s-offset" value="0.0 sec">
+        </div>
+        <div class="form-group">
+          <div class="form-label">Fade duration</div>
+          <input class="form-input" type="text" id="s-fade" value="0.5 sec">
+        </div>
+      </div>
+
+      <div class="section-title purple">SCHEDULING</div>
+      <div class="sched-box">
+        <div class="form-label">Clock Assignment</div>
+        <select class="form-select" id="s-clock">
+          <option>Select clock...</option>
+          <option>Morning Drive</option>
+          <option>Daytime</option>
+          <option>Drive Time</option>
+          <option>Night</option>
+        </select>
+      </div>
+
+      <div class="section-title rose">SEPARATION</div>
+      <div class="form-row">
+        <div class="form-group">
+          <div class="form-label">Min gap</div>
+          <input class="form-input" type="text" id="s-mingap" value="15 min">
+        </div>
+        <div class="form-group">
+          <div class="form-label">Max per hour</div>
+          <input class="form-input" type="text" id="s-maxhour" value="4 plays">
+        </div>
+      </div>
+
+      <button class="ai-btn" onclick="autoFillMetadata()">
+        ✦ AI Auto-fill Metadata
+        <div class="ai-btn-sub">Auto-detect position from audio</div>
+      </button>
+
+    </div>
+
+  </div>
+
+  <div class="page-footer">
+    <div class="footer-note"><span class="req">*</span> Required fields</div>
+    <button class="btn-cancel" onclick="cancelSweeper()">Cancel</button>
+    <button class="btn-save" onclick="saveSweeper()">✓ Save</button>
+  </div>
+
+</div>
+
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script src="js/bridge_helper.js"></script>
+<script>
+var selectedCategory = 'Station';
+var selectedPosition = 'Bridge at End';
+var editSweeperId = null;
+var availability = true;
+var songVol = 60;
+var sweeperVol = 100;
+
+onBridgeReady(function(){
+  // Generate auto code
+  callBridgeAsync('get_sweepers', ['{}'], function(data){
+    if(data && data.total !== undefined){
+      var nextNum = data.total + 42; // offset to match Figma
+      var code = 'SWP-' + String(nextNum).padStart(4, '0');
+      document.getElementById('auto-code').textContent = code;
+      document.getElementById('s-playcode').value = 'SS-' + String(nextNum).padStart(4, '0');
+    }
+  });
+
+  // Check edit mode
+  var editId = sessionStorage.getItem('edit_sweeper_id');
+  if(editId){
+    sessionStorage.removeItem('edit_sweeper_id');
+    editSweeperId = parseInt(editId);
+    loadSweeperForEdit(editSweeperId);
+  } else {
+    setCategory('Station');
+    setPosition('Bridge at End');
+  }
+
+  // Auto comment placeholder
+  var now = new Date();
+  var date = String(now.getDate()).padStart(2,'0') + '/' + String(now.getMonth()+1).padStart(2,'0') + '/' + now.getFullYear();
+  document.getElementById('s-comments').placeholder = 'Created automatically — ' + date;
+});
+
+function loadSweeperForEdit(id){
+  callBridgeAsync('get_sweeper', [id], function(data){
+    if(!data) return;
+    document.querySelector('.page-title').textContent = 'EDIT SWEEPER';
+    document.querySelector('.page-subtitle').textContent = 'Update sweeper details';
+    document.getElementById('s-name').value = data.name || '';
+    document.getElementById('s-duration').value = data.duration || '0:08';
+    if(data.properties){
+      var sel = document.getElementById('s-properties');
+      for(var i=0;i<sel.options.length;i++){
+        if(sel.options[i].text === data.properties){ sel.selectedIndex = i; break; }
+      }
+    }
+    document.getElementById('s-playcode').value = data.playlister_code || '';
+    document.getElementById('auto-code').textContent = data.playlister_code || '------';
+    document.getElementById('s-filepath').value = data.file_path || '';
+    document.getElementById('s-comments').value = data.comments || '';
+    document.getElementById('s-offset').value = (data.position_offset || 0) + ' sec';
+    document.getElementById('s-fade').value = (data.fade_duration || 0.5) + ' sec';
+    setAvail(data.is_enabled !== false);
+    if(data.category){ setCategory(data.category); }
+    if(data.position){ setPosition(data.position); }
+    setSongVol(data.song_volume || 60);
+    setSweeperVol(data.sweeper_volume || 100);
+    var btn = document.querySelector('.btn-save');
+    btn.textContent = '✓ Update';
+  });
+}
+
+// ── Category pills ──────────────────────────────
+document.querySelectorAll('.cat-pill').forEach(function(pill){
+  pill.addEventListener('click', function(){ setCategory(pill.getAttribute('data-cat')); });
+});
+
+function setCategory(name){
+  selectedCategory = name;
+  document.querySelectorAll('.cat-pill').forEach(function(p){
+    if(p.getAttribute('data-cat') === name){
+      p.classList.add('active');
+      var color = p.getAttribute('data-color');
+      p.style.background = color;
+      p.style.borderColor = color;
+    } else {
+      p.classList.remove('active');
+      p.style.background = '';
+      p.style.borderColor = '';
+    }
+  });
+}
+
+// ── Position buttons ────────────────────────────
+document.querySelectorAll('.pos-btn').forEach(function(btn){
+  btn.addEventListener('click', function(){ setPosition(btn.getAttribute('data-pos')); });
+});
+
+function setPosition(pos){
+  selectedPosition = pos;
+  document.querySelectorAll('.pos-btn').forEach(function(b){
+    if(b.getAttribute('data-pos') === pos){
+      b.classList.add('active');
+      var color = b.getAttribute('data-color');
+      b.style.background = color;
+      b.style.borderLeftColor = color;
+    } else {
+      b.classList.remove('active');
+      b.style.background = '';
+      b.style.borderLeftColor = 'transparent';
+    }
+  });
+}
+
+// ── Availability ────────────────────────────────
+function setAvail(enabled){
+  availability = enabled;
+  document.getElementById('avail-enabled').classList.toggle('active', enabled);
+  document.getElementById('avail-enabled').innerHTML = enabled ? '✓' : '';
+  document.getElementById('avail-disabled').classList.toggle('active', !enabled);
+  document.getElementById('avail-disabled').innerHTML = !enabled ? '✓' : '';
+}
+
+// ── Volume sliders ──────────────────────────────
+function setVol(which, evt){
+  var wrap = evt.currentTarget;
+  var rect = wrap.getBoundingClientRect();
+  var pct = Math.round(Math.max(0, Math.min(100, ((evt.clientX - rect.left) / rect.width) * 100)));
+  if(which === 'song'){ setSongVol(pct); }
+  else { setSweeperVol(pct); }
+}
+
+function setSongVol(v){
+  songVol = v;
+  document.getElementById('song-slider-fill').style.width = v + '%';
+  document.getElementById('song-vol-val').textContent = v + '%';
+}
+
+function setSweeperVol(v){
+  sweeperVol = v;
+  document.getElementById('swpr-slider-fill').style.width = v + '%';
+  document.getElementById('swpr-vol-val').textContent = v + '%';
+}
+
+// ── Audio file ──────────────────────────────────
+function browseAudio(){
+  callBridgeAsync('browse_audio_file', [], function(path){
+    if(path){ document.getElementById('s-filepath').value = path; }
+  });
+}
+
+function editAudio(){ alert('Audio Cue Editor — coming soon'); }
+
+function autoFillMetadata(){
+  var fp = document.getElementById('s-filepath').value;
+  if(!fp){ alert('Select an audio file first'); return; }
+  alert('AI Auto-fill coming in next update');
+}
+
+// ── Save sweeper ────────────────────────────────
+function saveSweeper(){
+  var name = document.getElementById('s-name').value.trim();
+  if(!name){ alert('⚠ Sweeper title is required!'); document.getElementById('s-name').focus(); return; }
+
+  // Parse offset/fade values
+  var offsetStr = document.getElementById('s-offset').value.replace(/[^0-9.-]/g, '');
+  var fadeStr = document.getElementById('s-fade').value.replace(/[^0-9.-]/g, '');
+
+  var payload = {
+    name: name,
+    category: selectedCategory,
+    position: selectedPosition,
+    duration: document.getElementById('s-duration').value || '0:08',
+    properties: document.getElementById('s-properties').options[document.getElementById('s-properties').selectedIndex].text,
+    playlister_code: document.getElementById('s-playcode').value,
+    file_path: document.getElementById('s-filepath').value,
+    comments: document.getElementById('s-comments').value,
+    is_enabled: availability,
+    song_volume: songVol,
+    sweeper_volume: sweeperVol,
+    position_offset: parseFloat(offsetStr) || 0.0,
+    fade_duration: parseFloat(fadeStr) || 0.5
+  };
+  if(editSweeperId) payload.id = editSweeperId;
+
+  callBridgeAsync('save_sweeper', [JSON.stringify(payload)], function(data){
+    if(data){
+      alert((editSweeperId ? '✅ Sweeper updated!' : '✅ Sweeper saved!') + '\n\n"' + name + '"');
+      window.location.href = 'sweepers_library.html';
+    } else {
+      alert('❌ Failed to save sweeper');
+    }
+  });
+}
+
+function cancelSweeper(){
+  window.location.href = 'sweepers_library.html';
+}
+</script>
+</body>
+</html>

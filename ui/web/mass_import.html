@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mass Import Songs | RadioAI Studio Pro</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+body{overflow:hidden}
+
+.mi-header{display:flex;align-items:center;height:52px;min-height:52px;background:var(--surf);border-top:2px solid var(--gn);border-bottom:1px solid var(--b1);padding:0 14px;gap:10px}
+.mi-icon{width:28px;height:28px;border-radius:var(--radius);background:var(--gnD);display:flex;align-items:center;justify-content:center;color:var(--gn);font-size:15px;font-weight:700}
+.mi-title-wrap{display:flex;flex-direction:column;gap:1px}
+.mi-title{font-size:14px;font-weight:700;color:var(--t1);letter-spacing:0.3px}
+.mi-subtitle{font-size:9px;color:var(--t3)}
+.mi-header-spacer{flex:1}
+.mi-stat{background:var(--card);border-radius:var(--radius);padding:4px 10px 4px 12px;height:24px;display:flex;align-items:center;font-size:10px;font-weight:600;position:relative}
+.mi-stat::before{content:'';position:absolute;left:0;top:0;bottom:0;width:2px;border-radius:2px}
+.mi-stat.sel{color:var(--t3)}.mi-stat.sel::before{background:var(--t3)}
+.mi-stat.ready{color:var(--gn)}.mi-stat.ready::before{background:var(--gn)}
+.mi-stat.err{color:var(--rs)}.mi-stat.err::before{background:var(--rs)}
+.mi-close{width:30px;height:30px;border-radius:var(--radius);background:var(--b1);border:none;color:var(--t2);font-size:14px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.mi-close:hover{background:var(--b2);color:var(--t1)}
+
+.mi-main{display:flex;flex:1;overflow:hidden}
+.mi-left{flex:1;min-width:0;display:flex;flex-direction:column;padding:12px 14px;gap:10px;overflow:hidden}
+.mi-right{width:284px;min-width:260px;display:flex;flex-direction:column;padding:12px 14px 12px 6px;gap:8px;border-left:1px solid var(--b1);overflow-y:auto}
+
+/* Step label bars */
+.mi-step{background:var(--card);border-radius:var(--radius);padding:6px 12px 6px 14px;position:relative;font-size:10px;font-weight:700;letter-spacing:0.5px}
+.mi-step::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;border-radius:2px}
+.mi-step.s1{color:var(--gn)}.mi-step.s1::before{background:var(--gn)}
+.mi-step.s2{color:var(--p2)}.mi-step.s2::before{background:var(--p2)}
+.mi-step.s3{color:var(--am)}.mi-step.s3::before{background:var(--am)}
+.mi-step.dup{color:var(--cy)}.mi-step.dup::before{background:var(--cy)}
+.mi-step.id3{color:var(--p2)}.mi-step.id3::before{background:var(--p2)}
+.mi-step.prog{color:var(--gn)}.mi-step.prog::before{background:var(--gn)}
+
+/* Step 1 — Select Folder */
+.mi-folder-row{display:flex;gap:8px;align-items:center}
+.mi-folder-input{flex:1;height:36px;background:var(--bg);border:1px solid var(--b1);border-radius:var(--radius);padding:0 12px;font-size:11px;color:var(--t2);display:flex;align-items:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:'Roboto Mono',monospace}
+.mi-folder-input.empty{color:var(--t3);font-style:italic}
+.mi-browse{height:36px;background:var(--gnD);border:1px solid rgba(16,185,129,0.4);border-left:2px solid var(--gn);color:var(--gn);border-radius:8px;padding:0 14px;font-family:'Inter',sans-serif;font-size:11px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:4px}
+.mi-browse:hover{background:#082b1a}
+.mi-scan{height:36px;background:var(--p1);border:none;color:#fff;border-radius:8px;padding:0 18px;font-family:'Inter',sans-serif;font-size:11px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:4px}
+.mi-scan:hover{background:var(--p2)}
+.mi-scan:disabled{opacity:0.4;cursor:not-allowed}
+
+.mi-opts{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:9px;color:var(--t3)}
+.mi-opt{display:inline-flex;align-items:center;gap:6px;background:var(--card);border:1px solid var(--b1);border-radius:4px;padding:4px 10px;cursor:pointer;user-select:none;color:var(--t2);font-size:9px;font-weight:500}
+.mi-opt.active{color:var(--gn);background:var(--gnD);border-color:rgba(16,185,129,0.4)}
+.mi-opt.active .chk{background:var(--gnD);border-color:var(--gn);color:var(--gn)}
+.chk{width:12px;height:12px;border:1px solid var(--b1);border-radius:2px;background:var(--card);display:inline-flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;color:transparent}
+.mi-info{color:var(--t3);font-size:9px;margin-left:auto}
+
+/* Step 2 — Files Table */
+.mi-table-wrap{flex:1;display:flex;flex-direction:column;background:var(--bg);border:1px solid rgba(28,31,56,0.6);border-radius:var(--radius);overflow:hidden;min-height:160px}
+.mi-table-head{display:grid;grid-template-columns:28px 1fr 160px 160px 70px 78px;padding:8px 14px;background:var(--card);border-bottom:1px solid var(--b1);font-size:9px;font-weight:600;color:var(--t3);letter-spacing:0.6px}
+.mi-table-body{flex:1;overflow-y:auto}
+.mi-row{display:grid;grid-template-columns:28px 1fr 160px 160px 70px 78px;padding:8px 14px;font-size:10px;align-items:center;border-bottom:1px solid rgba(28,31,56,0.3)}
+.mi-row:nth-child(even){background:var(--surf)}
+.mi-row:nth-child(odd){background:var(--card)}
+.mi-row:hover{background:var(--card2)}
+.mi-row-fname{color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:8px;font-family:'Roboto Mono',monospace;font-size:10px}
+.mi-row-artist,.mi-row-title{color:var(--t1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:8px}
+.mi-row-artist.empty,.mi-row-title.empty{color:var(--t3);font-style:italic}
+.mi-row-dur{color:var(--t2);font-family:'Roboto Mono',monospace}
+.mi-row-status{font-size:8px;font-weight:700;padding:3px 8px;border-radius:3px;text-align:center;display:inline-block;width:60px}
+.mi-st-ready{background:var(--gnD);color:var(--gn)}
+.mi-st-notags{background:var(--amD);color:var(--am)}
+.mi-st-error{background:var(--rsD);color:var(--rs)}
+.mi-row .chk{cursor:pointer}
+.mi-row.checked .chk{background:var(--gnD);border-color:var(--gn);color:var(--gn)}
+
+.mi-empty{padding:40px 20px;text-align:center;color:var(--t3);font-size:11px}
+
+/* Select All bar */
+.mi-actions{display:flex;align-items:center;gap:8px}
+.mi-btn-sm{background:var(--b1);color:var(--t2);border:none;border-radius:var(--radius);padding:5px 12px;font-family:'Inter',sans-serif;font-size:10px;font-weight:500;cursor:pointer}
+.mi-btn-sm:hover{background:var(--b2);color:var(--t1)}
+.mi-summary{color:var(--t3);font-size:10px;margin-left:8px}
+
+/* Right panel */
+.mi-right label{font-size:9px;color:var(--t2);font-weight:500;margin-top:6px}
+.mi-input,.mi-select{background:var(--surf);border:1px solid var(--b1);border-radius:var(--radius);padding:7px 10px;font-family:'Inter',sans-serif;font-size:11px;color:var(--t1);width:100%;box-sizing:border-box}
+.mi-input:focus,.mi-select:focus{outline:none;border-color:var(--p1)}
+.mi-row2{display:flex;gap:8px}
+.mi-row2>div{flex:1}
+.mi-toggle{height:28px;background:var(--gnD);border:1px solid rgba(16,185,129,0.3);border-left:2px solid var(--gn);border-radius:var(--radius);padding:0 10px;font-size:10px;font-weight:600;color:var(--gn);display:flex;align-items:center;cursor:pointer}
+.mi-toggle.off{background:var(--rsD);border-color:rgba(244,63,94,0.3);border-left-color:var(--rs);color:var(--rs)}
+
+.mi-dup{background:var(--cyD);border:1px solid rgba(6,182,212,0.2);border-left:2px solid var(--cy);border-radius:var(--radius);padding:7px 10px;display:flex;align-items:center;gap:8px;color:var(--cy);font-size:10px;font-weight:500;cursor:pointer;user-select:none}
+.mi-dup .chk{background:var(--cyD);border-color:var(--cy);color:var(--cy)}
+
+.mi-id3-card{background:var(--card);border:1px solid var(--b1);border-left:2px solid var(--p1);border-radius:8px;padding:8px 10px;display:grid;grid-template-columns:1fr 1fr;gap:4px 12px}
+.mi-id3-card div{color:var(--p2);font-size:9px}
+
+.mi-progress-wrap{background:var(--b1);border-radius:8px;height:16px;overflow:hidden;position:relative}
+.mi-progress-fill{background:var(--gn);height:100%;width:0;transition:width 0.3s linear;border-radius:8px}
+.mi-progress-label{font-size:9px;color:var(--t3);margin-top:4px}
+
+/* Footer */
+.mi-footer{height:52px;min-height:52px;background:var(--surf);border-top:1px solid var(--b1);padding:0 14px;display:flex;align-items:center;gap:12px}
+.mi-footer-note{flex:1;font-size:9px;color:var(--t3)}
+.mi-cancel{background:var(--b1);color:var(--t2);border:none;border-radius:8px;padding:8px 20px;font-family:'Inter',sans-serif;font-size:11px;font-weight:500;cursor:pointer}
+.mi-cancel:hover{background:var(--b2);color:var(--t1)}
+.mi-import{background:var(--gn);color:#fff;border:none;border-radius:8px;padding:8px 22px;font-family:'Inter',sans-serif;font-size:11px;font-weight:600;cursor:pointer}
+.mi-import:hover{background:#0ea070}
+.mi-import:disabled{opacity:0.4;cursor:not-allowed}
+
+/* Toast */
+.mi-toast{position:fixed;top:60px;right:20px;background:var(--gnD);border:1px solid var(--gn);border-left:3px solid var(--gn);border-radius:var(--radius);padding:10px 16px;color:var(--gn);font-size:11px;font-weight:600;z-index:100;display:none;box-shadow:0 4px 20px rgba(0,0,0,0.5)}
+.mi-toast.err{background:var(--rsD);border-color:var(--rs);border-left-color:var(--rs);color:var(--rs)}
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="mi-header">
+  <div class="mi-icon">⬇</div>
+  <div class="mi-title-wrap">
+    <div class="mi-title">MASS IMPORT SONGS</div>
+    <div class="mi-subtitle">Import multiple songs from a folder — auto-detect ID3 tags</div>
+  </div>
+  <div class="mi-header-spacer"></div>
+  <div class="mi-stat sel" id="stat-selected">0 Selected</div>
+  <div class="mi-stat ready" id="stat-ready">0 Ready</div>
+  <div class="mi-stat err" id="stat-errors">0 Errors</div>
+  <button class="mi-close" onclick="navigateTo('songs_library')">✕</button>
+</div>
+
+<!-- Main -->
+<div class="mi-main">
+
+  <!-- LEFT COLUMN -->
+  <div class="mi-left">
+
+    <!-- STEP 1 -->
+    <div class="mi-step s1">STEP 1 — SELECT FOLDER</div>
+    <div class="mi-folder-row">
+      <input class="mi-folder-input" id="folder-path" type="text" readonly placeholder="— No folder selected —" value="">
+      <button class="mi-browse" id="browse-btn">📁 Browse</button>
+      <button class="mi-scan" id="scan-btn">🔍 Scan</button>
+    </div>
+    <div class="mi-opts">
+      <label class="mi-opt active" id="opt-sub"><input type="checkbox" id="incl-sub" checked style="display:none"><span class="chk">✓</span>Include subfolders</label>
+      <label class="mi-opt active" id="opt-mp3"><input type="checkbox" id="chk-mp3" checked style="display:none"><span class="chk">✓</span>MP3</label>
+      <label class="mi-opt active" id="opt-wav"><input type="checkbox" id="chk-wav" checked style="display:none"><span class="chk">✓</span>WAV</label>
+      <label class="mi-opt active" id="opt-flac"><input type="checkbox" id="chk-flac" checked style="display:none"><span class="chk">✓</span>FLAC</label>
+      <div class="mi-info">Auto-detect ID3 tags (Artist, Title, Duration)</div>
+    </div>
+
+    <!-- STEP 2 -->
+    <div class="mi-step s2">STEP 2 — REVIEW FILES</div>
+    <div class="mi-table-wrap">
+      <table style="width:100%;border-collapse:collapse">
+        <thead>
+          <tr style="background:var(--card);border-bottom:1px solid var(--b1)">
+            <th style="padding:8px 12px;width:36px;text-align:left"></th>
+            <th style="padding:8px 8px;font-size:9px;color:var(--t3);letter-spacing:0.6px;text-align:left">FILENAME</th>
+            <th style="padding:8px 8px;font-size:9px;color:var(--t3);letter-spacing:0.6px;text-align:left">ARTIST (from ID3)</th>
+            <th style="padding:8px 8px;font-size:9px;color:var(--t3);letter-spacing:0.6px;text-align:left">TITLE (from ID3)</th>
+            <th style="padding:8px 8px;font-size:9px;color:var(--t3);letter-spacing:0.6px;text-align:left">DURATION</th>
+            <th style="padding:8px 8px;font-size:9px;color:var(--t3);letter-spacing:0.6px;text-align:left">STATUS</th>
+          </tr>
+        </thead>
+        <tbody id="file-list">
+          <tr><td colspan="6" style="text-align:center;padding:40px;color:#454D6D">📁 Select a folder above to scan for audio files</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Select All bar -->
+    <div class="mi-actions">
+      <button class="mi-btn-sm" onclick="selectAll()">☑ Select All</button>
+      <button class="mi-btn-sm" onclick="deselectAll()">☐ Deselect All</button>
+      <div class="mi-summary" id="file-summary">0 files found</div>
+    </div>
+
+  </div>
+
+  <!-- RIGHT COLUMN -->
+  <div class="mi-right">
+
+    <div class="mi-step s3">STEP 3 — DEFAULT SETTINGS</div>
+    <div style="font-size:9px;color:var(--t2);font-weight:500;margin-top:2px">Apply to ALL imported songs:</div>
+
+    <label>Default Category</label>
+    <select class="mi-select" id="def-category">
+      <option value="">Select category...</option>
+    </select>
+
+    <div class="mi-row2">
+      <div>
+        <label>Default Era</label>
+        <select class="mi-select" id="def-era">
+          <option value="">Select...</option>
+          <option value="60s">60s</option>
+          <option value="70s">70s</option>
+          <option value="80s">80s</option>
+          <option value="90s">90s</option>
+          <option value="2000s">2000s</option>
+          <option value="2010s">2010s</option>
+          <option value="2020s">2020s</option>
+        </select>
+      </div>
+      <div>
+        <label>Year</label>
+        <input type="number" class="mi-input" id="def-year" placeholder="2024">
+      </div>
+    </div>
+
+    <div class="mi-row2">
+      <div>
+        <label>Priority</label>
+        <input type="number" class="mi-input" id="def-priority" value="1" min="1" max="10">
+      </div>
+      <div>
+        <label>Enabled</label>
+        <div class="mi-toggle" id="def-enabled" onclick="toggleEnabled()">✓ Yes (Enabled)</div>
+      </div>
+    </div>
+
+    <div class="mi-step dup" style="margin-top:4px">DUPLICATE HANDLING</div>
+    <div class="mi-dup" id="opt-skipdup" onclick="toggleSkipDup()">
+      <span class="chk" style="background:var(--cyD);border-color:var(--cy);color:var(--cy)">✓</span>
+      Skip duplicate songs
+    </div>
+    <div style="font-size:9px;color:var(--t3);margin-top:2px">Duplicate check based on:</div>
+    <div style="background:var(--bg);border:1px solid var(--b1);border-radius:var(--radius);padding:6px 10px;font-size:11px;color:var(--t1)">Artist + Title match</div>
+
+    <div class="mi-step id3" style="margin-top:4px">ID3 TAG READING</div>
+    <div class="mi-id3-card">
+      <div>✓ Artist name</div>
+      <div>✓ Song title</div>
+      <div>✓ Duration</div>
+      <div>✓ Album</div>
+      <div>✓ Year</div>
+      <div>✓ BPM (if tagged)</div>
+    </div>
+
+    <div class="mi-step prog" style="margin-top:4px">IMPORT PROGRESS</div>
+    <div class="mi-progress-wrap"><div class="mi-progress-fill" id="prog-fill"></div></div>
+    <div class="mi-progress-label" id="prog-label">Ready to import — 0%</div>
+
+  </div>
+</div>
+
+<!-- Footer -->
+<div class="mi-footer">
+  <div class="mi-footer-note">* Songs with errors will be skipped. Songs without ID3 tags will need manual edit after import.</div>
+  <button class="mi-cancel" onclick="navigateTo('songs_library')">Cancel</button>
+  <button class="mi-import" id="import-btn" onclick="startImport()" disabled>⬇ Import Selected (0)</button>
+</div>
+
+<div class="mi-toast" id="toast"></div>
+
+<!-- JS -->
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script src="js/bridge_helper.js"></script>
+<script>
+
+// ── Global state ────────────────────────────────
+let scannedFiles = [];
+let defaultEnabled = true;
+let skipDuplicates = true;
+
+// ── Utilities ───────────────────────────────────
+function escapeHtml(s) {
+  return (s == null ? '' : String(s)).replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
+}
+
+function showToast(msg, isErr) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.toggle('err', !!isErr);
+  t.style.display = 'block';
+  setTimeout(() => { t.style.display = 'none'; }, 4000);
+}
+
+// ── Options (chip checkboxes) ───────────────────
+function wireOpts() {
+  const pairs = [
+    ['opt-sub', 'incl-sub'],
+    ['opt-mp3', 'chk-mp3'],
+    ['opt-wav', 'chk-wav'],
+    ['opt-flac', 'chk-flac'],
+  ];
+  pairs.forEach(([wrapId, chkId]) => {
+    const wrap = document.getElementById(wrapId);
+    const chk = document.getElementById(chkId);
+    wrap.addEventListener('click', (e) => {
+      e.preventDefault();
+      chk.checked = !chk.checked;
+      wrap.classList.toggle('active', chk.checked);
+    });
+  });
+}
+
+function toggleEnabled() {
+  defaultEnabled = !defaultEnabled;
+  const el = document.getElementById('def-enabled');
+  if (defaultEnabled) {
+    el.classList.remove('off');
+    el.textContent = '✓ Yes (Enabled)';
+  } else {
+    el.classList.add('off');
+    el.textContent = '✖ No (Disabled)';
+  }
+}
+
+function toggleSkipDup() {
+  skipDuplicates = !skipDuplicates;
+  const el = document.getElementById('opt-skipdup');
+  const chk = el.querySelector('.chk');
+  chk.textContent = skipDuplicates ? '✓' : '';
+  el.style.opacity = skipDuplicates ? '1' : '0.5';
+}
+
+// ── Browse → auto-Scan ──────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+
+  document.getElementById('browse-btn').addEventListener('click', () => {
+    callBridgeAsync('browse_folder', [], function(data) {
+      if (data && typeof data === 'string' && data.length > 0) {
+        document.getElementById('folder-path').value = data;
+        // Auto-trigger scan immediately
+        document.getElementById('scan-btn').click();
+      }
+    });
+  });
+
+  document.getElementById('scan-btn').addEventListener('click', () => {
+    const folderPath = document.getElementById('folder-path').value.trim();
+
+    if (!folderPath || folderPath.includes('No folder selected')) {
+      showToast('⚠ Please select a folder first!', true);
+      return;
+    }
+
+    // Show scanning state
+    const scanBtn = document.getElementById('scan-btn');
+    scanBtn.textContent = '⏳ Scanning...';
+    scanBtn.disabled = true;
+    document.getElementById('file-list').innerHTML =
+      '<tr><td colspan="6" style="text-align:center;padding:40px;color:#454D6D">🔍 Scanning folder...</td></tr>';
+
+    // Build options
+    const options = {
+      include_subfolders: document.getElementById('incl-sub').checked,
+      mp3: document.getElementById('chk-mp3').checked,
+      wav: document.getElementById('chk-wav').checked,
+      flac: document.getElementById('chk-flac').checked,
+    };
+
+    // Call bridge (async because Qt6 returns Promise for QWebChannel slots)
+    callBridgeAsync('scan_folder', [folderPath, JSON.stringify(options)], function(result) {
+      // Restore button
+      scanBtn.textContent = '🔍 Scan';
+      scanBtn.disabled = false;
+
+      if (!result) {
+        document.getElementById('file-list').innerHTML =
+          '<tr><td colspan="6" style="text-align:center;padding:40px;color:#F43F5E">❌ Scan failed — check folder path</td></tr>';
+        showToast('❌ Scan failed — check folder path', true);
+        return;
+      }
+
+      // Store globally and render
+      scannedFiles = result.files || [];
+      renderFileList(scannedFiles);
+      updateStats(result);
+    });
+  });
+
+});
+
+// ── Render file list ────────────────────────────
+function renderFileList(files) {
+  const tbody = document.getElementById('file-list');
+
+  if (!files || files.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:40px;color:#454D6D">No audio files found in folder</td></tr>';
+    updateImportButton();
+    updateHeaderStats();
+    return;
+  }
+
+  tbody.innerHTML = '';
+
+  files.forEach((file, i) => {
+    const statusColors = {
+      'Ready':    { bg: '#052E16', color: '#10B981' },
+      'No Tags':  { bg: '#2D1A00', color: '#F59E0B' },
+      'Error':    { bg: '#1F0A12', color: '#F43F5E' },
+    };
+    const sc = statusColors[file.status] || statusColors['Ready'];
+
+    const row = document.createElement('tr');
+    row.className = 'file-row';
+    row.style.cssText = `background:${i % 2 === 0 ? '#131626' : '#0A0C18'};cursor:pointer`;
+    const artistTxt = file.artist ? escapeHtml(file.artist) : '— Not found';
+    const titleTxt = file.title ? escapeHtml(file.title) : '— Not found';
+    row.innerHTML = `
+      <td style="padding:8px 12px">
+        <input type="checkbox" class="file-checkbox" data-index="${i}"
+          ${file.selected && file.status !== 'Error' ? 'checked' : ''}
+          ${file.status === 'Error' ? 'disabled' : ''}
+          style="cursor:pointer">
+      </td>
+      <td style="padding:8px;color:#8891B8;font-size:11px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:'Roboto Mono',monospace" title="${escapeHtml(file.file_path || file.filename)}">
+        ${escapeHtml(file.filename)}
+      </td>
+      <td style="padding:8px;color:${file.artist ? '#F1F5FF' : '#454D6D'};font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${artistTxt}</td>
+      <td style="padding:8px;color:${file.title ? '#F1F5FF' : '#454D6D'};font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${titleTxt}</td>
+      <td style="padding:8px;color:#8891B8;font-size:11px;font-family:'Roboto Mono',monospace">${escapeHtml(file.duration || '—')}</td>
+      <td style="padding:8px">
+        <span style="background:${sc.bg};color:${sc.color};padding:3px 8px;border-radius:4px;font-size:9px;font-weight:700">${file.status}</span>
+      </td>
+    `;
+    tbody.appendChild(row);
+  });
+
+  // Wire checkboxes
+  document.querySelectorAll('.file-checkbox').forEach(chk => {
+    chk.addEventListener('change', () => {
+      const idx = parseInt(chk.dataset.index, 10);
+      if (scannedFiles[idx]) scannedFiles[idx].selected = chk.checked;
+      updateImportButton();
+      updateHeaderStats();
+    });
+  });
+
+  updateImportButton();
+  updateHeaderStats();
+}
+
+// ── Stats ───────────────────────────────────────
+function updateStats(result) {
+  document.getElementById('stat-selected').textContent = (result.ready || 0) + ' Selected';
+  document.getElementById('stat-ready').textContent = (result.ready || 0) + ' Ready';
+  document.getElementById('stat-errors').textContent = (result.errors || 0) + ' Errors';
+  document.getElementById('file-summary').textContent =
+    `${result.total || 0} files found  •  ${result.ready || 0} ready  •  ${result.no_tags || 0} needs tags  •  ${result.errors || 0} errors`;
+}
+
+function updateImportButton() {
+  const sel = scannedFiles.filter(f => f.selected && f.status !== 'Error').length;
+  const btn = document.getElementById('import-btn');
+  btn.textContent = `⬇ Import Selected (${sel})`;
+  btn.disabled = sel === 0;
+}
+
+function updateHeaderStats() {
+  const selected = scannedFiles.filter(f => f.selected).length;
+  const ready = scannedFiles.filter(f => f.status === 'Ready').length;
+  const errors = scannedFiles.filter(f => f.status === 'Error').length;
+  const noTags = scannedFiles.filter(f => f.status === 'No Tags').length;
+  document.getElementById('stat-selected').textContent = selected + ' Selected';
+  document.getElementById('stat-ready').textContent = ready + ' Ready';
+  document.getElementById('stat-errors').textContent = errors + ' Errors';
+  document.getElementById('file-summary').textContent =
+    `${scannedFiles.length} files found  •  ${ready} ready  •  ${noTags} needs tags  •  ${errors} errors`;
+}
+
+function selectAll() {
+  scannedFiles.forEach(f => { if (f.status !== 'Error') f.selected = true; });
+  renderFileList(scannedFiles);
+}
+function deselectAll() {
+  scannedFiles.forEach(f => f.selected = false);
+  renderFileList(scannedFiles);
+}
+
+// ── Categories dropdown ─────────────────────────
+function loadCategories() {
+  callBridgeAsync('get_categories', [], function(data) {
+    if (!data) return;
+    const sel = document.getElementById('def-category');
+    data.forEach(c => {
+      const o = document.createElement('option');
+      o.value = c.id;
+      o.textContent = c.name;
+      sel.appendChild(o);
+    });
+  });
+}
+
+// ── Import ──────────────────────────────────────
+function startImport() {
+  const selected = scannedFiles.filter(f => f.selected && f.status !== 'Error');
+  if (!selected.length) return;
+
+  const fill = document.getElementById('prog-fill');
+  const lbl = document.getElementById('prog-label');
+  fill.style.width = '10%';
+  lbl.textContent = `Importing ${selected.length} songs — 10%`;
+
+  const payload = {
+    files: scannedFiles,
+    defaults: {
+      category_id: document.getElementById('def-category').value || null,
+      era: document.getElementById('def-era').value || '',
+      year: document.getElementById('def-year').value || '',
+      priority: document.getElementById('def-priority').value || '1',
+      enabled: defaultEnabled,
+    },
+    skip_duplicates: skipDuplicates,
+  };
+
+  let pct = 10;
+  const timer = setInterval(() => {
+    pct = Math.min(85, pct + 8);
+    fill.style.width = pct + '%';
+    lbl.textContent = `Importing — ${pct}%`;
+  }, 120);
+
+  callBridgeAsync('mass_import_songs', [JSON.stringify(payload)], function(data) {
+    clearInterval(timer);
+    if (!data) {
+      fill.style.width = '0%';
+      lbl.textContent = 'Import failed';
+      showToast('Import failed', true);
+      return;
+    }
+    fill.style.width = '100%';
+    lbl.textContent = `Done — ${data.imported} imported, ${data.skipped} skipped, ${data.errors} errors`;
+    showToast(data.message || 'Import complete');
+    setTimeout(() => { navigateTo('songs_library'); }, 2000);
+  });
+}
+
+// ── Boot ────────────────────────────────────────
+wireOpts();
+onBridgeReady(function() {
+  loadCategories();
+  document.getElementById('def-year').value = new Date().getFullYear();
+});
+</script>
+</body>
+</html>

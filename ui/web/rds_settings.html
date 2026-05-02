@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RDS Settings — RadioAI Studio Pro</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+/* ── RDS-specific overrides ──────────────────── */
+.breadcrumb .active{color:var(--cy);font-weight:600}
+
+/* Override body to allow scroll in main */
+.main{display:flex;overflow:hidden}
+
+/* Two-column layout */
+.col-left{flex:1;min-width:0;overflow-y:auto;padding:24px 28px;border-right:1px solid var(--b1)}
+.col-left::-webkit-scrollbar{width:6px}
+.col-left::-webkit-scrollbar-thumb{background:var(--b2);border-radius:3px}
+.col-right{flex:1;min-width:0;overflow-y:auto;padding:24px 28px}
+.col-right::-webkit-scrollbar{width:6px}
+.col-right::-webkit-scrollbar-thumb{background:var(--b2);border-radius:3px}
+
+/* Page section title */
+.section-title{font-size:16px;font-weight:700;color:var(--t1);margin-bottom:4px}
+.section-subtitle{font-size:12px;color:var(--t3);margin-bottom:24px;line-height:1.5}
+
+/* Config sections */
+.config-section{margin-bottom:24px;padding-left:14px;border-left:3px solid var(--cy)}
+.config-section.emergency{border-left-color:var(--rs)}
+.config-section-title{font-size:11px;font-weight:700;color:var(--cy);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:14px}
+.config-section.emergency .config-section-title{color:var(--rs)}
+
+/* Form rows */
+.form-row{margin-bottom:14px}
+.form-label{font-size:10px;font-weight:600;color:var(--t3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:5px}
+.form-input-row{display:flex;gap:8px;align-items:center}
+.form-input{flex:1;padding:8px 12px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);color:var(--t1);font-size:13px;font-family:'Inter',sans-serif}
+.form-input:focus{outline:none;border-color:var(--cy)}
+.form-input.emergency-input{border-color:var(--rs)}
+.form-input.emergency-input:focus{border-color:var(--rs);box-shadow:0 0 0 2px rgba(244,63,94,0.15)}
+.test-btn{padding:7px 14px;background:var(--tl);color:#fff;border:none;border-radius:var(--radius);font-family:'Inter',sans-serif;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;display:flex;align-items:center;gap:4px}
+.test-btn:hover{opacity:0.85}
+
+/* RT Preview card */
+.rt-preview{background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);padding:12px 14px;margin:10px 0 14px}
+.rt-preview-row{display:flex;justify-content:space-between;padding:3px 0;font-size:11px}
+.rt-preview-label{color:var(--t3)}
+.rt-preview-value{color:var(--t1);font-weight:500}
+
+/* Emergency buttons */
+.emergency-btns{display:flex;gap:10px;margin-top:10px}
+.btn-enable-emergency{padding:8px 18px;background:var(--gn);color:#fff;border:none;border-radius:var(--radius);font-family:'Inter',sans-serif;font-size:12px;font-weight:600;cursor:pointer}
+.btn-enable-emergency:hover{opacity:0.85}
+.btn-cancel-emergency{padding:8px 18px;background:var(--rs);color:#fff;border:none;border-radius:var(--radius);font-family:'Inter',sans-serif;font-size:12px;font-weight:600;cursor:pointer}
+.btn-cancel-emergency:hover{opacity:0.85}
+
+/* Save button */
+.save-btn{width:100%;padding:12px;background:var(--tl);color:#fff;border:none;border-radius:var(--radius);font-family:'Inter',sans-serif;font-size:14px;font-weight:700;cursor:pointer;margin-top:8px;letter-spacing:0.3px}
+.save-btn:hover{opacity:0.85}
+
+/* ── Right column ────────────────────────────── */
+.preview-title{font-size:14px;font-weight:700;color:var(--t1);margin-bottom:2px}
+.preview-subtitle{font-size:11px;color:var(--t3);margin-bottom:20px}
+
+/* FM Radio LCD display */
+.fm-display{background:#0a0e0a;border:2px solid var(--b2);border-radius:var(--radius-lg);padding:20px 24px;margin-bottom:16px;position:relative;overflow:hidden}
+.fm-display::before{content:'';position:absolute;top:0;left:0;right:0;bottom:0;background:linear-gradient(180deg,rgba(20,184,166,0.03) 0%,transparent 100%);pointer-events:none}
+.fm-freq-label{font-family:'Roboto Mono',monospace;font-size:10px;color:rgba(20,184,166,0.5);letter-spacing:1px;margin-bottom:4px}
+.fm-freq{font-family:'Roboto Mono',monospace;font-size:14px;color:rgba(20,184,166,0.7);margin-bottom:10px;letter-spacing:1px}
+.fm-ps{font-family:'Roboto Mono',monospace;font-size:28px;font-weight:700;color:#14B8A6;letter-spacing:4px;text-align:center;margin-bottom:8px;text-shadow:0 0 12px rgba(20,184,166,0.4)}
+.fm-rt{font-family:'Roboto Mono',monospace;font-size:13px;color:rgba(20,184,166,0.8);text-align:center;margin-bottom:8px;white-space:nowrap;overflow:hidden}
+.fm-rt-inner{display:inline-block;animation:scrollRT 12s linear infinite}
+@keyframes scrollRT{
+  0%{transform:translateX(100%)}
+  100%{transform:translateX(-100%)}
+}
+.fm-bottom{display:flex;justify-content:space-between;align-items:center;font-family:'Roboto Mono',monospace;font-size:10px;color:rgba(20,184,166,0.5)}
+
+/* DAB Display */
+.dab-display{background:var(--card);border:1px solid var(--b1);border-radius:var(--radius-lg);padding:16px 18px;margin-bottom:16px}
+.dab-label{font-size:9px;font-weight:600;color:var(--t3);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:10px}
+.dab-station{font-size:13px;font-weight:600;color:var(--t1);margin-bottom:6px}
+.dab-now{font-size:12px;color:var(--cy);margin-bottom:4px}
+.dab-next{font-size:11px;color:var(--t3)}
+
+/* Streaming App Display */
+.stream-display{background:var(--card);border:1px solid var(--b1);border-radius:var(--radius-lg);padding:16px 18px;margin-bottom:16px;display:flex;gap:14px;align-items:center}
+.stream-icon{width:48px;height:48px;border-radius:var(--radius);background:var(--p4);display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0}
+.stream-info{flex:1}
+.stream-artist{font-size:14px;font-weight:700;color:var(--t1);margin-bottom:2px}
+.stream-title{font-size:12px;color:var(--t2);margin-bottom:4px}
+.stream-station{font-size:10px;color:var(--t3)}
+
+/* Encoder status */
+.encoder-status{background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);padding:12px 14px;margin-bottom:16px;display:flex;align-items:center;gap:8px}
+.encoder-dot{width:8px;height:8px;border-radius:50%;background:var(--gn);flex-shrink:0;animation:pulse 2s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+.encoder-text{font-size:12px;color:var(--gn);font-weight:500}
+.encoder-label{font-size:9px;font-weight:600;color:var(--t3);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:8px}
+
+/* Stats row */
+.stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:16px}
+.stat-box{background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);padding:12px 10px;text-align:center}
+.stat-value{font-family:'Roboto Mono',monospace;font-size:18px;font-weight:700;margin-bottom:2px}
+.stat-label{font-size:9px;color:var(--t3);text-transform:uppercase;letter-spacing:0.5px}
+.stat-value.purple{color:var(--p1)}
+.stat-value.cyan{color:var(--cy)}
+.stat-value.green{color:var(--gn)}
+.stat-value.amber{color:var(--am)}
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="header">
+  <div class="logo" onclick="goBack()">
+    <div class="logo-icon">((●))</div>
+    <div class="logo-text"><div class="logo-title">RadioAI</div><div class="logo-sub">STUDIO PRO</div></div>
+  </div>
+  <div class="breadcrumb">
+    <a onclick="goBack()">Control Panel</a><span class="bc-sep">></span>
+    <a onclick="goToScheduling()">Scheduling</a><span class="bc-sep">></span>
+    <span class="active">RDS</span>
+  </div>
+  <div class="page-title-area">
+    <div class="page-title">RDS Settings</div>
+    <div class="page-subtitle">RadioAI Studio &bull; <span class="station-name">KISS FM 91.5</span></div>
+  </div>
+  <div class="header-spacer"></div>
+  <div style="display:flex;flex-direction:column;align-items:center;gap:1px">
+    <div class="clock-time" id="clock-time">00:00:00</div>
+    <div class="clock-date" id="clock-date"></div>
+  </div>
+  <div class="station-box">
+    <div class="station-label">ACTIVE STATION</div>
+    <div class="station-name" id="station-name">KISS FM 91.5</div>
+    <div class="station-loc" id="station-loc">Jaipur, Rajasthan</div>
+  </div>
+  <button class="open-studio-btn" onclick="openStudio()">&#9654; Open Studio</button>
+</div>
+
+<!-- MAIN 2-COLUMN LAYOUT -->
+<div class="main">
+
+  <!-- LEFT COLUMN — Config Form -->
+  <div class="col-left">
+    <div class="section-title">RDS &mdash; Radio Data System Configuration</div>
+    <div class="section-subtitle">Configure what displays on car radios, digital tuners and RDS-enabled devices</div>
+
+    <!-- BASIC RDS DATA -->
+    <div class="config-section">
+      <div class="config-section-title">Basic RDS Data</div>
+
+      <div class="form-row">
+        <div class="form-label">Programme Service (PS) &mdash; Station Name</div>
+        <div class="form-input-row">
+          <input class="form-input" type="text" id="rds-ps" value="KISS FM" maxlength="8">
+          <button class="test-btn" onclick="testField('ps')">Test &#9654;</button>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">Programme Type (PTY) &mdash; Genre Category</div>
+        <div class="form-input-row">
+          <input class="form-input" type="text" id="rds-pty" value="Pop Music">
+          <button class="test-btn" onclick="testField('pty')">Test &#9654;</button>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">Alternative Frequency (AF)</div>
+        <div class="form-input-row">
+          <input class="form-input" type="text" id="rds-af" value="91.5 MHz">
+          <button class="test-btn" onclick="testField('af')">Test &#9654;</button>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">Traffic Announcement (TA)</div>
+        <div class="form-input-row">
+          <input class="form-input" type="text" id="rds-ta" value="Off">
+          <button class="test-btn" onclick="testField('ta')">Test &#9654;</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- NOW PLAYING — AUTO UPDATE -->
+    <div class="config-section">
+      <div class="config-section-title">Now Playing &mdash; Auto Update</div>
+
+      <div class="form-row">
+        <div class="form-label">Radio Text (RT) Format</div>
+        <div class="form-input-row">
+          <input class="form-input" type="text" id="rds-rt-format" value="{artist} - {title}">
+        </div>
+      </div>
+
+      <div class="rt-preview">
+        <div style="font-size:10px;font-weight:600;color:var(--t3);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">Radio Text Preview</div>
+        <div class="rt-preview-row"><span class="rt-preview-label">Song</span><span class="rt-preview-value" id="rt-song">You Know Im No Good</span></div>
+        <div class="rt-preview-row"><span class="rt-preview-label">Title</span><span class="rt-preview-value" id="rt-title">You Know Im No Good</span></div>
+        <div class="rt-preview-row"><span class="rt-preview-label">Album</span><span class="rt-preview-value" id="rt-album">Back to Black</span></div>
+        <div class="rt-preview-row"><span class="rt-preview-label">Artist</span><span class="rt-preview-value" id="rt-artist">Amy Winehouse</span></div>
+        <div class="rt-preview-row"><span class="rt-preview-label">Category</span><span class="rt-preview-value" id="rt-category">Pop</span></div>
+        <div class="rt-preview-row"><span class="rt-preview-label">Duration</span><span class="rt-preview-value mono" id="rt-duration">3:41</span></div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">Update On</div>
+        <div class="form-input-row">
+          <input class="form-input" type="text" id="rds-update-on" value="Song change (Instant)" readonly style="color:var(--t2)">
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">Scroll Speed</div>
+        <div class="form-input-row">
+          <input class="form-input" type="text" id="rds-scroll" value="Normal (default)" readonly style="color:var(--t2)">
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">Max Length</div>
+        <div class="form-input-row">
+          <input class="form-input" type="text" id="rds-maxlen" value="64 chars" readonly style="color:var(--t2)">
+        </div>
+      </div>
+    </div>
+
+    <!-- Station Slogan -->
+    <div class="config-section">
+      <div class="config-section-title">Station Slogan (RT Static)</div>
+      <div class="form-row">
+        <div class="form-input-row">
+          <input class="form-input" type="text" id="rds-slogan" value="Kiss FM 91.5 — Jaipur's #1 Hit Music Station">
+        </div>
+      </div>
+    </div>
+
+    <!-- EMERGENCY OVERRIDE -->
+    <div class="config-section emergency">
+      <div class="config-section-title">Emergency Override</div>
+
+      <div class="form-row">
+        <div class="form-label">Emergency Alert Text (overrides all RDS when active)</div>
+        <div class="form-input-row">
+          <input class="form-input emergency-input" type="text" id="rds-emergency" placeholder="Enter emergency alert text...">
+        </div>
+      </div>
+
+      <div class="emergency-btns">
+        <button class="btn-enable-emergency" onclick="enableEmergency()">Enable Emergency</button>
+        <button class="btn-cancel-emergency" onclick="cancelEmergency()">Cancel Emergency</button>
+      </div>
+    </div>
+
+    <button class="save-btn" onclick="saveConfig()">Save RDS Configuration</button>
+  </div>
+
+  <!-- RIGHT COLUMN — Live Preview -->
+  <div class="col-right">
+    <div class="preview-title">LIVE RDS PREVIEW</div>
+    <div class="preview-subtitle">What listeners see right now</div>
+
+    <!-- FM Radio LCD Display -->
+    <div class="fm-display">
+      <div class="fm-freq-label">FM TUNER</div>
+      <div class="fm-freq">FM 91.5</div>
+      <div class="fm-ps" id="preview-ps">KISS FM</div>
+      <div class="fm-rt">
+        <span class="fm-rt-inner" id="preview-rt">Amy Winehouse &mdash; You Know Im No Good</span>
+      </div>
+      <div class="fm-bottom">
+        <span id="preview-pty">Pop Music</span>
+        <span id="preview-clock">21:56</span>
+      </div>
+    </div>
+
+    <!-- Digital Radio (DAB) Display -->
+    <div class="dab-display">
+      <div class="dab-label">Digital Radio (DAB) Display</div>
+      <div class="dab-station">Kiss FM 91.5 &bull; Jaipur, Rajasthan</div>
+      <div class="dab-now" id="dab-now">Now: Amy Winehouse &mdash; You Know Im No Good</div>
+      <div class="dab-next" id="dab-next">Next: Harry Styles &mdash; As It Was &bull; Pop Music</div>
+    </div>
+
+    <!-- Website / Streaming App Display -->
+    <div class="stream-display">
+      <div class="stream-icon">&#9835;</div>
+      <div class="stream-info">
+        <div class="stream-artist" id="stream-artist">Amy Winehouse</div>
+        <div class="stream-title" id="stream-title">You Know Im No Good</div>
+        <div class="stream-station">KISS FM 91.5 &bull; Now Playing</div>
+      </div>
+    </div>
+
+    <!-- RDS Encoder Status -->
+    <div>
+      <div class="encoder-label">RDS Encoder</div>
+      <div class="encoder-status">
+        <span class="encoder-dot"></span>
+        <span class="encoder-text">Connected &bull; Sending data &bull; Last update: 0.3s ago</span>
+      </div>
+    </div>
+
+    <!-- Stats Row -->
+    <div class="stats-row">
+      <div class="stat-box">
+        <div class="stat-value purple">~18</div>
+        <div class="stat-label">Listeners</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value cyan">3x/song</div>
+        <div class="stat-label">Sent Rate</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value green">42 chars</div>
+        <div class="stat-label">RT Length</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value amber">98%</div>
+        <div class="stat-label">Coverage</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- STATUS BAR -->
+<div class="status-bar">
+  <span class="status-indicator"><span class="status-dot" style="background:var(--p1)"></span> AUTO MODE</span>
+  <span class="status-indicator"><span class="status-dot" style="background:var(--gn)"></span> RDS Active</span>
+  <span class="status-indicator"><span class="status-dot" style="background:var(--gn)"></span> Encoder Online</span>
+  <span class="status-spacer"></span>
+  <span class="status-info">RadioAI Studio Pro v1.0</span>
+</div>
+
+<script>
+// ── Bridge ──────────────────────────────────────
+var bridge = window.radioBridge || null;
+
+function goBack(){ window.location.href='control_panel.html'; }
+function goToScheduling(){ window.location.href='control_panel.html#scheduling'; }
+
+function openStudio(){
+  if(bridge){ try { navigateTo('studio_screen'); } catch(e){} }
+}
+
+// ── Clock ───────────────────────────────────────
+function updateClock(){
+  var now = new Date();
+  var hh = String(now.getHours()).padStart(2, '0');
+  var mm = String(now.getMinutes()).padStart(2, '0');
+  var ss = String(now.getSeconds()).padStart(2, '0');
+  document.getElementById('clock-time').textContent = hh + ':' + mm + ':' + ss;
+
+  var days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  var months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  document.getElementById('clock-date').textContent = days[now.getDay()] + ', ' + now.getDate() + ' ' + months[now.getMonth()] + ' ' + now.getFullYear();
+
+  // Update preview clock
+  document.getElementById('preview-clock').textContent = hh + ':' + mm;
+}
+
+// ── Form Interactions ───────────────────────────
+function testField(field){
+  var btn = event.target;
+  var origText = btn.innerHTML;
+  btn.innerHTML = 'Sent &#10003;';
+  btn.style.background = 'var(--gn)';
+  setTimeout(function(){
+    btn.innerHTML = origText;
+    btn.style.background = '';
+  }, 1500);
+}
+
+function updatePreview(){
+  var ps = document.getElementById('rds-ps').value || 'KISS FM';
+  var pty = document.getElementById('rds-pty').value || 'Pop Music';
+  var rtFormat = document.getElementById('rds-rt-format').value || '{artist} - {title}';
+
+  // Update PS in FM display
+  document.getElementById('preview-ps').textContent = ps.toUpperCase();
+
+  // Update PTY
+  document.getElementById('preview-pty').textContent = pty;
+
+  // Build RT string from format
+  var rt = rtFormat
+    .replace('{artist}', document.getElementById('rt-artist').textContent)
+    .replace('{title}', document.getElementById('rt-title').textContent);
+  document.getElementById('preview-rt').textContent = rt;
+
+  // Update RT length stat
+  var lenEl = document.querySelectorAll('.stat-value.green');
+  if(lenEl.length) lenEl[0].textContent = rt.length + ' chars';
+}
+
+// Wire up live preview on input changes
+document.getElementById('rds-ps').addEventListener('input', updatePreview);
+document.getElementById('rds-pty').addEventListener('input', updatePreview);
+document.getElementById('rds-rt-format').addEventListener('input', updatePreview);
+
+function enableEmergency(){
+  var text = document.getElementById('rds-emergency').value;
+  if(!text.trim()){
+    document.getElementById('rds-emergency').style.borderColor = 'var(--rs)';
+    document.getElementById('rds-emergency').setAttribute('placeholder', 'Please enter emergency text first');
+    document.getElementById('rds-emergency').focus();
+    return;
+  }
+  // Override all previews with emergency text
+  document.getElementById('preview-rt').textContent = '*** ' + text + ' ***';
+  document.getElementById('dab-now').textContent = 'EMERGENCY: ' + text;
+  document.getElementById('stream-title').textContent = 'EMERGENCY: ' + text;
+  document.getElementById('stream-artist').textContent = 'ALERT';
+
+  // Visual feedback
+  document.querySelector('.fm-display').style.borderColor = 'var(--rs)';
+  document.querySelector('.fm-ps').style.color = 'var(--rs)';
+  document.querySelector('.fm-ps').style.textShadow = '0 0 12px rgba(244,63,94,0.6)';
+}
+
+function cancelEmergency(){
+  document.getElementById('rds-emergency').value = '';
+  // Restore normal previews
+  document.querySelector('.fm-display').style.borderColor = '';
+  document.querySelector('.fm-ps').style.color = '';
+  document.querySelector('.fm-ps').style.textShadow = '';
+  document.getElementById('dab-now').textContent = 'Now: Amy Winehouse \u2014 You Know Im No Good';
+  document.getElementById('stream-title').textContent = 'You Know Im No Good';
+  document.getElementById('stream-artist').textContent = 'Amy Winehouse';
+  updatePreview();
+}
+
+function saveConfig(){
+  var btn = document.querySelector('.save-btn');
+  var origText = btn.textContent;
+  btn.textContent = 'Saved Successfully!';
+  btn.style.background = 'var(--gn)';
+  setTimeout(function(){
+    btn.textContent = origText;
+    btn.style.background = '';
+  }, 2000);
+}
+
+// ── Init ────────────────────────────────────────
+function init(){
+  updateClock();
+  setInterval(updateClock, 1000);
+  updatePreview();
+}
+
+document.addEventListener('DOMContentLoaded', init);
+</script>
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script src="js/bridge_helper.js"></script>
+</body>
+</html>

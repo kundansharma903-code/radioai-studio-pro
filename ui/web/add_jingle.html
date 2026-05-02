@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>New Jingle — RadioAI Studio Pro</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+body{overflow:hidden}
+body::before,body::after{display:none!important}
+.page-wrap{display:flex;flex-direction:column;height:100vh;position:relative;z-index:1}
+.page-header{display:flex;align-items:center;gap:12px;padding:12px 24px;background:var(--surf);border-bottom:1px solid var(--b1)}
+.page-icon{font-size:22px;color:var(--am)}
+.page-title{font-size:18px;font-weight:700;letter-spacing:1px}
+.page-subtitle{font-size:10px;color:var(--t3)}
+.auto-code{margin-left:auto;text-align:right;background:var(--card);padding:6px 12px;border-radius:var(--radius);border:1px solid var(--b1)}
+.auto-code-label{font-size:8px;color:var(--t3);letter-spacing:1px}
+.auto-code-val{font-family:'Roboto Mono',monospace;font-size:16px;font-weight:700;color:var(--am)}
+.close-btn{width:30px;height:30px;border-radius:50%;background:var(--card);border:1px solid var(--b1);display:flex;align-items:center;justify-content:center;color:var(--t2);font-size:14px;cursor:pointer;margin-left:12px}
+.close-btn:hover{background:var(--b1);color:var(--t1)}
+
+.page-body{flex:1;display:flex;overflow:hidden}
+.col-left{flex:1;padding:14px 24px;overflow-y:auto;min-width:0}
+.col-left::-webkit-scrollbar{width:6px}
+.col-left::-webkit-scrollbar-thumb{background:var(--b2);border-radius:3px}
+.col-right{width:300px;min-width:260px;border-left:1px solid var(--b1);padding:14px 18px;overflow-y:auto}
+.col-right::-webkit-scrollbar{width:6px}
+.col-right::-webkit-scrollbar-thumb{background:var(--b2);border-radius:3px}
+
+.form-row{display:flex;gap:12px;margin-bottom:10px}
+.form-row .form-group{flex:1}
+.form-group{margin-bottom:10px}
+.form-label{font-size:10px;color:var(--t3);margin-bottom:3px;text-transform:uppercase;letter-spacing:0.5px}
+.form-label .req{color:var(--rs)}
+.form-input{width:100%;padding:8px 12px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);color:var(--t1);font-size:12px;font-family:'Inter',sans-serif}
+.form-input:focus{outline:none;border-color:var(--am)}
+.form-input::placeholder{color:var(--t4)}
+.form-input:read-only{color:var(--t3)}
+.form-select{width:100%;padding:8px 12px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);color:var(--t1);font-size:12px;font-family:'Inter',sans-serif;appearance:none;cursor:pointer}
+.form-textarea{width:100%;padding:8px 12px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);color:var(--t1);font-size:12px;font-family:'Inter',sans-serif;resize:vertical;min-height:55px}
+
+.section-title{font-size:10px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;padding:8px 0 6px;border-bottom:1px solid var(--b1);margin:10px 0 10px;border-left:3px solid;padding-left:10px}
+.section-title.purple{color:var(--p1);border-left-color:var(--p1)}
+.section-title.gray{color:var(--t2);border-left-color:var(--b2)}
+.section-title.amber{color:var(--am);border-left-color:var(--am)}
+.section-title.green{color:var(--gn);border-left-color:var(--gn)}
+.section-title.cyan{color:var(--cy);border-left-color:var(--cy)}
+
+/* Category pills — 4 cols × 2 rows */
+.cat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.cat-pill{padding:12px 10px;border-radius:var(--radius);font-size:11px;font-weight:600;cursor:pointer;border:1px solid var(--b1);background:var(--card);color:var(--t3);transition:all 0.15s;text-align:center}
+.cat-pill:hover{opacity:0.85}
+.cat-pill.active{color:#fff;border-color:transparent;box-shadow:0 0 0 2px rgba(255,255,255,0.1)}
+
+/* Audio file row */
+.file-row{display:flex;gap:6px;align-items:center}
+.file-input{flex:1}
+.file-btn{padding:8px 14px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);color:var(--t2);font-size:12px;cursor:pointer;font-family:'Inter',sans-serif}
+.file-btn:hover{background:var(--b1)}
+.file-btn.edit{border-color:var(--p1);color:var(--p1)}
+.file-btn.edit:hover{background:var(--p4)}
+
+.waveform{display:flex;gap:2px;height:40px;align-items:flex-end;padding:4px 0;margin:8px 0 4px}
+.wave-bar{flex:1;background:var(--p1);border-radius:1px;min-width:1px;opacity:0.7}
+.preview-label{display:flex;align-items:center;gap:6px;color:var(--p1);font-size:11px;cursor:pointer}
+
+/* Right panel */
+.avail-box{background:var(--gnD);border:1px solid var(--gn);border-radius:var(--radius);padding:12px}
+.avail-row{display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer}
+.avail-check{width:16px;height:16px;border-radius:4px;border:2px solid var(--b2);display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--gn)}
+.avail-check.active{background:var(--gn);border-color:var(--gn);color:#000}
+.avail-label{font-size:12px;font-weight:600;color:var(--gn)}
+.avail-desc{font-size:10px;color:var(--t3)}
+
+.sched-box{background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);padding:12px}
+.sched-note{font-size:9px;color:var(--t3);margin-top:6px;font-style:italic}
+
+.linked-box{background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);padding:14px;text-align:center;position:relative;min-height:60px;display:flex;align-items:center;justify-content:center}
+.linked-empty{color:var(--t3);font-size:11px}
+.linked-buttons{position:absolute;right:8px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:4px}
+.linked-btn{width:24px;height:24px;border-radius:50%;border:1px solid var(--b2);background:var(--card);color:var(--t3);font-size:12px;cursor:pointer}
+.linked-btn:hover{background:var(--b1)}
+
+.ai-btn{display:block;width:100%;padding:12px;background:var(--p4);border:1px solid var(--p1);border-radius:var(--radius);color:var(--p1);font-size:12px;font-weight:600;cursor:pointer;font-family:'Inter',sans-serif;margin-top:12px;text-align:left}
+.ai-btn:hover{background:var(--p3)}
+.ai-btn-sub{font-size:10px;color:var(--t3);font-weight:400;margin-top:2px}
+
+/* Footer */
+.page-footer{display:flex;align-items:center;padding:10px 24px;background:var(--surf);border-top:1px solid var(--b1);gap:12px}
+.footer-note{font-size:10px;color:var(--t3);flex:1}
+.footer-note .req{color:var(--rs)}
+.btn-cancel{padding:8px 24px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);color:var(--t2);font-size:13px;font-weight:600;cursor:pointer;font-family:'Inter',sans-serif}
+.btn-cancel:hover{background:var(--b1);color:var(--t1)}
+.btn-save{padding:8px 24px;background:var(--p1);border:none;border-radius:var(--radius);color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:'Inter',sans-serif;display:flex;align-items:center;gap:6px}
+.btn-save:hover{background:var(--p2)}
+</style>
+</head>
+<body>
+<div class="page-wrap">
+
+  <div class="page-header">
+    <div class="page-icon">🔔</div>
+    <div>
+      <div class="page-title">NEW JINGLE</div>
+      <div class="page-subtitle">Add a new station jingle to the library</div>
+    </div>
+    <div class="auto-code">
+      <div class="auto-code-label">AUTO CODE</div>
+      <div class="auto-code-val" id="auto-code">JNG-----</div>
+    </div>
+    <div class="close-btn" onclick="cancelJingle()">✕</div>
+  </div>
+
+  <div class="page-body">
+
+    <!-- LEFT COLUMN -->
+    <div class="col-left">
+
+      <div class="form-group">
+        <div class="form-label">Jingle Title <span class="req">*</span></div>
+        <input class="form-input" type="text" id="j-name" placeholder="Enter jingle name...">
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <div class="form-label">Author</div>
+          <input class="form-input" type="text" id="j-author" placeholder="e.g. RadioAI">
+        </div>
+        <div class="form-group">
+          <div class="form-label">Playlister Code</div>
+          <input class="form-input" type="text" id="j-playcode" readonly>
+        </div>
+        <div class="form-group">
+          <div class="form-label">Entry Date</div>
+          <input class="form-input" type="text" id="j-entry" value="Now  (Auto)" readonly>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <div class="form-label">Comments</div>
+        <textarea class="form-textarea" id="j-comments"></textarea>
+      </div>
+
+      <div class="section-title purple">CATEGORY</div>
+      <div class="cat-grid" id="cat-grid">
+        <div class="cat-pill" data-cat="Station ID" data-color="#8B5CF6">Station ID</div>
+        <div class="cat-pill" data-cat="Shotguns" data-color="#06B6D4">Shotguns</div>
+        <div class="cat-pill" data-cat="Ad Break" data-color="#F59E0B">Ad Break</div>
+        <div class="cat-pill" data-cat="News Break" data-color="#F43F5E">News Break</div>
+        <div class="cat-pill" data-cat="Weather" data-color="#14B8A6">Weather</div>
+        <div class="cat-pill" data-cat="Traffic" data-color="#3B82F6">Traffic</div>
+        <div class="cat-pill" data-cat="Promo" data-color="#10B981">Promo</div>
+        <div class="cat-pill" data-cat="Signature" data-color="#EC4899">Signature</div>
+      </div>
+
+      <div class="section-title gray">TRACK PROPERTIES</div>
+      <div class="form-row">
+        <div class="form-group">
+          <div class="form-label">Properties</div>
+          <select class="form-select" id="j-properties">
+            <option>Regular</option>
+            <option selected>Top of Hour</option>
+            <option>Special</option>
+            <option>News</option>
+            <option>Info</option>
+            <option>Signature</option>
+            <option>Ads</option>
+            <option>Promo</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <div class="form-label">Duration</div>
+          <input class="form-input" type="text" id="j-duration" value="0:05" placeholder="0:05">
+        </div>
+        <div class="form-group">
+          <div class="form-label">BPM</div>
+          <input class="form-input" type="number" id="j-bpm" placeholder="Optional">
+        </div>
+        <div class="form-group">
+          <div class="form-label">Era / Year</div>
+          <input class="form-input" type="number" id="j-year" value="2026">
+        </div>
+      </div>
+
+      <div class="section-title amber">AUDIO FILE</div>
+      <div class="file-row">
+        <input class="form-input file-input" type="text" id="j-filepath" placeholder="C:\Audio\Jingles\select file..." readonly>
+        <button class="file-btn" onclick="browseAudio()">...</button>
+        <button class="file-btn edit" onclick="editAudio()">Edit</button>
+      </div>
+      <div class="waveform" id="waveform"></div>
+      <div class="preview-label" onclick="previewAudio()">▶ Preview</div>
+
+    </div>
+
+    <!-- RIGHT COLUMN -->
+    <div class="col-right">
+
+      <div class="section-title green">AVAILABILITY</div>
+      <div class="avail-box">
+        <div class="avail-row" onclick="setAvail(true)">
+          <div class="avail-check active" id="avail-enabled">✓</div>
+          <div>
+            <div class="avail-label">Enabled</div>
+            <div class="avail-desc">Jingle will play in rotation</div>
+          </div>
+        </div>
+        <div class="avail-row" onclick="setAvail(false)">
+          <div class="avail-check" id="avail-disabled"></div>
+          <div>
+            <div class="avail-label" style="color:var(--t2)">Disabled (Inactive)</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section-title cyan">SCHEDULING</div>
+      <div class="sched-box">
+        <div class="form-label">Clock Assignment</div>
+        <select class="form-select" id="j-clock">
+          <option>Select clock...</option>
+          <option>Morning Drive</option>
+          <option>Daytime</option>
+          <option>Drive Time</option>
+          <option>Night</option>
+        </select>
+        <div class="sched-note">Can also use: Playlists, Force Clocks, Final Log</div>
+      </div>
+
+      <div class="section-title amber">SEPARATION SETTINGS</div>
+      <div class="form-row">
+        <div class="form-group">
+          <div class="form-label">Min gap between plays</div>
+          <input class="form-input" type="text" id="j-mingap" value="30 min">
+        </div>
+        <div class="form-group">
+          <div class="form-label">Max per hour</div>
+          <input class="form-input" type="text" id="j-maxhour" value="2 plays">
+        </div>
+      </div>
+
+      <div class="section-title gray">LINKED SPOTS</div>
+      <div class="linked-box">
+        <div class="linked-empty">No linked spots</div>
+        <div class="linked-buttons">
+          <button class="linked-btn">+</button>
+          <button class="linked-btn">−</button>
+        </div>
+      </div>
+
+      <button class="ai-btn" onclick="autoFillMetadata()">
+        ✦ AI Auto-fill Metadata
+        <div class="ai-btn-sub">Fill category, duration from audio</div>
+      </button>
+
+    </div>
+
+  </div>
+
+  <div class="page-footer">
+    <div class="footer-note"><span class="req">*</span> Required fields</div>
+    <button class="btn-cancel" onclick="cancelJingle()">Cancel</button>
+    <button class="btn-save" onclick="saveJingle()">✓ Save</button>
+  </div>
+
+</div>
+
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script src="js/bridge_helper.js"></script>
+<script>
+var selectedCategory = 'Station ID';
+var editJingleId = null;
+var availability = true;
+
+onBridgeReady(function(){
+  // Generate auto code
+  callBridgeAsync('get_jingles', ['{}'], function(data){
+    if(data && data.total !== undefined){
+      var nextNum = data.total + 1;
+      var code = 'JNG-' + String(1690 + nextNum).padStart(4, '0');
+      document.getElementById('auto-code').textContent = code;
+      document.getElementById('j-playcode').value = code.replace('JNG-', 'JI-');
+    }
+  });
+  // Check edit mode
+  var editId = sessionStorage.getItem('edit_jingle_id');
+  if(editId){
+    sessionStorage.removeItem('edit_jingle_id');
+    editJingleId = parseInt(editId);
+    loadJingleForEdit(editJingleId);
+  }
+  // Init
+  setCategory('Station ID');
+  drawWaveform();
+  autoComment();
+});
+
+function autoComment(){
+  var now = new Date();
+  var date = String(now.getDate()).padStart(2,'0') + '/' + String(now.getMonth()+1).padStart(2,'0') + '/' + now.getFullYear();
+  var time = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0') + ' ' + (now.getHours() >= 12 ? 'PM' : 'AM');
+  document.getElementById('j-comments').placeholder = 'Created by DESKTOP\\Guest on ' + date + ' ' + time;
+}
+
+function loadJingleForEdit(id){
+  callBridgeAsync('get_jingle', [id], function(data){
+    if(!data) return;
+    document.querySelector('.page-title').textContent = 'EDIT JINGLE';
+    document.querySelector('.page-subtitle').textContent = 'Update jingle details';
+    document.getElementById('j-name').value = data.name || '';
+    document.getElementById('j-duration').value = data.duration || '0:05';
+    if(data.properties){
+      var propSel = document.getElementById('j-properties');
+      for(var i=0;i<propSel.options.length;i++){
+        if(propSel.options[i].text === data.properties){ propSel.selectedIndex = i; break; }
+      }
+    }
+    document.getElementById('j-playcode').value = data.playlister_code || '';
+    document.getElementById('auto-code').textContent = data.playlister_code || '------';
+    document.getElementById('j-filepath').value = data.file_path || '';
+    setAvail(data.is_enabled !== false);
+    if(data.category){ setCategory(data.category); }
+    var btn = document.querySelector('.btn-save');
+    btn.textContent = '✓ Update';
+  });
+}
+
+// ── Category pills ──────────────────────────────
+document.querySelectorAll('.cat-pill').forEach(function(pill){
+  pill.addEventListener('click', function(){
+    setCategory(pill.getAttribute('data-cat'));
+  });
+});
+
+function setCategory(catName){
+  selectedCategory = catName;
+  document.querySelectorAll('.cat-pill').forEach(function(p){
+    if(p.getAttribute('data-cat') === catName){
+      p.classList.add('active');
+      var color = p.getAttribute('data-color');
+      p.style.background = color;
+      p.style.borderColor = color;
+    } else {
+      p.classList.remove('active');
+      p.style.background = '';
+      p.style.borderColor = '';
+    }
+  });
+}
+
+// ── Availability ────────────────────────────────
+function setAvail(enabled){
+  availability = enabled;
+  document.getElementById('avail-enabled').classList.toggle('active', enabled);
+  document.getElementById('avail-enabled').innerHTML = enabled ? '✓' : '';
+  document.getElementById('avail-disabled').classList.toggle('active', !enabled);
+  document.getElementById('avail-disabled').innerHTML = !enabled ? '✓' : '';
+}
+
+// ── Audio file ──────────────────────────────────
+function browseAudio(){
+  callBridgeAsync('browse_audio_file', [], function(path){
+    if(path){ document.getElementById('j-filepath').value = path; }
+  });
+}
+
+function editAudio(){ alert('Audio Cue Editor — coming soon'); }
+
+function previewAudio(){
+  var fp = document.getElementById('j-filepath').value;
+  if(!fp){ alert('Select an audio file first'); return; }
+  alert('Audio preview coming in next update');
+}
+
+function drawWaveform(){
+  var container = document.getElementById('waveform');
+  container.innerHTML = '';
+  for(var i = 0; i < 80; i++){
+    var bar = document.createElement('div');
+    bar.className = 'wave-bar';
+    bar.style.height = (20 + Math.random() * 70) + '%';
+    container.appendChild(bar);
+  }
+}
+
+function autoFillMetadata(){
+  var fp = document.getElementById('j-filepath').value;
+  if(!fp){ alert('Select an audio file first'); return; }
+  alert('AI Auto-fill will analyze:\n' + fp + '\n\nComing in next update.');
+}
+
+// ── Save jingle ─────────────────────────────────
+function saveJingle(){
+  var name = document.getElementById('j-name').value.trim();
+  if(!name){ alert('⚠ Jingle title is required!'); document.getElementById('j-name').focus(); return; }
+
+  var payload = {
+    name: name,
+    category: selectedCategory,
+    duration: document.getElementById('j-duration').value || '0:05',
+    properties: document.getElementById('j-properties').options[document.getElementById('j-properties').selectedIndex].text,
+    playlister_code: document.getElementById('j-playcode').value,
+    file_path: document.getElementById('j-filepath').value,
+    is_enabled: availability
+  };
+  if(editJingleId) payload.id = editJingleId;
+
+  callBridgeAsync('save_jingle', [JSON.stringify(payload)], function(data){
+    if(data){
+      alert((editJingleId ? '✅ Jingle updated!' : '✅ Jingle saved!') + '\n\n"' + name + '"');
+      window.location.href = 'jingles_library.html';
+    } else {
+      alert('❌ Failed to save jingle');
+    }
+  });
+}
+
+function cancelJingle(){
+  window.location.href = 'jingles_library.html';
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spot Programming — RadioAI Studio Pro</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+body{overflow:hidden}
+body::before,body::after{display:none!important}
+.page-wrap{display:flex;flex-direction:column;height:100vh;position:relative;z-index:1}
+.page-header{display:flex;align-items:center;gap:12px;padding:12px 24px;background:var(--surf);border-bottom:1px solid var(--b1)}
+.page-icon{font-size:20px;color:var(--am)}
+.page-title{font-size:18px;font-weight:700;letter-spacing:1px}
+.page-subtitle{font-size:10px;color:var(--t3)}
+.preset-box{margin-left:auto;display:flex;flex-direction:column;align-items:flex-end;gap:2px}
+.preset-label{font-size:9px;color:var(--t3);letter-spacing:1px}
+.preset-select{padding:6px 12px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);color:var(--t2);font-size:11px;font-family:'Inter',sans-serif;cursor:pointer}
+.close-btn{width:30px;height:30px;border-radius:50%;background:var(--card);border:1px solid var(--b1);display:flex;align-items:center;justify-content:center;color:var(--t2);font-size:14px;cursor:pointer;margin-left:12px}
+
+.action-bar{display:flex;align-items:center;gap:10px;padding:10px 24px;background:var(--panel);border-bottom:1px solid var(--b1)}
+.act-btn{padding:7px 14px;border-radius:var(--radius);font-family:'Inter',sans-serif;font-size:11px;font-weight:600;cursor:pointer;border:1px solid var(--b1);background:var(--card);color:var(--t2)}
+.act-btn:hover{background:var(--b1);color:var(--t1)}
+.act-plus{background:var(--gn);border-color:var(--gn);color:#fff}
+.act-minus{background:var(--rs);border-color:var(--rs);color:#fff}
+
+.page-body{flex:1;display:flex;overflow:hidden}
+
+/* Left panel */
+.left-panel{width:220px;min-width:200px;padding:14px 16px;border-right:1px solid var(--b1);overflow-y:auto}
+.lp-field{margin-bottom:12px}
+.lp-field-label{font-size:10px;color:var(--t3);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.5px}
+.lp-field-input,.lp-field-select{width:100%;padding:8px 10px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);color:var(--t1);font-size:12px;font-family:'Inter',sans-serif}
+.spots-count{font-family:'Roboto Mono',monospace;font-size:36px;font-weight:700;color:var(--am);text-align:center;padding:12px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);margin-top:4px}
+.lp-btn{width:100%;padding:8px;border-radius:var(--radius);font-family:'Inter',sans-serif;font-size:11px;font-weight:600;cursor:pointer;margin-top:6px;border:1px solid}
+.lp-mass{background:var(--p4);border-color:var(--p1);color:var(--p1)}
+.lp-clear{background:var(--rsD);border-color:var(--rs);color:var(--rs)}
+.lp-set{background:var(--gnD);border-color:var(--gn);color:var(--gn)}
+.lp-preview-label{font-size:10px;color:var(--t3);margin-top:16px;text-transform:uppercase}
+
+/* Schedule grid */
+.schedule-wrap{flex:1;overflow:auto;position:relative}
+.schedule-wrap::-webkit-scrollbar{width:8px;height:8px}
+.schedule-wrap::-webkit-scrollbar-thumb{background:var(--b2);border-radius:4px}
+.schedule-table{border-collapse:collapse;width:100%;min-width:700px}
+.schedule-table th{position:sticky;top:0;background:var(--surf);padding:10px 8px;font-size:11px;font-weight:700;text-align:center;border-bottom:1px solid var(--b1);border-right:1px solid var(--b1);z-index:1}
+.schedule-table th.time-head{left:0;z-index:2;color:var(--t3);width:80px}
+.schedule-table th.day-head{color:var(--p1)}
+.schedule-table td{padding:0;border-right:1px solid var(--b1);border-bottom:1px solid var(--b1);height:20px}
+.schedule-table td.time-cell{background:var(--surf);color:var(--t3);font-family:'Roboto Mono',monospace;font-size:11px;text-align:center;position:sticky;left:0;z-index:1;padding:0 8px;border-right:1px solid var(--b1)}
+.schedule-table td.slot-cell{cursor:pointer;min-width:80px;text-align:center;font-size:10px;color:var(--t4);transition:background 0.1s}
+.schedule-table td.slot-cell:hover{background:rgba(139,92,246,0.1)}
+.schedule-table td.slot-cell.active{background:rgba(245,158,11,0.2);border:1px solid var(--am);color:var(--am);font-family:'Roboto Mono',monospace;font-weight:600}
+
+.scroll-note{position:absolute;bottom:10px;left:50%;transform:translateX(-50%);color:var(--t3);font-size:10px;pointer-events:none}
+
+.page-footer{display:flex;align-items:center;padding:10px 24px;background:var(--surf);border-top:1px solid var(--b1);gap:12px}
+.footer-check{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--t3);cursor:pointer;flex:1}
+.check-box{width:16px;height:16px;border:1px solid var(--b2);border-radius:3px;background:var(--card)}
+.check-box.checked{background:var(--p1);border-color:var(--p1)}
+.btn-cancel{padding:8px 24px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);color:var(--t2);font-size:13px;font-weight:600;cursor:pointer;font-family:'Inter',sans-serif}
+.btn-save{padding:8px 24px;background:var(--p1);border:none;border-radius:var(--radius);color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:'Inter',sans-serif}
+</style>
+</head>
+<body>
+<div class="page-wrap">
+
+  <div class="page-header">
+    <div class="page-icon">📅</div>
+    <div>
+      <div class="page-title">SPOT PROGRAMMING</div>
+      <div class="page-subtitle" id="camp-info">Loading... • Set break times for each day</div>
+    </div>
+    <div class="preset-box">
+      <div class="preset-label">Presets</div>
+      <select class="preset-select" onchange="applyPreset(this.value)">
+        <option value="">Select Preset ▾</option>
+        <option value="hourly">Every Hour (00-23)</option>
+        <option value="drive">Drive Time Only</option>
+        <option value="weekdays">Weekdays 9-5</option>
+        <option value="clear">Clear All</option>
+      </select>
+    </div>
+    <div class="close-btn" onclick="cancelProg()">✕</div>
+  </div>
+
+  <div class="action-bar">
+    <button class="act-btn" onclick="pasteToSelected()">Paste to Selected Day</button>
+    <button class="act-btn" onclick="pasteToAll()">Paste to All Days</button>
+    <button class="act-btn act-plus" onclick="addRow()">+</button>
+    <button class="act-btn act-minus" onclick="removeRow()">−</button>
+  </div>
+
+  <div class="page-body">
+
+    <!-- LEFT PANEL -->
+    <div class="left-panel">
+      <div class="lp-field">
+        <div class="lp-field-label">Total Spots Count</div>
+        <div class="spots-count" id="spots-count">0</div>
+      </div>
+      <div class="lp-field">
+        <div class="lp-field-label">Programming System</div>
+        <select class="lp-field-select">
+          <option>Specific Order</option>
+          <option>Rotation</option>
+          <option>Priority Based</option>
+        </select>
+      </div>
+      <div class="lp-field">
+        <div class="lp-field-label">File Alias</div>
+        <select class="lp-field-select"><option></option></select>
+      </div>
+      <div class="lp-field">
+        <div class="lp-field-label">Priority</div>
+        <select class="lp-field-select"><option></option><option>High</option><option>Medium</option><option>Low</option></select>
+      </div>
+      <button class="lp-btn lp-mass">Mass Change Priorities</button>
+      <button class="lp-btn lp-clear" onclick="clearAll()">Clear All</button>
+      <button class="lp-btn lp-set">Set Mode</button>
+      <div class="lp-preview-label">Break Preview</div>
+    </div>
+
+    <!-- MAIN GRID -->
+    <div class="schedule-wrap">
+      <table class="schedule-table" id="schedule-table"></table>
+      <div class="scroll-note">▼ Scroll to see more times (00:00 — 23:30)</div>
+    </div>
+
+  </div>
+
+  <div class="page-footer">
+    <div class="footer-check" onclick="togglePreview()">
+      <div class="check-box" id="preview-check"></div>
+      Preview Spot Breaks Load
+    </div>
+    <button class="btn-cancel" onclick="cancelProg()">Cancel</button>
+    <button class="btn-save" onclick="saveProg()">✓ OK</button>
+  </div>
+
+</div>
+
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script src="js/bridge_helper.js"></script>
+<script>
+var campaign = {id: 0, name: 'New Campaign'};
+var DAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+var DAY_KEYS = ['mon','tue','wed','thu','fri','sat','sun'];
+// schedule[dayIndex][time] = true/false
+var schedule = {};
+DAY_KEYS.forEach(function(d){ schedule[d] = {}; });
+
+// Generate time slots 00:00 to 23:55 every 5 minutes (288 slots total)
+var TIMES = [];
+for(var h = 0; h < 24; h++){
+  for(var m = 0; m < 60; m += 5){
+    TIMES.push(String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0'));
+  }
+}
+
+onBridgeReady(function(){
+  var ctx = sessionStorage.getItem('spot_prog_campaign');
+  if(ctx){
+    try {
+      campaign = JSON.parse(ctx);
+      document.getElementById('camp-info').textContent = campaign.name + ' • Set break times for each day';
+      // If campaign exists in DB, load its saved schedule
+      if(campaign.id){
+        loadExistingSchedule();
+      }
+    } catch(e){}
+  }
+  // Check unsaved schedule from previous visit (sessionStorage)
+  var pending = sessionStorage.getItem('spot_prog_schedule');
+  if(pending){
+    try {
+      var slots = JSON.parse(pending);
+      slots.forEach(function(slot){
+        var dayKey = DAY_KEYS[slot.day];
+        if(dayKey && slot.time){ schedule[dayKey][slot.time] = true; }
+      });
+    } catch(e){}
+  }
+  renderGrid();
+});
+
+function loadExistingSchedule(){
+  callBridgeAsync('get_break_schedule', [campaign.id], function(data){
+    if(!data || !Array.isArray(data)) return;
+    data.forEach(function(slot){
+      var dayKey = DAY_KEYS[slot.day];
+      if(dayKey && slot.time){
+        schedule[dayKey][slot.time] = true;
+      }
+    });
+    renderGrid();
+  });
+}
+
+function renderGrid(){
+  var table = document.getElementById('schedule-table');
+  var html = '<thead><tr><th class="time-head">TIME</th>';
+  DAYS.forEach(function(d){ html += '<th class="day-head">'+d+'</th>'; });
+  html += '</tr></thead><tbody>';
+
+  TIMES.forEach(function(time){
+    html += '<tr><td class="time-cell">'+time+'</td>';
+    DAY_KEYS.forEach(function(dayKey, dayIdx){
+      var active = schedule[dayKey][time];
+      var cls = active ? 'slot-cell active' : 'slot-cell';
+      var content = active ? time : '';
+      html += '<td class="'+cls+'" onclick="toggleSlot(\''+dayKey+'\',\''+time+'\')" data-day="'+dayIdx+'" data-time="'+time+'">'+content+'</td>';
+    });
+    html += '</tr>';
+  });
+  html += '</tbody>';
+  table.innerHTML = html;
+  updateCount();
+}
+
+function toggleSlot(dayKey, time){
+  if(schedule[dayKey][time]){
+    delete schedule[dayKey][time];
+  } else {
+    schedule[dayKey][time] = true;
+  }
+  renderGrid();
+}
+
+function updateCount(){
+  var count = 0;
+  DAY_KEYS.forEach(function(d){ count += Object.keys(schedule[d]).length; });
+  document.getElementById('spots-count').textContent = count;
+}
+
+function clearAll(){
+  if(!confirm('Clear all scheduled break times?')) return;
+  DAY_KEYS.forEach(function(d){ schedule[d] = {}; });
+  renderGrid();
+}
+
+function pasteToSelected(){ alert('Select a day first, then copy & paste times.'); }
+function pasteToAll(){
+  // Copy Monday's schedule to all days
+  var monTimes = Object.keys(schedule.mon);
+  if(monTimes.length === 0){ alert('Set times for Monday first, then click Paste to All Days.'); return; }
+  DAY_KEYS.forEach(function(d){
+    if(d !== 'mon'){
+      schedule[d] = {};
+      monTimes.forEach(function(t){ schedule[d][t] = true; });
+    }
+  });
+  renderGrid();
+}
+
+function addRow(){ alert('Add custom time slot — coming soon'); }
+function removeRow(){ alert('Remove time slot — coming soon'); }
+
+function applyPreset(preset){
+  if(!preset) return;
+  DAY_KEYS.forEach(function(d){ schedule[d] = {}; });
+  if(preset === 'hourly'){
+    for(var h = 0; h < 24; h++){
+      var t = String(h).padStart(2,'0') + ':00';
+      DAY_KEYS.forEach(function(d){ schedule[d][t] = true; });
+    }
+  } else if(preset === 'drive'){
+    ['06:00','06:30','07:00','07:30','08:00','08:30','09:00','17:00','17:30','18:00','18:30','19:00'].forEach(function(t){
+      ['mon','tue','wed','thu','fri'].forEach(function(d){ schedule[d][t] = true; });
+    });
+  } else if(preset === 'weekdays'){
+    for(var h = 9; h < 17; h++){
+      var t = String(h).padStart(2,'0') + ':00';
+      ['mon','tue','wed','thu','fri'].forEach(function(d){ schedule[d][t] = true; });
+    }
+  }
+  renderGrid();
+}
+
+function togglePreview(){
+  var c = document.getElementById('preview-check');
+  c.classList.toggle('checked');
+}
+
+function saveProg(){
+  // Flatten schedule to array of {day: 0-6, time: "HH:MM"}
+  var slots = [];
+  DAY_KEYS.forEach(function(d, idx){
+    Object.keys(schedule[d]).forEach(function(t){
+      slots.push({day: idx, time: t});
+    });
+  });
+
+  // ALWAYS save to sessionStorage so it's preserved across navigation
+  sessionStorage.setItem('spot_prog_schedule', JSON.stringify(slots));
+
+  // If campaign exists in DB, also persist immediately
+  if(campaign.id){
+    var payload = JSON.stringify({campaign_id: campaign.id, schedule: slots});
+    callBridgeAsync('save_break_schedule', [payload], function(){
+      window.location.href = 'add_campaign.html';
+    });
+  } else {
+    // New campaign — schedule will be saved when the campaign itself is saved
+    window.location.href = 'add_campaign.html';
+  }
+}
+
+function cancelProg(){
+  // Don't clear spot_prog_schedule on cancel — user may still have form data
+  window.location.href = 'add_campaign.html';
+}
+</script>
+</body>
+</html>

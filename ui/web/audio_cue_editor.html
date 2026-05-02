@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Audio Cue Editor | RadioAI Studio Pro</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden}
+body{background:#0f1120;font-family:'Inter',sans-serif;color:#f1f5ff;display:flex;flex-direction:column}
+
+/* HEADER */
+.ace-header{background:#0d0f1e;height:52px;min-height:52px;border-bottom:1px solid #1c1f38;display:flex;align-items:center;padding:0 16px;gap:12px;position:relative}
+.ace-header::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:rgba(245,158,11,0.6)}
+.ace-icon{background:#2d1a00;border-radius:6px;width:28px;height:28px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.ace-title{font-size:16px;font-weight:700}
+.ace-subtitle{font-size:10px;color:#454d6d;margin-top:2px}
+.ace-song-badge{background:#2d1a00;border-radius:6px;padding:5px 12px;margin-left:auto;font-size:10px;font-weight:600;color:#f59e0b;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ace-close{background:#1c1f38;border:none;border-radius:6px;width:30px;height:30px;color:#8891b8;font-size:14px;cursor:pointer;font-weight:700}
+.ace-close:hover{background:#252848}
+
+/* FILE PATH */
+.ace-filepath{background:#0a0c18;border:1px solid rgba(28,31,56,0.7);border-radius:6px;height:32px;margin:8px 16px 0;display:flex;align-items:center;padding:0 10px}
+.ace-filepath-text{font-family:'Roboto Mono',monospace;font-size:10px;color:#8891b8;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ace-filepath-btn{background:#252848;border:none;border-radius:5px;height:24px;padding:0 10px;color:#8891b8;font-size:10px;font-weight:600;cursor:pointer;margin-left:4px}
+.ace-filepath-btn.edit{background:#1e1535;color:#a78bfa;border-left:2px solid #8b5cf6}
+
+/* WAVEFORM */
+.ace-waveform-container{margin:6px 16px 0;background:#050710;border:1px solid rgba(28,31,56,0.6);border-radius:6px;height:140px;position:relative;overflow:hidden}
+#waveform-canvas{width:100%;height:140px;display:block}
+
+/* TIME LABELS */
+.ace-time-labels{display:flex;justify-content:space-between;padding:4px 16px 0;font-family:'Roboto Mono',monospace;font-size:8px;color:#454d6d}
+.ace-playhead-time{text-align:center;font-family:'Roboto Mono',monospace;font-size:10px;color:#8891b8;padding:2px 16px 4px}
+
+/* CUE CONTROLS */
+.ace-cue-controls{display:flex;gap:4px;padding:0 16px;flex:1;min-height:0;overflow-x:auto}
+.ace-cue-col{display:flex;flex-direction:column;flex-shrink:0}
+.ace-cue-col.play-stop{width:64px;background:#1a1d30;border-radius:6px;padding:8px 6px;align-items:center;justify-content:flex-start;gap:4px}
+.ace-cue-col.fade-col{width:48px;background:#1a1d30;border-radius:6px;padding:6px 4px;align-items:center}
+.ace-cue-col.marker-col{width:120px;background:#1a1d30;border-radius:6px;padding:8px}
+.cue-label{font-size:9px;font-weight:700;margin-bottom:4px;letter-spacing:0.5px}
+.cue-time{font-family:'Roboto Mono',monospace;font-size:11px;font-weight:700;margin-bottom:6px}
+.cue-nudge-row{display:flex;gap:4px;margin-bottom:6px}
+.cue-nudge-btn{background:#252848;border:none;border-radius:4px;height:22px;flex:1;color:#8891b8;font-size:9px;cursor:pointer;font-weight:600;font-family:monospace}
+.cue-nudge-btn:hover{background:#333665;color:#f1f5ff}
+.cue-preview-btn{height:26px;border-radius:5px;border:none;width:100%;font-size:9px;font-weight:700;cursor:pointer;margin-bottom:4px}
+.cue-reset-btn{background:#1c1f38;border:none;border-radius:5px;height:22px;width:100%;color:#8891b8;font-size:9px;cursor:pointer}
+.cue-reset-btn:hover{background:#252848;color:#f1f5ff}
+.cue-step-info{background:rgba(28,31,56,0.4);border-radius:3px;padding:2px 0;text-align:center;font-size:7px;color:#454d6d;margin-top:3px}
+
+/* PLAY/STOP COL */
+.play-btn{background:#052e16;border:1px solid #10b981;border-left:3px solid #10b981;border-radius:6px;width:48px;height:38px;color:#10b981;font-size:18px;cursor:pointer}
+.play-btn:hover{background:#0a3a1d}
+.stop-btn{background:#252848;border:none;border-radius:6px;width:48px;height:30px;color:#8891b8;font-size:13px;cursor:pointer}
+.stop-btn:hover{background:#333665}
+.play-label,.stop-label{text-align:center;font-size:8px;color:#454d6d;margin-top:1px}
+
+/* FADE COL slider rotated 90deg */
+.fade-col-label{font-size:8px;color:#8891b8;text-align:center;line-height:1.1;font-weight:600}
+.fade-slider-wrap{flex:1;display:flex;align-items:center;justify-content:center;padding:8px 0}
+.fade-slider{writing-mode:vertical-lr;direction:rtl;height:60px;width:18px;cursor:pointer}
+.fade-display{font-family:'Roboto Mono',monospace;font-size:9px;font-weight:700;text-align:center}
+
+/* BOTTOM CONTROLS */
+.ace-bottom-bar{background:#1a1d30;height:44px;min-height:44px;margin:6px 16px 0;border-radius:6px;border:1px solid rgba(28,31,56,0.6);display:flex;align-items:center;gap:8px;padding:0 10px}
+.bottom-btn{height:28px;border:none;border-radius:5px;font-size:10px;font-weight:600;cursor:pointer;padding:0 12px;display:flex;align-items:center;gap:5px;font-family:'Inter',sans-serif}
+.vol-label{font-size:10px;color:#8891b8;white-space:nowrap;margin-left:auto}
+.vol-value{font-family:'Roboto Mono',monospace;font-size:11px;color:#fcd34d;font-weight:700;min-width:42px;text-align:right}
+.vol-slider{width:160px;cursor:pointer}
+
+/* FOOTER */
+.ace-footer{background:#0d0f1e;height:54px;min-height:54px;border-top:1px solid #1c1f38;display:flex;align-items:center;padding:0 16px;gap:8px}
+.ace-tip{font-size:10px;color:#454d6d;flex:1}
+.footer-btn{height:32px;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;padding:0 18px;font-family:'Inter',sans-serif}
+.btn-song-info{background:#1c1f38;color:#8891b8}
+.btn-song-info:hover{background:#252848}
+.btn-cancel{background:#1c1f38;color:#8891b8}
+.btn-cancel:hover{background:#252848}
+.btn-save{background:#8b5cf6;color:#fff;font-weight:700}
+.btn-save:hover{background:#7c3aed}
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="ace-header">
+  <div class="ace-icon">
+    <svg width="20" height="14" viewBox="0 0 20 14">
+      <rect x="0"  y="8" width="3" height="4"  rx="1" fill="#f59e0b"/>
+      <rect x="4"  y="5" width="3" height="7"  rx="1" fill="#f59e0b"/>
+      <rect x="8"  y="1" width="3" height="11" rx="1" fill="#f59e0b"/>
+      <rect x="12" y="4" width="3" height="8"  rx="1" fill="#f59e0b"/>
+      <rect x="16" y="7" width="3" height="5"  rx="1" fill="#f59e0b"/>
+    </svg>
+  </div>
+  <div>
+    <div class="ace-title">AUDIO CUE EDITOR</div>
+    <div class="ace-subtitle">Set mix points, hooks, fade settings and audio levels</div>
+  </div>
+  <div class="ace-song-badge" id="song-badge">Loading…</div>
+  <button class="ace-close" onclick="closeEditor()">✕</button>
+</div>
+
+<!-- FILE PATH -->
+<div class="ace-filepath">
+  <span class="ace-filepath-text" id="file-path-display">No file loaded</span>
+  <button class="ace-filepath-btn">…</button>
+  <button class="ace-filepath-btn edit" onclick="editSongInfo()">Edit</button>
+</div>
+
+<!-- WAVEFORM -->
+<div class="ace-waveform-container" id="waveform-container">
+  <canvas id="waveform-canvas"></canvas>
+</div>
+
+<!-- TIME LABELS -->
+<div class="ace-time-labels" id="time-labels"></div>
+<div class="ace-playhead-time" id="playhead-time">0.0s / 0:00</div>
+
+<!-- CUE CONTROLS -->
+<div class="ace-cue-controls">
+
+  <!-- PLAY/STOP -->
+  <div class="ace-cue-col play-stop">
+    <button class="play-btn" onclick="playAudio()">▶</button>
+    <div class="play-label">Play</div>
+    <button class="stop-btn" onclick="stopAudio()">■</button>
+    <div class="stop-label">Stop</div>
+  </div>
+
+  <!-- Fade In -->
+  <div class="ace-cue-col fade-col">
+    <div class="fade-col-label">Fade<br>In</div>
+    <div class="fade-slider-wrap">
+      <input type="range" min="0" max="5000" step="100" value="0" id="fade-in-slider" class="fade-slider">
+    </div>
+    <div class="fade-display" id="fade-in-display" style="color:#a78bfa">0ms</div>
+  </div>
+
+  <!-- START -->
+  <div class="ace-cue-col marker-col" style="border-left:2px solid rgba(16,185,129,0.4)">
+    <div class="cue-label" style="color:#10b981">START</div>
+    <div class="cue-time" style="color:#10b981" id="start-time-display">0.0s</div>
+    <div class="cue-nudge-row">
+      <button class="cue-nudge-btn" onclick="nudgeMarker('start',-0.1)">&lt;&lt;</button>
+      <button class="cue-nudge-btn" onclick="nudgeMarker('start',0.1)">&gt;&gt;</button>
+    </div>
+    <button class="cue-preview-btn" style="background:#052e16;color:#10b981;border-left:2px solid #10b981" onclick="previewFrom('start')">▶ PREVIEW</button>
+    <button class="cue-reset-btn" onclick="resetMarker('start')">↺ Reset</button>
+    <div class="cue-step-info">0.1s steps</div>
+  </div>
+
+  <!-- INTRO -->
+  <div class="ace-cue-col marker-col" style="border-left:2px solid rgba(20,184,166,0.4)">
+    <div class="cue-label" style="color:#14b8a6">INTRO</div>
+    <div class="cue-time" style="color:#14b8a6" id="intro-time-display">0.0s</div>
+    <div class="cue-nudge-row">
+      <button class="cue-nudge-btn" onclick="nudgeMarker('intro',-0.1)">&lt;&lt;</button>
+      <button class="cue-nudge-btn" onclick="nudgeMarker('intro',0.1)">&gt;&gt;</button>
+    </div>
+    <button class="cue-preview-btn" style="background:#042f2a;color:#14b8a6;border-left:2px solid #14b8a6" onclick="previewFrom('intro')">▶ PREVIEW</button>
+    <button class="cue-reset-btn" onclick="resetMarker('intro')">↺ Reset</button>
+    <div class="cue-step-info">0.1s steps</div>
+  </div>
+
+  <!-- HOOK IN -->
+  <div class="ace-cue-col marker-col" style="border-left:2px solid rgba(6,182,212,0.4)">
+    <div class="cue-label" style="color:#06b6d4">HOOK IN</div>
+    <div class="cue-time" style="color:#06b6d4" id="hook-in-time-display">0.0s</div>
+    <div class="cue-nudge-row">
+      <button class="cue-nudge-btn" onclick="nudgeMarker('hookIn',-0.1)">&lt;&lt;</button>
+      <button class="cue-nudge-btn" onclick="nudgeMarker('hookIn',0.1)">&gt;&gt;</button>
+    </div>
+    <button class="cue-preview-btn" style="background:#083344;color:#06b6d4;border-left:2px solid #06b6d4" onclick="previewFrom('hookIn')">▶ PREVIEW</button>
+    <button class="cue-reset-btn" onclick="resetMarker('hookIn')">↺ Reset</button>
+    <div class="cue-step-info">0.1s steps</div>
+  </div>
+
+  <!-- HOOK OUT -->
+  <div class="ace-cue-col marker-col" style="border-left:2px solid rgba(6,182,212,0.4)">
+    <div class="cue-label" style="color:#06b6d4">HOOK OUT</div>
+    <div class="cue-time" style="color:#06b6d4" id="hook-out-time-display">0.0s</div>
+    <div class="cue-nudge-row">
+      <button class="cue-nudge-btn" onclick="nudgeMarker('hookOut',-0.1)">&lt;&lt;</button>
+      <button class="cue-nudge-btn" onclick="nudgeMarker('hookOut',0.1)">&gt;&gt;</button>
+    </div>
+    <button class="cue-preview-btn" style="background:#083344;color:#06b6d4;border-left:2px solid #06b6d4" onclick="previewFrom('hookOut')">▶ PREVIEW</button>
+    <button class="cue-reset-btn" onclick="resetMarker('hookOut')">↺ Reset</button>
+    <div class="cue-step-info">0.1s steps</div>
+  </div>
+
+  <!-- OUTRO -->
+  <div class="ace-cue-col marker-col" style="border-left:2px solid rgba(245,158,11,0.4)">
+    <div class="cue-label" style="color:#f59e0b">OUTRO</div>
+    <div class="cue-time" style="color:#f59e0b" id="outro-time-display">0.0s</div>
+    <div class="cue-nudge-row">
+      <button class="cue-nudge-btn" onclick="nudgeMarker('outro',-0.1)">&lt;&lt;</button>
+      <button class="cue-nudge-btn" onclick="nudgeMarker('outro',0.1)">&gt;&gt;</button>
+    </div>
+    <button class="cue-preview-btn" style="background:#2d1a00;color:#f59e0b;border-left:2px solid #f59e0b" onclick="previewFrom('outro')">▶ PREVIEW</button>
+    <button class="cue-reset-btn" onclick="resetMarker('outro')">↺ Reset</button>
+    <div class="cue-step-info">0.1s steps</div>
+  </div>
+
+  <!-- MIX POINT -->
+  <div class="ace-cue-col marker-col" style="border-left:2px solid rgba(244,63,94,0.4)">
+    <div class="cue-label" style="color:#f43f5e">MIX POINT</div>
+    <div class="cue-time" style="color:#f43f5e" id="mix-time-display">0.0s</div>
+    <div class="cue-nudge-row">
+      <button class="cue-nudge-btn" onclick="nudgeMarker('mix',-0.1)">&lt;&lt;</button>
+      <button class="cue-nudge-btn" onclick="nudgeMarker('mix',0.1)">&gt;&gt;</button>
+    </div>
+    <button class="cue-preview-btn" style="background:#1f0a12;color:#f43f5e;border-left:2px solid #f43f5e" onclick="previewFrom('mix')">▶ PREVIEW</button>
+    <button class="cue-reset-btn" onclick="resetMarker('mix')">↺ Reset</button>
+    <div class="cue-step-info">0.1s steps</div>
+  </div>
+
+  <!-- Fade Out -->
+  <div class="ace-cue-col fade-col">
+    <div class="fade-col-label">Fade<br>Out</div>
+    <div class="fade-slider-wrap">
+      <input type="range" min="0" max="10000" step="100" value="3000" id="fade-out-slider" class="fade-slider">
+    </div>
+    <div class="fade-display" id="fade-out-display" style="color:#f43f5e">3000ms</div>
+  </div>
+
+</div>
+
+<!-- BOTTOM CONTROLS -->
+<div class="ace-bottom-bar">
+  <button class="bottom-btn" style="background:rgba(31,10,18,0.5);color:#8891b8;border-left:2px solid rgba(244,63,94,0.4)">
+    <span style="color:#f43f5e;font-size:10px">✕</span> Variable Length
+  </button>
+  <button class="bottom-btn" style="background:#1f0a12;color:#f43f5e;border-left:2px solid #f43f5e" onclick="resetAllMarkers()">↺ Reset</button>
+  <button class="bottom-btn" style="background:#2d1a00;color:#f59e0b;border-left:2px solid #f59e0b" onclick="autoCue()">● AutoCue</button>
+  <span class="vol-label">Volume:</span>
+  <span class="vol-value" id="vol-display">100%</span>
+  <input type="range" class="vol-slider" min="0" max="100" value="100" id="vol-slider" oninput="updateVolume(this.value)">
+  <button class="bottom-btn" style="background:#083344;color:#06b6d4;border-left:2px solid #06b6d4">⟳ Normalize</button>
+  <button class="bottom-btn" style="background:#252848;color:#8891b8">✓ 32-bit</button>
+</div>
+
+<!-- FOOTER -->
+<div class="ace-footer">
+  <span class="ace-tip">Tip: Use &lt;&lt; &gt;&gt; buttons to adjust by 0.1 second increments • Drag markers on the waveform • Spacebar to play • Ctrl+S to save</span>
+  <button class="footer-btn btn-song-info" onclick="goToSongInfo()">← Song Info</button>
+  <button class="footer-btn btn-cancel" onclick="closeEditor()">Cancel</button>
+  <button class="footer-btn btn-save" onclick="saveCuePoints()">✓ Save</button>
+</div>
+
+<!-- ═══ JS ═══ -->
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script src="js/bridge_helper.js"></script>
+<script>
+
+// ── State ───────────────────────────────────────
+var songId = null;
+var songData = null;
+var totalDuration = 0;
+var filePath = '';
+
+var markers = {
+  start:   { time: 0,  color: 'rgba(16,185,129,0.85)', label: 'START',    persist: false },
+  intro:   { time: 0,  color: 'rgba(20,184,166,0.85)', label: 'INTRO',    persist: true  },
+  hookIn:  { time: 60, color: 'rgba(6,182,212,0.85)',  label: 'HOOK IN',  persist: true  },
+  hookOut: { time: 68, color: 'rgba(6,182,212,0.85)',  label: 'HOOK OUT', persist: true  },
+  outro:   { time: 0,  color: 'rgba(245,158,11,0.85)', label: 'OUTRO',    persist: true  },
+  mix:     { time: 0,  color: 'rgba(244,63,94,0.85)',  label: 'MIX',      persist: true  }
+};
+
+var displayIds = {
+  start:   'start-time-display',
+  intro:   'intro-time-display',
+  hookIn:  'hook-in-time-display',
+  hookOut: 'hook-out-time-display',
+  outro:   'outro-time-display',
+  mix:     'mix-time-display'
+};
+
+// ── Boot ────────────────────────────────────────
+onBridgeReady(function() {
+  // Pull the song id from sessionStorage (set by Songs Library)
+  var stashed = sessionStorage.getItem('cue_editor_song_id');
+  if (stashed) {
+    songId = parseInt(stashed, 10);
+    sessionStorage.removeItem('cue_editor_song_id');
+    initEditor(songId);
+  } else {
+    // Fall back to ?song_id=N query string
+    var params = new URLSearchParams(window.location.search);
+    var qid = params.get('song_id');
+    if (qid) {
+      songId = parseInt(qid, 10);
+      initEditor(songId);
+    } else {
+      document.getElementById('song-badge').textContent = 'No song selected';
+    }
+  }
+});
+
+function initEditor(id) {
+  callBridgeAsync('get_song_cue_data', [id], function(data) {
+    if (!data) {
+      document.getElementById('song-badge').textContent = 'Song not found';
+      return;
+    }
+    songData = data;
+    filePath = data.file_path || '';
+
+    document.getElementById('file-path-display').textContent = filePath || '— No file path —';
+    document.getElementById('song-badge').textContent =
+      (data.artist || 'Unknown') + ' — ' + (data.title || 'Unknown');
+
+    // Hook times come from REAL-second columns (Stitcher work)
+    markers.hookIn.time  = parseFloat(data.hook_in_time  || 60);
+    markers.hookOut.time = parseFloat(data.hook_out_time || 68);
+    markers.intro.time   = parseFloat(data.intro_time    || 0);
+    markers.outro.time   = parseFloat(data.outro_time    || 0);
+    markers.mix.time     = parseFloat(data.mix_point     || 0);
+
+    document.getElementById('fade-in-slider').value  = data.fade_in_ms  || 0;
+    document.getElementById('fade-out-slider').value = data.fade_out_ms || 3000;
+    updateFadeDisplays();
+
+    // Probe duration then draw the waveform
+    if (filePath) {
+      callBridgeAsync('get_audio_duration', [filePath], function(dur) {
+        totalDuration = parseFloat(dur || 0) || (data.duration_ms ? data.duration_ms / 1000.0 : 240);
+        seedDefaults();
+        drawWaveform();
+        updateAllDisplays();
+        buildTimeLabels();
+      });
+    } else {
+      // No file — use the DB-stored duration if any
+      totalDuration = data.duration_ms ? data.duration_ms / 1000.0 : 240;
+      seedDefaults();
+      drawWaveform();
+      updateAllDisplays();
+      buildTimeLabels();
+    }
+  });
+}
+
+// Fill any zero markers with sensible defaults
+function seedDefaults() {
+  if (totalDuration <= 0) totalDuration = 240;
+  if (markers.outro.time === 0) {
+    markers.outro.time = Math.max(0, totalDuration - 20);
+  }
+  if (markers.mix.time === 0) {
+    markers.mix.time = Math.max(0, totalDuration - 5);
+  }
+}
+
+// ── Waveform drawing ────────────────────────────
+function drawWaveform() {
+  var canvas = document.getElementById('waveform-canvas');
+  var container = document.getElementById('waveform-container');
+  var W = container.offsetWidth || 880;
+  var H = 140;
+  if (canvas.width !== W) canvas.width = W;
+  canvas.height = H;
+  var ctx = canvas.getContext('2d');
+
+  ctx.fillStyle = '#050710';
+  ctx.fillRect(0, 0, W, H);
+
+  // Pseudo-random bar shape (stable per index)
+  var barW = 3, gap = 1, step = barW + gap;
+  var total = Math.floor(W / step);
+
+  for (var i = 0; i < total; i++) {
+    var t = (i / total) * totalDuration;
+    var h = 4 + Math.abs(Math.sin(i * 0.38 + 0.5) * (H * 0.65));
+    var x = i * step;
+    var y = (H - h) / 2;
+    var color;
+    if (t < markers.start.time)        color = 'rgba(28,31,56,0.5)';
+    else if (t < markers.intro.time)   color = 'rgba(16,185,129,0.65)';
+    else if (t < markers.hookIn.time)  color = 'rgba(176,200,232,0.55)';
+    else if (t < markers.hookOut.time) color = 'rgba(6,182,212,0.85)';
+    else if (t < markers.outro.time)   color = 'rgba(176,200,232,0.55)';
+    else if (t < markers.mix.time)     color = 'rgba(245,158,11,0.7)';
+    else                               color = 'rgba(244,63,94,0.7)';
+    ctx.fillStyle = color;
+    ctx.fillRect(x, y, barW, h);
+  }
+
+  // Draw marker lines + labels
+  Object.keys(markers).forEach(function(key) {
+    var m = markers[key];
+    if (m.time <= 0 && key !== 'start') return;
+    var x = (m.time / totalDuration) * W;
+    ctx.fillStyle = m.color;
+    ctx.fillRect(x, 0, 2, H);
+    // Triangle handle
+    ctx.beginPath();
+    ctx.moveTo(x - 5, 0);
+    ctx.lineTo(x + 7, 0);
+    ctx.lineTo(x + 1, 9);
+    ctx.fill();
+    // Label
+    ctx.font = 'bold 8px Inter, sans-serif';
+    ctx.fillText(m.label, x + 5, H - 5);
+  });
+}
+
+function buildTimeLabels() {
+  var container = document.getElementById('time-labels');
+  var steps = 7;
+  var html = '';
+  for (var i = 0; i <= steps; i++) {
+    var t = (i / steps) * totalDuration;
+    html += '<span>' + formatTime(t) + '</span>';
+  }
+  container.innerHTML = html;
+}
+
+// ── Marker operations ──────────────────────────
+function nudgeMarker(key, delta) {
+  var m = markers[key];
+  m.time = Math.max(0, Math.min(totalDuration, Math.round((m.time + delta) * 10) / 10));
+  // Keep hookOut > hookIn
+  if (key === 'hookIn' && m.time >= markers.hookOut.time) {
+    markers.hookOut.time = Math.min(totalDuration, m.time + 0.5);
+    updateDisplay('hookOut');
+  }
+  if (key === 'hookOut' && m.time <= markers.hookIn.time) {
+    markers.hookIn.time = Math.max(0, m.time - 0.5);
+    updateDisplay('hookIn');
+  }
+  updateDisplay(key);
+  drawWaveform();
+}
+
+function resetMarker(key) {
+  var defaults = {
+    start: 0,
+    intro: 0,
+    hookIn: 60,
+    hookOut: 68,
+    outro: totalDuration > 20 ? totalDuration - 20 : 0,
+    mix:   totalDuration > 5  ? totalDuration - 5  : 0
+  };
+  markers[key].time = defaults[key] != null ? defaults[key] : 0;
+  updateDisplay(key);
+  drawWaveform();
+}
+
+function resetAllMarkers() {
+  Object.keys(markers).forEach(function(k) { resetMarker(k); });
+}
+
+function updateDisplay(key) {
+  var el = document.getElementById(displayIds[key]);
+  if (el) el.textContent = markers[key].time.toFixed(1) + 's';
+  document.getElementById('playhead-time').textContent =
+    markers[key].time.toFixed(1) + 's / ' + formatTime(totalDuration);
+}
+
+function updateAllDisplays() {
+  Object.keys(markers).forEach(function(k) { updateDisplay(k); });
+  document.getElementById('playhead-time').textContent =
+    '0.0s / ' + formatTime(totalDuration);
+}
+
+// ── Drag markers on the waveform ───────────────
+(function setupDrag() {
+  var canvas = document.getElementById('waveform-canvas');
+  var dragging = null;
+
+  canvas.addEventListener('mousedown', function(e) {
+    if (totalDuration <= 0) return;
+    var rect = canvas.getBoundingClientRect();
+    var x = e.clientX - rect.left;
+    var minDist = 14, closest = null;
+    Object.keys(markers).forEach(function(key) {
+      var mx = (markers[key].time / totalDuration) * canvas.width;
+      var d = Math.abs(mx - x);
+      if (d < minDist) { minDist = d; closest = key; }
+    });
+    if (closest) dragging = closest;
+  });
+
+  canvas.addEventListener('mousemove', function(e) {
+    var rect = canvas.getBoundingClientRect();
+    var x = e.clientX - rect.left;
+    if (dragging) {
+      var t = Math.max(0, Math.min(totalDuration, (x / canvas.width) * totalDuration));
+      markers[dragging].time = Math.round(t * 10) / 10;
+      // Maintain hookOut > hookIn
+      if (dragging === 'hookIn' && markers.hookIn.time >= markers.hookOut.time) {
+        markers.hookOut.time = Math.min(totalDuration, markers.hookIn.time + 0.5);
+        updateDisplay('hookOut');
+      }
+      if (dragging === 'hookOut' && markers.hookOut.time <= markers.hookIn.time) {
+        markers.hookIn.time = Math.max(0, markers.hookOut.time - 0.5);
+        updateDisplay('hookIn');
+      }
+      updateDisplay(dragging);
+      drawWaveform();
+      return;
+    }
+    // Cursor feedback
+    var near = false;
+    Object.keys(markers).forEach(function(key) {
+      var mx = (markers[key].time / totalDuration) * canvas.width;
+      if (Math.abs(mx - x) < 12) near = true;
+    });
+    canvas.style.cursor = near ? 'ew-resize' : 'crosshair';
+  });
+
+  window.addEventListener('mouseup', function() { dragging = null; });
+})();
+
+// ── Audio playback ──────────────────────────────
+function playAudio() {
+  if (!filePath) { showFlash('No file path', '#f43f5e'); return; }
+  callBridgeAsync('preview_cue_segment', [filePath, markers.start.time, 30], function() {});
+}
+
+function stopAudio() {
+  callBridgeAsync('stop_preview_audio', [], function() {});
+}
+
+function previewFrom(key) {
+  if (!filePath) { showFlash('No file path', '#f43f5e'); return; }
+  var startTime = markers[key].time;
+  var dur = (key === 'hookIn' || key === 'hookOut')
+    ? Math.max(3, markers.hookOut.time - markers.hookIn.time + 1)
+    : 6;
+  callBridgeAsync('preview_cue_segment', [filePath, startTime, dur], function() {});
+}
+
+// ── AutoCue ─────────────────────────────────────
+function autoCue() {
+  if (totalDuration <= 0) return;
+  markers.intro.time   = Math.min(totalDuration * 0.05, 15);
+  markers.hookIn.time  = Math.min(60, totalDuration * 0.25);
+  markers.hookOut.time = markers.hookIn.time + 8;
+  markers.outro.time   = Math.max(totalDuration - 30, totalDuration * 0.8);
+  markers.mix.time     = Math.max(totalDuration - 5,  totalDuration * 0.95);
+  updateAllDisplays();
+  drawWaveform();
+  showFlash('AutoCue applied', '#f59e0b');
+}
+
+// ── Volume + fades ──────────────────────────────
+function updateVolume(val) {
+  document.getElementById('vol-display').textContent = val + '%';
+}
+
+function updateFadeDisplays() {
+  var fi = document.getElementById('fade-in-slider').value;
+  var fo = document.getElementById('fade-out-slider').value;
+  document.getElementById('fade-in-display').textContent  = fi + 'ms';
+  document.getElementById('fade-out-display').textContent = fo + 'ms';
+}
+
+document.getElementById('fade-in-slider').addEventListener('input', function() {
+  document.getElementById('fade-in-display').textContent = this.value + 'ms';
+});
+document.getElementById('fade-out-slider').addEventListener('input', function() {
+  document.getElementById('fade-out-display').textContent = this.value + 'ms';
+});
+
+// ── Save ────────────────────────────────────────
+function saveCuePoints() {
+  if (!songId) { showFlash('No song loaded', '#f43f5e'); return; }
+  var data = {
+    hook_in_time:  markers.hookIn.time,
+    hook_out_time: markers.hookOut.time,
+    intro_time:    markers.intro.time,
+    outro_time:    markers.outro.time,
+    mix_point:     markers.mix.time,
+    fade_in_ms:    parseInt(document.getElementById('fade-in-slider').value, 10),
+    fade_out_ms:   parseInt(document.getElementById('fade-out-slider').value, 10)
+  };
+  callBridgeAsync('save_song_cue_points', [songId, JSON.stringify(data)], function(ok) {
+    if (ok) {
+      var btn = document.querySelector('.btn-save');
+      var orig = btn.textContent;
+      btn.textContent = '✓ Saved!';
+      btn.style.background = '#10b981';
+      setTimeout(function() {
+        btn.textContent = orig;
+        btn.style.background = '#8b5cf6';
+      }, 1500);
+    } else {
+      showFlash('Save failed', '#f43f5e');
+    }
+  });
+}
+
+function closeEditor() {
+  // Stop any preview before leaving
+  callBridgeAsync('stop_preview_audio', [], function() {});
+  navigateTo('songs_library');
+}
+
+function editSongInfo() {
+  if (songId) sessionStorage.setItem('edit_song_id', String(songId));
+  navigateTo('add_song');
+}
+function goToSongInfo() { editSongInfo(); }
+
+// ── Helpers ─────────────────────────────────────
+function formatTime(sec) {
+  if (!sec || sec < 0) return '0:00';
+  var m = Math.floor(sec / 60);
+  var s = Math.floor(sec % 60);
+  return m + ':' + (s < 10 ? '0' + s : s);
+}
+
+function showFlash(msg, color) {
+  var el = document.getElementById('cue-flash');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'cue-flash';
+    el.style.cssText = 'position:fixed;top:60px;right:20px;padding:10px 18px;border-radius:6px;font-size:11px;font-weight:700;z-index:9999;transition:opacity 0.3s;background:#0a0c18;border:1px solid';
+    document.body.appendChild(el);
+  }
+  el.style.borderColor = color;
+  el.style.color = color;
+  el.textContent = msg;
+  el.style.opacity = '1';
+  setTimeout(function() { el.style.opacity = '0'; }, 2200);
+}
+
+// ── Keyboard shortcuts ──────────────────────────
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') { closeEditor(); }
+  else if (e.key === ' ' && e.target.tagName !== 'INPUT') { e.preventDefault(); playAudio(); }
+  else if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); saveCuePoints(); }
+});
+
+// Redraw on resize
+window.addEventListener('resize', function() {
+  if (totalDuration > 0) drawWaveform();
+});
+</script>
+</body>
+</html>

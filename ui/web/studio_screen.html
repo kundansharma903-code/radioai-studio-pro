@@ -1,0 +1,2027 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Studio — On Air | RadioAI Studio Pro</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+html,body{width:100%;height:100%;overflow:hidden}
+body{display:flex;flex-direction:column}
+
+/* ── Header (KEPT) ──────────────────────────────────── */
+.studio-header{position:relative;z-index:10;display:flex;align-items:center;height:50px;min-height:50px;background:var(--surf);border-bottom:1px solid var(--b1);padding:0 12px;gap:10px}
+.logo{cursor:pointer}
+.live-badge{display:flex;align-items:center;gap:6px;background:#7C1D1D;border:1px solid var(--rs);border-radius:var(--radius);padding:4px 12px;font-size:11px;font-weight:700;color:#fff}
+.live-dot-anim{width:8px;height:8px;border-radius:50%;background:var(--rs);animation:livePulse 1.5s ease-in-out infinite}
+@keyframes livePulse{0%,100%{box-shadow:0 0 4px var(--rs)}50%{box-shadow:0 0 12px var(--rs),0 0 20px var(--rs)}}
+.ai-auto-badge{background:var(--gnD);border:1px solid var(--gn);border-radius:var(--radius);padding:4px 10px;font-size:10px;font-weight:600;color:var(--gn);display:flex;align-items:center;gap:4px}
+.ai-insights-badge{background:var(--p4);border:1px solid var(--p1);border-radius:var(--radius);padding:4px 10px;font-size:10px;font-weight:600;color:var(--p2);display:flex;align-items:center;gap:4px}
+.hdr-spacer{flex:1}
+.hdr-clock{font-family:'Roboto Mono',monospace;font-size:26px;font-weight:700;letter-spacing:2px}
+.hdr-date{font-size:9px;color:var(--t3);text-align:center}
+.hdr-station{display:flex;flex-direction:column;align-items:flex-end;gap:1px;margin-left:12px;padding-left:12px;border-left:1px solid var(--b1)}
+.hdr-station-label{font-size:7px;color:var(--t3);letter-spacing:1px}
+.hdr-station-name{font-size:13px;font-weight:700}
+.hdr-station-loc{font-size:9px;color:var(--t3)}
+.logoff-btn{background:transparent;border:1px solid var(--rs);color:var(--rs);border-radius:var(--radius);padding:4px 10px;font-size:10px;font-weight:600;cursor:pointer;font-family:'Inter',sans-serif;margin-left:8px}
+.logoff-btn:hover{background:var(--rsD)}
+
+/* ═════ COMPACT TRANSPORT (h≈160) ═════════════════════ */
+.compact-transport{display:flex;height:160px;min-height:160px;background:var(--bg);border-bottom:1px solid var(--b1);overflow:hidden}
+
+/* Deck A / Deck B compact tile — min-width:0 is critical so the
+   flex item can shrink below its content width and ellipsis kicks
+   in instead of overflowing the container. */
+.ct-deck{flex:1;min-width:0;display:flex;flex-direction:column;padding:8px 12px;position:relative;overflow:hidden}
+.ct-deck-a{border-left:4px solid var(--rs)}
+.ct-deck-b{border-right:4px solid var(--cy);text-align:left}
+.ct-label{font-size:9px;font-weight:700;letter-spacing:1.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.ct-deck-a .ct-label{color:var(--rs)}
+.ct-deck-b .ct-label{color:var(--cy)}
+.ct-artist{font-size:11px;color:var(--t2);font-weight:500;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;display:block}
+.ct-title{font-size:18px;font-weight:700;color:var(--t1);margin:2px 0;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;display:block}
+.ct-meta{font-size:10px;color:var(--t3);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;display:block}
+.ct-times{display:flex;justify-content:space-between;align-items:flex-end;margin-top:4px;min-width:0}
+.ct-elapsed{font-family:'Roboto Mono',monospace;font-size:36px;font-weight:700;color:#10B981;line-height:1;display:inline-block;flex-shrink:0}
+.ct-deck-b .ct-elapsed{color:#8891B8}
+.ct-remaining{font-family:'Roboto Mono',monospace;font-size:20px;font-weight:700;color:#F59E0B;line-height:1;flex-shrink:0}
+.ct-deck-b .ct-remaining{color:#06B6D4}
+.ct-wave{height:44px;background:var(--bg);border-radius:3px;margin-top:4px;border:1px solid var(--b1);display:block;width:100%}
+.ct-buttons{display:flex;gap:3px;align-items:center;margin-top:6px;flex-shrink:0;min-height:34px;flex-wrap:nowrap;overflow:hidden}
+.ct-btn{background:var(--card);border:1px solid var(--b1);color:var(--t2);border-radius:5px;padding:5px 7px;font-family:'Inter',sans-serif;font-size:10px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;min-width:26px;transition:opacity 0.15s;flex-shrink:0}
+.ct-btn:hover{opacity:0.85}
+.ct-btn-cue{background:var(--amD);border-color:var(--am);color:var(--am)}
+.ct-btn-play{background:var(--gn);border:none;color:#fff;font-size:14px;padding:6px 12px;border-radius:6px}
+.ct-deck-b .ct-btn-play{background:var(--cy)}
+.ct-btn-fade{background:var(--card);border-color:var(--p1);color:var(--p1);font-size:9px;font-weight:700;letter-spacing:0.3px;padding:5px 6px}
+.ct-btn-load{background:var(--card);border-color:var(--cy);color:var(--cy);font-size:9px;font-weight:700;letter-spacing:0.3px;padding:5px 6px}
+
+/* Center column */
+.ct-center{width:170px;min-width:170px;display:flex;flex-direction:column;padding:8px 10px;gap:6px;border-left:1px solid var(--b1);border-right:1px solid var(--b1);background:var(--surf)}
+.ct-center-label{font-size:8px;color:var(--t3);font-weight:700;letter-spacing:1px;text-align:center}
+.ct-next-break-box{background:var(--card);border:1px solid var(--am);border-radius:6px;padding:6px;text-align:center}
+.ct-next-break-time{font-family:'Roboto Mono',monospace;font-size:24px;font-weight:700;color:var(--am);line-height:1}
+.ct-next-break-in{font-size:9px;color:var(--t3);margin-top:2px}
+.ct-mix-now{background:var(--p1);color:#fff;border:none;border-radius:6px;padding:8px;font-family:'Inter',sans-serif;font-size:12px;font-weight:700;cursor:pointer;letter-spacing:0.5px}
+.ct-mix-now:hover{background:var(--p2)}
+.ct-crossfader-wrap{padding:4px 0}
+.ct-crossfader-label{font-size:8px;color:var(--t3);text-align:center;letter-spacing:1px;margin-bottom:2px}
+.ct-crossfader-slider{width:100%;height:14px;accent-color:var(--p1);cursor:pointer}
+
+/* Jingles compact (right) */
+.ct-jingles{width:480px;min-width:380px;display:flex;flex-direction:column;padding:8px 10px;border-left:1px solid var(--b1);background:var(--surf);overflow:hidden}
+.ct-jp-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.ct-jp-title{font-size:10px;font-weight:700;color:var(--t2);letter-spacing:1px}
+.ct-jp-pallets{font-size:9px;color:var(--cy);cursor:pointer;background:var(--cyD);padding:3px 8px;border-radius:4px;border:1px solid rgba(6,182,212,0.3)}
+.ct-jp-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;flex:1}
+.ct-jp-pad{border-radius:6px;padding:7px 8px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;transition:transform 0.1s;position:relative;min-height:40px}
+.ct-jp-pad:hover{transform:scale(1.04)}
+.ct-jp-pad:active{transform:scale(0.96)}
+.ct-jp-pad-label{font-size:13px;font-weight:700;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,0.5);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ct-jp-pad-dur{font-family:'Roboto Mono',monospace;font-size:9px;color:rgba(255,255,255,0.7)}
+
+/* ═════ MAIN AREA (flex:1) ════════════════════════════ */
+.main-area{display:flex;flex:1;overflow:hidden;background:var(--bg);border-bottom:1px solid var(--b1)}
+
+/* LEFT — Libraries */
+.ma-libraries{flex:1;min-width:480px;display:flex;flex-direction:column;border-right:1px solid var(--b1);overflow:hidden}
+.ma-section-header{padding:6px 12px;background:var(--surf);border-bottom:1px solid var(--b1);display:flex;align-items:center;gap:8px;font-size:10px;font-weight:700;letter-spacing:1px}
+.ma-section-header.purple{color:var(--p2);border-left:3px solid var(--p1)}
+.ma-section-header.cyan{color:var(--cy);border-left:3px solid var(--cy)}
+.ma-section-header.green{color:var(--gn);border-left:3px solid var(--gn)}
+.ma-section-header.amber{color:var(--am);border-left:3px solid var(--am)}
+.lib-tabs{display:flex;gap:3px;padding:6px 8px;background:var(--panel);border-bottom:1px solid var(--b1)}
+.lib-tab{padding:5px 10px;font-size:10px;font-weight:600;color:var(--t3);background:var(--card);border:1px solid var(--b1);border-radius:5px;cursor:pointer;display:flex;align-items:center;gap:3px}
+.lib-tab.active{background:var(--p4);border-color:var(--p1);color:var(--p2)}
+.lib-search-row{display:flex;gap:4px;padding:6px 8px;background:var(--panel);border-bottom:1px solid var(--b1)}
+.lib-search-input{flex:1;background:var(--bg);border:1px solid var(--b1);border-radius:4px;padding:6px 10px;font-size:11px;color:var(--t1);font-family:'Inter',sans-serif}
+.lib-search-input:focus{outline:none;border-color:var(--p1)}
+.lib-search-btn{background:var(--p1);color:#fff;border:none;border-radius:4px;padding:6px 14px;font-size:10px;font-weight:600;cursor:pointer}
+.lib-table-head{display:grid;grid-template-columns:24px 1fr 1fr 60px 36px 40px;padding:5px 10px;background:var(--card);border-bottom:1px solid var(--b1);font-size:9px;font-weight:600;color:var(--t3);letter-spacing:0.5px}
+.lib-table-body{flex:1;overflow-y:auto}
+.lib-table-body::-webkit-scrollbar{width:6px}
+.lib-table-body::-webkit-scrollbar-thumb{background:var(--b2);border-radius:3px}
+.lib-row{display:grid;grid-template-columns:24px 1fr 1fr 60px 36px 40px;padding:5px 10px;font-size:11px;cursor:pointer;border-bottom:1px solid rgba(28,31,56,0.4)}
+.lib-row:nth-child(even){background:var(--surf)}
+.lib-row:hover{background:var(--card2)}
+.lib-row .l-num{color:var(--t3);font-family:'Roboto Mono',monospace;font-size:10px}
+.lib-row .l-artist{color:var(--t1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:8px}
+.lib-row .l-title{color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:8px}
+.lib-row .l-cat{color:var(--p2);font-size:9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lib-row .l-bpm{color:var(--cy);font-family:'Roboto Mono',monospace;font-size:10px;text-align:right}
+.lib-row .l-yr{color:var(--t3);font-family:'Roboto Mono',monospace;font-size:10px;text-align:right}
+.lib-empty{padding:24px;text-align:center;color:var(--t3);font-size:11px}
+.lib-footer{padding:5px 10px;font-size:9px;color:var(--t3);background:var(--surf);border-top:1px solid var(--b1)}
+
+/* CENTER — History + Stitcher + AI */
+.ma-center{width:340px;min-width:300px;display:flex;flex-direction:column;border-right:1px solid var(--b1);overflow:hidden}
+.ma-history-body{flex:1;overflow-y:auto;padding:0}
+.ma-history-body::-webkit-scrollbar{width:6px}
+.ma-history-body::-webkit-scrollbar-thumb{background:var(--b2);border-radius:3px}
+.hist-row{display:grid;grid-template-columns:50px 1fr 1fr 50px;gap:6px;padding:5px 12px;font-size:10px;border-bottom:1px solid rgba(28,31,56,0.3)}
+.hist-row:nth-child(even){background:var(--surf)}
+.hist-row .h-time{color:var(--t3);font-family:'Roboto Mono',monospace;font-size:9px}
+.hist-row .h-artist{color:var(--t1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hist-row .h-title{color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hist-row .h-dur{color:var(--t3);font-family:'Roboto Mono',monospace;font-size:9px;text-align:right}
+.hist-empty{padding:18px;text-align:center;color:var(--t3);font-size:10px}
+
+.ai-insights-body{padding:6px 8px;background:var(--panel)}
+.ai-insight-row{display:flex;gap:6px;align-items:center;padding:4px 6px;font-size:10px;color:var(--t2)}
+.ai-insight-row .ai-icon{font-size:11px;width:14px;text-align:center}
+.ai-insight-row .ai-msg{flex:1;color:var(--t1);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ai-insight-row.warning .ai-icon{color:var(--am)}
+.ai-insight-row.info .ai-icon{color:var(--p1)}
+.ai-insight-row.data .ai-icon{color:var(--cy)}
+.ai-insight-row.timing .ai-icon{color:var(--gn)}
+
+/* RIGHT — Next Break + Upcoming Spots */
+.ma-right{width:380px;min-width:320px;display:flex;flex-direction:column;overflow:hidden}
+.ma-next-break-display{padding:14px;text-align:center;background:var(--card);border-bottom:1px solid var(--b1)}
+.nb-big{font-family:'Roboto Mono',monospace;font-size:48px;font-weight:700;color:var(--am);line-height:1}
+.nb-subtitle{font-size:11px;color:var(--t3);margin-top:6px}
+.upcoming-body{flex:1;overflow-y:auto;padding:0}
+.upcoming-body::-webkit-scrollbar{width:6px}
+.upcoming-body::-webkit-scrollbar-thumb{background:var(--b2);border-radius:3px}
+.up-row{display:flex;align-items:center;gap:8px;padding:8px 14px;font-size:11px;border-bottom:1px solid rgba(28,31,56,0.4)}
+.up-row .up-time{font-family:'Roboto Mono',monospace;font-size:11px;color:var(--am);font-weight:700;width:50px}
+.up-row .up-name{flex:1;color:var(--t1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.up-row .up-badge{font-size:9px;font-weight:700;padding:3px 8px;border-radius:4px;background:rgba(245,158,11,0.15);color:var(--am)}
+.up-row.now{background:rgba(244,63,94,0.1)}
+.up-row.now .up-time, .up-row.now .up-badge{color:var(--rs)}
+.up-empty{padding:24px;text-align:center;color:var(--t3);font-size:11px}
+
+/* ═════ BREAK BANNER ══════════════════════════════════ */
+#break-banner{display:none;background:rgba(244,63,94,0.18);border-top:1px solid var(--rs);border-bottom:1px solid var(--rs);padding:6px 14px;color:var(--rs);font-size:12px;font-weight:700;letter-spacing:0.5px;align-items:center;gap:10px}
+
+/* ═════ PLAYLIST QUEUE (compact) ══════════════════════ */
+.queue-area{display:flex;flex-direction:column;height:178px;min-height:178px;border-top:1px solid var(--b1)}
+.queue-header{display:flex;align-items:center;justify-content:space-between;padding:6px 14px;background:var(--surf);border-bottom:1px solid var(--b1);height:36px}
+.queue-title{font-size:11px;font-weight:700;color:var(--t2);letter-spacing:1px}
+.queue-meta{font-size:9px;color:var(--t3);margin-left:14px}
+.queue-actions{display:flex;gap:4px;margin-left:auto}
+.qa-btn{padding:4px 10px;border-radius:4px;font-family:'Inter',sans-serif;font-size:9px;font-weight:600;cursor:pointer;border:1px solid var(--b1);background:var(--card);color:var(--t2)}
+.qa-btn:hover{background:var(--b1)}
+.qa-btn-green{border-color:var(--gn);color:var(--gn)}
+.qa-btn-cyan{border-color:var(--cy);color:var(--cy)}
+.qa-btn-red{border-color:var(--rs);color:var(--rs)}
+.qa-btn-amber{border-color:var(--am);color:var(--am)}
+.queue-table{flex:1;overflow-y:auto}
+.queue-table::-webkit-scrollbar{width:6px}
+.queue-table::-webkit-scrollbar-thumb{background:var(--b2);border-radius:3px}
+.queue-table table{width:100%;border-collapse:collapse}
+.queue-table th{padding:4px 8px;font-size:9px;position:sticky;top:0;background:var(--surf);color:var(--t3);font-weight:600;letter-spacing:0.5px;text-align:left}
+.queue-table td{padding:4px 8px;font-size:11px;height:24px}
+.queue-table tr.now-playing{background:rgba(16,185,129,0.1)!important;border-left:3px solid var(--gn)}
+.queue-table tr.loaded{background:rgba(6,182,212,0.08)!important}
+.queue-table tr.is-break{background:rgba(244,63,94,0.06)!important}
+.q-status{font-size:9px;font-weight:600;padding:1px 6px;border-radius:4px}
+.q-playing{background:rgba(16,185,129,0.2);color:var(--gn)}
+.q-loaded{background:rgba(6,182,212,0.2);color:var(--cy)}
+.q-queued{background:rgba(69,77,109,0.3);color:var(--t2)}
+.q-break{background:rgba(244,63,94,0.2);color:var(--rs)}
+.q-ai{font-size:9px;color:var(--t3)}
+.q-cat-bar{height:12px;border-radius:2px;min-width:30px}
+
+/* ═════ FOOTER (KEPT) ═════════════════════════════════ */
+.studio-footer{position:relative;z-index:10;display:flex;align-items:center;height:34px;min-height:34px;background:var(--surf);border-top:1px solid var(--b1);padding:0 12px;gap:12px}
+.sf-indicator{display:flex;align-items:center;gap:4px;font-size:10px;font-weight:600}
+.sf-dot{width:6px;height:6px;border-radius:50%}
+.sf-spacer{flex:1}
+.now-on-air-bar{background:rgba(244,63,94,0.15);border:1px solid rgba(244,63,94,0.3);border-radius:var(--radius);padding:2px 12px;font-size:10px;font-weight:600;color:var(--rs);display:flex;align-items:center;gap:6px;animation:onAirPulse 3s ease-in-out infinite}
+@keyframes onAirPulse{0%,100%{border-color:rgba(244,63,94,0.3)}50%{border-color:rgba(244,63,94,0.7)}}
+.sf-nav{display:flex;gap:6px;margin-left:auto}
+.sf-nav-btn{padding:3px 8px;border-radius:var(--radius);font-family:'Inter',sans-serif;font-size:9px;font-weight:600;cursor:pointer;border:1px solid var(--b1);background:var(--card);color:var(--t2)}
+.sf-nav-btn:hover{background:var(--b1);color:var(--t1)}
+
+/* Library context menu */
+.lib-menu{position:fixed;background:var(--card2);border:1px solid var(--p1);border-radius:6px;padding:4px;z-index:1000;box-shadow:0 4px 20px rgba(0,0,0,0.6);min-width:140px}
+.lib-menu-item{padding:7px 12px;font-size:11px;color:var(--t1);cursor:pointer;border-radius:4px}
+.lib-menu-item:hover{background:var(--p4);color:var(--p2)}
+</style>
+</head>
+<body>
+
+<!-- ═══ HEADER (UNCHANGED) ═══ -->
+<div class="studio-header">
+  <div class="logo" onclick="goBack()">
+    <div class="logo-icon">((●))</div>
+  </div>
+  <div class="live-badge"><div class="live-dot-anim"></div>LIVE<br>ON AIR</div>
+  <div class="ai-auto-badge" id="ai-auto-btn" style="cursor:pointer" title="Toggle AI AUTO mode">AI AUTO<br>MODE<div id="ai-auto-status" style="font-size:8px;color:var(--t3)">OFF — click to start</div></div>
+  <div class="ai-insights-badge">✦ AI<br>3 Insights<div style="font-size:8px;color:var(--t3)">1 warning active</div></div>
+  <div class="hdr-spacer"></div>
+  <div style="text-align:center">
+    <div class="hdr-clock" id="clock">21:56:15</div>
+    <div class="hdr-date" id="clock-date">Tuesday, 31 January 2023</div>
+  </div>
+  <div class="hdr-station">
+    <div class="hdr-station-label">ACTIVE STATION</div>
+    <div class="hdr-station-name">KISS FM 91.5</div>
+    <div class="hdr-station-loc">Jaipur, Rajasthan</div>
+  </div>
+  <div style="display:flex;align-items:center;gap:6px;margin-left:8px">
+    <button id="btn-test-spot" onclick="testSpotAudio()" style="background:#F43F5E;color:white;padding:4px 10px;border:none;border-radius:4px;cursor:pointer;font-size:11px;font-weight:600;font-family:'Inter',sans-serif" title="Force-play the next spot file for diagnostics">TEST SPOT</button>
+    <div style="font-size:14px;cursor:pointer;color:var(--t3)" title="Settings">⚙</div>
+    <button class="logoff-btn" onclick="goBack()">× Log Off</button>
+  </div>
+</div>
+
+<!-- ═══ COMPACT TRANSPORT ═══ -->
+<div class="compact-transport">
+
+  <!-- DECK A — NOW PLAYING (fixed 370px width) -->
+  <div id="now-panel" style="width:370px;height:160px;display:flex;flex-direction:column;overflow:hidden;flex-shrink:0;border-right:1px solid #1C1F38;position:relative;background:var(--bg)">
+    <!-- Red accent bar -->
+    <div style="position:absolute;left:0;top:0;width:4px;height:160px;background:#F43F5E"></div>
+
+    <!-- Info section: 96px tall -->
+    <div style="padding:6px 8px 0 12px;height:96px;overflow:hidden;flex-shrink:0">
+      <div style="font-size:9px;color:#F43F5E;font-weight:600;letter-spacing:1px;margin-bottom:2px">NOW PLAYING</div>
+      <div id="deck-a-artist" style="font-size:10px;color:#8891B8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:340px;margin-bottom:1px">— No Song Loaded —</div>
+      <div id="deck-a-title" style="font-size:16px;font-weight:700;color:#F1F5FF;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:340px;line-height:1.2;margin-bottom:2px">Click a queue song to load</div>
+      <div id="deck-a-meta" style="font-size:9px;color:#454D6D;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:340px">Ready</div>
+      <div style="display:flex;align-items:baseline;justify-content:space-between;margin-top:2px">
+        <span id="deck-a-elapsed" style="font-size:28px;font-weight:700;color:#10B981;line-height:1;font-family:'Roboto Mono',monospace">0:00</span>
+        <span id="deck-a-remaining" style="font-size:16px;font-weight:600;color:#F59E0B;font-family:'Roboto Mono',monospace">-0:00</span>
+      </div>
+    </div>
+
+    <!-- Waveform: 20px tall -->
+    <div style="height:20px;flex-shrink:0;background:#070812;padding:0 8px">
+      <canvas id="deck-a-waveform" height="20" style="display:block;width:100%;height:20px"></canvas>
+    </div>
+
+    <!-- Buttons: 44px tall -->
+    <div style="height:44px;flex-shrink:0;display:flex;align-items:center;gap:4px;padding:0 8px;background:#131626;border-top:1px solid #1C1F38">
+      <button id="btn-cue-a" style="height:32px;padding:0 10px;background:#1E1535;border:1px solid #8B5CF6;border-left:3px solid #8B5CF6;color:#A78BFA;font-size:11px;font-weight:600;cursor:pointer;border-radius:4px;font-family:'Inter',sans-serif">CUE</button>
+      <button id="btn-prev-a" style="height:32px;width:32px;background:#1C1F38;border:1px solid #252848;color:#8891B8;font-size:14px;cursor:pointer;border-radius:4px">⏮</button>
+      <button id="btn-play-a" style="height:36px;width:52px;background:#10B981;border:none;color:#fff;font-size:18px;cursor:pointer;border-radius:6px;font-weight:700">▶</button>
+      <button id="btn-pause-a" style="height:32px;width:32px;background:#1C1F38;border:1px solid #252848;color:#8891B8;font-size:14px;cursor:pointer;border-radius:4px">⏸</button>
+      <button id="btn-next-a" style="height:32px;width:32px;background:#1C1F38;border:1px solid #252848;color:#8891B8;font-size:14px;cursor:pointer;border-radius:4px">⏭</button>
+      <button id="btn-fade-a" style="height:32px;padding:0 10px;background:#2D1A00;border:1px solid #F59E0B;color:#F59E0B;font-size:11px;font-weight:600;cursor:pointer;border-radius:4px;margin-left:auto;font-family:'Inter',sans-serif">FADE OUT</button>
+    </div>
+  </div>
+
+  <!-- CENTER CONTROLS -->
+  <div class="ct-center">
+    <div class="ct-center-label">NEXT BREAK</div>
+    <div class="ct-next-break-box">
+      <div class="ct-next-break-time" id="next-break-time">—:—</div>
+      <div class="ct-next-break-in" id="next-break-countdown">no breaks today</div>
+    </div>
+    <button class="ct-mix-now" id="btn-mix-now">MIX NOW →</button>
+    <div class="ct-crossfader-wrap">
+      <div class="ct-crossfader-label" id="crossfader-display">CROSSFADER &nbsp; A ←→ B</div>
+      <input type="range" id="crossfader-slider" class="ct-crossfader-slider" min="0" max="100" value="50">
+    </div>
+  </div>
+
+  <!-- DECK B — NEXT (fixed 416px width) -->
+  <div id="next-panel" style="width:416px;height:160px;display:flex;flex-direction:column;overflow:hidden;flex-shrink:0;border-right:1px solid #1C1F38;position:relative;background:var(--bg)">
+    <!-- Cyan accent bar (right side) -->
+    <div style="position:absolute;right:0;top:0;width:4px;height:160px;background:#06B6D4"></div>
+
+    <!-- Info section: 96px tall -->
+    <div style="padding:6px 12px 0 8px;height:96px;overflow:hidden;flex-shrink:0">
+      <div style="font-size:9px;color:#06B6D4;font-weight:600;letter-spacing:1px;margin-bottom:2px">NEXT — LOADED &amp; READY</div>
+      <div id="deck-b-artist" style="font-size:10px;color:#8891B8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:386px;margin-bottom:1px">— Empty —</div>
+      <div id="deck-b-title" style="font-size:16px;font-weight:700;color:#F1F5FF;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:386px;line-height:1.2;margin-bottom:2px">Click a queue song to load</div>
+      <div id="deck-b-meta" style="font-size:9px;color:#454D6D;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:386px">Ready</div>
+      <div style="display:flex;align-items:baseline;justify-content:space-between;margin-top:2px">
+        <span id="deck-b-elapsed" style="font-size:28px;font-weight:700;color:#8891B8;line-height:1;font-family:'Roboto Mono',monospace">0:00</span>
+        <span id="deck-b-remaining" style="font-size:16px;font-weight:600;color:#06B6D4;font-family:'Roboto Mono',monospace"><span id="deck-b-total">0:00</span></span>
+      </div>
+    </div>
+
+    <!-- Waveform: 20px tall -->
+    <div style="height:20px;flex-shrink:0;background:#070812;padding:0 8px">
+      <canvas id="deck-b-waveform" height="20" style="display:block;width:100%;height:20px"></canvas>
+    </div>
+
+    <!-- Buttons: 44px tall -->
+    <div style="height:44px;flex-shrink:0;display:flex;align-items:center;gap:4px;padding:0 8px;background:#131626;border-top:1px solid #1C1F38">
+      <button id="btn-cue-b" style="height:32px;padding:0 10px;background:#1E1535;border:1px solid #8B5CF6;border-left:3px solid #8B5CF6;color:#A78BFA;font-size:11px;font-weight:600;cursor:pointer;border-radius:4px;font-family:'Inter',sans-serif">CUE</button>
+      <button id="btn-prev-b" style="height:32px;width:32px;background:#1C1F38;border:1px solid #252848;color:#8891B8;font-size:14px;cursor:pointer;border-radius:4px">⏮</button>
+      <button id="btn-play-b" style="height:36px;width:52px;background:#06B6D4;border:none;color:#fff;font-size:18px;cursor:pointer;border-radius:6px;font-weight:700">▶</button>
+      <button id="btn-pause-b" style="height:32px;width:32px;background:#1C1F38;border:1px solid #252848;color:#8891B8;font-size:14px;cursor:pointer;border-radius:4px">⏸</button>
+      <button id="btn-next-b" style="height:32px;width:32px;background:#1C1F38;border:1px solid #252848;color:#8891B8;font-size:14px;cursor:pointer;border-radius:4px">⏭</button>
+      <button id="btn-load-new-b" style="height:32px;padding:0 10px;background:#083344;border:1px solid #06B6D4;color:#06B6D4;font-size:11px;font-weight:600;cursor:pointer;border-radius:4px;margin-left:auto;font-family:'Inter',sans-serif">LOAD NEW</button>
+    </div>
+  </div>
+
+  <!-- JINGLE PADS (compact, in transport row) -->
+  <div class="ct-jingles">
+    <div class="ct-jp-header">
+      <div class="ct-jp-title">JINGLE PADS — KISS MAIN</div>
+      <div class="ct-jp-pallets">⚙ Pallets</div>
+    </div>
+    <div class="ct-jp-grid" id="jp-grid"></div>
+  </div>
+
+</div>
+<!-- /COMPACT TRANSPORT -->
+
+<!-- ═══ MAIN AREA ═══ -->
+<div class="main-area">
+
+  <!-- LIBRARIES (LEFT) -->
+  <div class="ma-libraries">
+    <div class="ma-section-header purple">
+      LIBRARIES
+    </div>
+    <div class="lib-tabs">
+      <div class="lib-tab active" id="lib-tab-songs" data-tab="songs">♪ Songs</div>
+      <div class="lib-tab" id="lib-tab-spots" data-tab="spots">$ Spots</div>
+      <div class="lib-tab" id="lib-tab-mic" data-tab="mic">🎤 Mic</div>
+      <div class="lib-tab" id="lib-tab-jingles" data-tab="jingles">🔔 Jingles</div>
+      <div class="lib-tab" id="lib-tab-favs" data-tab="favs">❤ Favs</div>
+    </div>
+    <div class="lib-search-row">
+      <input class="lib-search-input" id="lib-search-input" type="text" placeholder="Super Search — Artist, Title, BPM...">
+      <button class="lib-search-btn" id="lib-search-btn">Search</button>
+    </div>
+    <div class="lib-table-head">
+      <div>#</div><div>Artist</div><div>Title</div><div>Cat</div><div>BPM</div><div>Yr</div>
+    </div>
+    <div class="lib-table-body" id="library-list">
+      <div class="lib-empty">Loading…</div>
+    </div>
+    <div class="lib-footer" id="library-count">0 songs found • Click to Add / Insert / Replace</div>
+  </div>
+
+  <!-- CENTER — History + Stitcher + AI -->
+  <div class="ma-center">
+    <div class="ma-section-header cyan">HISTORY — PREVIOUSLY PLAYED</div>
+    <div class="ma-history-body" id="history-list">
+      <div class="hist-empty">No history yet</div>
+    </div>
+    <div class="ma-section-header amber" style="border-top:1px solid var(--b1)">✦ AI INSIGHTS — NEXT 2 HOURS</div>
+    <div class="ai-insights-body" id="ai-insights-list"></div>
+  </div>
+
+  <!-- RIGHT — Next Break (big) + Upcoming Spots -->
+  <div class="ma-right">
+    <div class="ma-section-header amber">NEXT BREAK</div>
+    <div class="ma-next-break-display">
+      <div class="nb-big" id="next-break-big">—:—</div>
+      <div class="nb-subtitle" id="next-break-subtitle">no breaks scheduled</div>
+    </div>
+    <div class="ma-section-header cyan">+ UPCOMING SPOTS — NEXT 20 MIN</div>
+    <div class="upcoming-body" id="upcoming-spots-list">
+      <div class="up-empty">No spots in next 20 minutes</div>
+    </div>
+  </div>
+
+</div>
+<!-- /MAIN AREA -->
+
+<!-- ═══ BREAK BANNER ═══ -->
+<div id="break-banner" style="display:none">
+  <span style="width:10px;height:10px;border-radius:50%;background:var(--rs);box-shadow:0 0 8px var(--rs);animation:livePulse 1s ease-in-out infinite"></span>
+  <span>🔴 BREAK IN PROGRESS</span>
+  <span id="break-banner-campaign" style="color:var(--t1);font-weight:500">—</span>
+</div>
+
+<!-- ═══ PLAYLIST QUEUE (compact) ═══ -->
+<div class="queue-area">
+  <div class="queue-header">
+    <div class="queue-title">PLAYLIST QUEUE</div>
+    <div class="queue-meta" id="queue-meta">Loading…</div>
+    <div class="queue-actions">
+      <button class="qa-btn qa-btn-green" id="btn-add-song">+ Add Song</button>
+      <button class="qa-btn qa-btn-cyan" id="btn-move-up">⬆ Move Up</button>
+      <button class="qa-btn qa-btn-cyan" id="btn-move-down">⬇ Move Down</button>
+      <button class="qa-btn qa-btn-red" id="btn-skip">✕ Skip</button>
+      <button class="qa-btn qa-btn-amber" id="btn-lock-entry">🔒 Lock Entry</button>
+    </div>
+  </div>
+  <div class="queue-table">
+    <table>
+      <thead><tr>
+        <th style="width:24px">#</th>
+        <th style="width:20px">AI</th>
+        <th>Artist</th>
+        <th>Title</th>
+        <th style="width:60px;text-align:right">Duration</th>
+        <th style="width:70px">Category</th>
+        <th style="width:60px">Sched.</th>
+        <th style="width:70px">Status</th>
+        <th>Note</th>
+      </tr></thead>
+      <tbody id="queue-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ═══ FOOTER (UNCHANGED) ═══ -->
+<div class="studio-footer">
+  <div class="sf-indicator"><div class="sf-dot" style="background:var(--p1);box-shadow:0 0 4px var(--p1)"></div>AUTO MODE</div>
+  <div class="sf-indicator"><div class="sf-dot" style="background:var(--gn);box-shadow:0 0 4px var(--gn)"></div>ON AIR</div>
+  <div class="sf-indicator"><div class="sf-dot" style="background:var(--gn);box-shadow:0 0 4px var(--gn)"></div>AI Active</div>
+  <div class="sf-indicator"><div class="sf-dot" style="background:var(--p1)"></div>3 Insights</div>
+  <div class="sf-indicator"><div class="sf-dot" style="background:var(--am)"></div>1 Warning</div>
+  <div class="sf-spacer"></div>
+  <div class="now-on-air-bar">▶ NOW ON AIR — KISS FM 91.5 — 91.5 MHz</div>
+  <div class="sf-nav">
+    <button class="sf-nav-btn" onclick="goBack()">♫ Songs</button>
+    <button class="sf-nav-btn" onclick="goBack()">$ Spots</button>
+    <button class="sf-nav-btn" onclick="goBack()">♪ Jingles</button>
+  </div>
+</div>
+
+<!-- ═══ JS ═══ -->
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script src="js/bridge_helper.js"></script>
+<script>
+
+// ═════════════════════════════════════════════════
+// ── REAL AUDIO ENGINE WIRING (2-deck clean arch) ─
+// ═════════════════════════════════════════════════
+
+const PAD_COLORS = ['#06B6D4','#8B5CF6','#14B8A6','#6D28D9','#10B981','#F59E0B','#EC4899','#F43F5E','#A78BFA'];
+
+// ── Global studio state (one source of truth) ───
+window.STUDIO_QUEUE = [];
+window.STUDIO_JINGLES = [];
+window.eventQueue = [];
+window.queueIndex = 0;
+window.deckA = null;
+window.deckB = null;
+window.activeDeck = 'A';
+window.xfading = false;
+window.inBreak = false;
+window.bootDone = false;
+window.LIB_CURRENT_TAB = 'songs';
+window.LIB_LAST_RESULTS = [];
+
+var STUDIO_QUEUE = window.STUDIO_QUEUE;
+var STUDIO_JINGLES = window.STUDIO_JINGLES;
+
+function fmtSec(sec) {
+  sec = Math.max(0, sec | 0);
+  return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0');
+}
+
+function escapeHtml(s) {
+  return (s == null ? '' : String(s)).replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
+}
+
+function toast(msg) {
+  console.log('[studio]', msg);
+}
+function showToast(msg) { toast(msg); }
+
+// ── Render Unified Queue (songs + breaks from get_playlist_queue) ─
+function renderQueue() {
+  const tbody = document.getElementById('queue-body');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+
+  if (!STUDIO_QUEUE || STUDIO_QUEUE.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;padding:24px;color:var(--t3);font-size:11px">No songs in library — use Songs Library → Mass Import to add audio files</td></tr>`;
+    return;
+  }
+
+  const activeId = window.deckA ? window.deckA.id : null;
+  const standbyId = window.deckB ? window.deckB.id : null;
+
+  STUDIO_QUEUE.forEach((q, i) => {
+    const tr = document.createElement('tr');
+    const isBreak = q.type === 'break';
+    const isStitcher = q.type === 'stitcher';
+    const isSpecial = isBreak || isStitcher;
+    const hasFile = !isSpecial && q.file_path && q.file_path.length > 0;
+
+    let statusCls = 'q-queued', statusLabel = 'Queued';
+    if (isStitcher) {
+      tr.style.background = 'rgba(20,184,166,0.08)';
+      tr.style.borderLeft = '3px solid #14B8A6';
+      statusCls = 'q-queued';
+      statusLabel = '✦ Stitcher';
+    } else if (isBreak) {
+      tr.className = 'is-break';
+      statusCls = 'q-break';
+      statusLabel = '● Break';
+    } else if (q.id && q.id === activeId) {
+      tr.className = 'now-playing';
+      statusCls = 'q-playing';
+      statusLabel = (window.activeDeck === 'A') ? '▶ DECK A' : '◉ A LOADED';
+    } else if (q.id && q.id === standbyId) {
+      tr.className = 'loaded';
+      statusCls = 'q-loaded';
+      statusLabel = (window.activeDeck === 'B') ? '▶ DECK B' : '◉ B LOADED';
+    }
+
+    tr.style.cursor = hasFile ? 'pointer' : 'default';
+    tr.style.opacity = (hasFile || isSpecial) ? '1' : '0.5';
+    if (q.id) tr.dataset.songId = q.id;
+
+    const timeCell = (isBreak || isStitcher) ? q.sched_time : (q.bpm ? (q.bpm + ' BPM') : '');
+    const hasSweeper = !isSpecial && q.id && window.queueSweepers && window.queueSweepers[q.id];
+    const swIcon = hasSweeper ? '<span style="color:var(--am);font-size:9px" title="Sweeper assigned">SW</span> ' : '';
+    const aiNote = isBreak ? (q.spot_count + ' spots') : (isStitcher ? (q.hook_artists || '') : (hasFile ? swIcon : 'No file'));
+    const artistCell = isStitcher
+      ? '<span style="color:#14B8A6;font-weight:700">✦ STITCHER</span>'
+      : (isBreak ? '<span style="color:var(--rs);font-weight:700">BREAK</span>' : (q.artist || ''));
+    const arrow = (q.id === activeId) ? '▶' : ((q.id === standbyId) ? '◉' : (isBreak ? '●' : (isStitcher ? '✦' : '')));
+
+    tr.innerHTML = `
+      <td style="text-align:center;color:var(--t3);font-family:'Roboto Mono',monospace;font-size:10px">${i + 1}</td>
+      <td style="text-align:center;color:${isBreak ? 'var(--rs)' : 'var(--p1)'};font-size:10px">${arrow}</td>
+      <td style="font-weight:${(q.id === activeId) ? '700' : '400'}">${artistCell}</td>
+      <td>${escapeHtml(q.title || '')}</td>
+      <td class="dur-cell" style="text-align:right">${q.duration || '—'}</td>
+      <td><div class="q-cat-bar" style="background:${q.cat_color || 'var(--p1)'};opacity:0.6" title="${escapeHtml(q.category || '')}"></div></td>
+      <td style="font-family:'Roboto Mono',monospace;font-size:10px;color:var(--t3)">${timeCell}</td>
+      <td><span class="q-status ${statusCls}">${statusLabel}</span></td>
+      <td class="q-ai" style="font-size:9px;color:var(--t3)">${aiNote}</td>
+    `;
+
+    if (hasFile) {
+      tr.addEventListener('click', () => manualLoadToStandby(q));
+      // Right-click: assign sweeper
+      tr.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        showSweeperMenu(e, q.id);
+      });
+    }
+    tbody.appendChild(tr);
+  });
+
+  // Update queue meta
+  const meta = document.getElementById('queue-meta');
+  if (meta) {
+    const songs = STUDIO_QUEUE.filter(q => q.type === 'song').length;
+    const breaks = STUDIO_QUEUE.filter(q => q.type === 'break').length;
+    meta.textContent = `${songs} songs • ${breaks} breaks • AI AUTO active`;
+  }
+}
+
+function loadStudioQueue() {
+  callBridgeAsync('get_playlist_queue', [], function(data) {
+    if (!data) return;
+    STUDIO_QUEUE = data;
+    window.STUDIO_QUEUE = data;
+    window.eventQueue = data.filter(function(item) {
+      return item.type === 'song' && item.file_path && item.file_path.trim() !== '';
+    });
+    window.queueIndex = 0;
+    // Auto-populate sweeper assignments from clock scheduler
+    data.forEach(function(item) {
+      if (item.sweeper_id && item.id) {
+        window.queueSweepers[item.id] = item.sweeper_id;
+      }
+    });
+    renderQueue();
+    autoBootDecks();
+  });
+}
+
+function getNextEvent() {
+  if (!window.eventQueue || window.eventQueue.length === 0) return null;
+  const skipA = window.deckA ? window.deckA.id : null;
+  const skipB = window.deckB ? window.deckB.id : null;
+  let tries = 0;
+  while (tries < window.eventQueue.length) {
+    if (window.queueIndex >= window.eventQueue.length) window.queueIndex = 0;
+    const e = window.eventQueue[window.queueIndex++];
+    tries++;
+    if (!e) continue;
+    if (e.id && (e.id === skipA || e.id === skipB)) continue;
+    return e;
+  }
+  return window.eventQueue[0] || null;
+}
+
+function autoBootDecks() {
+  if (window.bootDone) return;
+  if (!window.eventQueue || window.eventQueue.length === 0) return;
+  window.bootDone = true;
+  window.queueIndex = 0;
+
+  const e1 = getNextEvent();
+  if (!e1) return;
+
+  callBridgeAsync('load_deck', ['A', e1.file_path], function(res) {
+    if (res === null) return;
+    window.deckA = e1;
+    updateDeckDisplay('A', e1);
+    setDeckBadge('A', 'LIVE');
+    callBridgeAsync('play_deck', ['A'], function() {
+      window.activeDeck = 'A';
+      renderQueue();
+      // Schedule sweeper for the first song if assigned
+      checkAndScheduleSweeper(e1);
+    });
+
+    setTimeout(function() {
+      const e2 = getNextEvent();
+      if (!e2) return;
+      callBridgeAsync('load_deck', ['B', e2.file_path], function(r2) {
+        if (r2 === null) return;
+        window.deckB = e2;
+        updateDeckDisplay('B', e2);
+        setDeckBadge('B', 'LOADED');
+        renderQueue();
+      });
+    }, 600);
+  });
+}
+
+function manualLoadToStandby(item) {
+  if (!item || !item.file_path) return;
+  const standby = (window.activeDeck === 'A') ? 'B' : 'A';
+  callBridgeAsync('load_deck', [standby, item.file_path], function(res) {
+    if (res === null) return;
+    const evt = { id: item.id, file_path: item.file_path, artist: item.artist, title: item.title, duration: item.duration, category: item.category, bpm: item.bpm, year: item.year };
+    if (standby === 'A') {
+      window.deckA = evt;
+      updateDeckDisplay('A', evt);
+      setDeckBadge('A', 'LOADED');
+    } else {
+      window.deckB = evt;
+      updateDeckDisplay('B', evt);
+      setDeckBadge('B', 'LOADED');
+    }
+    renderQueue();
+  });
+}
+
+function loadNextToStandby(deck) {
+  const next = getNextEvent();
+  if (!next) return;
+  callBridgeAsync('load_deck', [deck, next.file_path], function(res) {
+    if (res === null) return;
+    if (deck === 'A') {
+      window.deckA = next;
+      updateDeckDisplay('A', next);
+      setDeckBadge('A', 'LOADED');
+    } else {
+      window.deckB = next;
+      updateDeckDisplay('B', next);
+      setDeckBadge('B', 'LOADED');
+    }
+    renderQueue();
+  });
+}
+
+// ── Deck display helpers (writes to new compact transport IDs) ──
+function updateDeckDisplay(deck, event) {
+  const p = deck === 'A' ? 'a' : 'b';
+  const artist = document.getElementById('deck-' + p + '-artist');
+  const title  = document.getElementById('deck-' + p + '-title');
+  const meta   = document.getElementById('deck-' + p + '-meta');
+
+  if (!event) {
+    if (artist) artist.textContent = (deck === 'A') ? '— No Song Loaded —' : '— Empty —';
+    if (title)  title.textContent  = 'Waiting for queue';
+    if (meta)   meta.textContent   = 'Ready';
+    return;
+  }
+  if (artist) artist.textContent = event.artist || '—';
+  if (title)  title.textContent  = event.title || '—';
+  if (meta)   meta.textContent   = (event.category || '—') + ' • ' + (event.bpm || '-') + ' BPM • ' + (event.year || '-');
+}
+
+function setDeckBadge(deck, label) {
+  // No-op visual badge — the new compact layout uses the static
+  // accent bar on each deck tile rather than a status pill.
+}
+
+// ── Jingle pads (in compact transport) ─────────────
+function renderJinglePads() {
+  const grid = document.getElementById('jp-grid');
+  if (!grid) return;
+  grid.innerHTML = '';
+  if (!STUDIO_JINGLES || STUDIO_JINGLES.length === 0) {
+    for (let i = 0; i < 6; i++) {
+      const pad = document.createElement('div');
+      pad.className = 'ct-jp-pad';
+      pad.style.background = PAD_COLORS[i % PAD_COLORS.length];
+      pad.style.opacity = '0.4';
+      pad.innerHTML = `<div class="ct-jp-pad-label">EMPTY</div><div class="ct-jp-pad-dur">—</div>`;
+      grid.appendChild(pad);
+    }
+    return;
+  }
+  STUDIO_JINGLES.slice(0, 6).forEach((j, i) => {
+    const pad = document.createElement('div');
+    pad.className = 'ct-jp-pad';
+    pad.style.background = PAD_COLORS[i % PAD_COLORS.length];
+    const hasFile = j.file_path && j.file_path.length > 0;
+    if (!hasFile) pad.style.opacity = '0.5';
+    pad.innerHTML = `<div class="ct-jp-pad-label">${escapeHtml((j.name || '').substring(0, 12))}</div><div class="ct-jp-pad-dur">${j.duration || '0:00'}</div>`;
+    if (hasFile) {
+      pad.addEventListener('click', () => {
+        callBridgeAsync('play_jingle_pad', [j.file_path], function() {});
+        // Log to history
+        addToHistory({ jingle_id: j.id, type: 'jingle', duration_ms: j.duration_ms || 0, deck: window.activeDeck });
+      });
+    }
+    grid.appendChild(pad);
+  });
+}
+
+function loadStudioJingles() {
+  callBridgeAsync('get_studio_jingles', [], function(data) {
+    STUDIO_JINGLES = data || [];
+    renderJinglePads();
+  });
+}
+
+// ── Transport button handlers ────────────────────
+function wireTransport() {
+  const bind = (id, fn) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('click', fn);
+  };
+
+  // Deck A
+  bind('btn-cue-a', () => callBridgeAsync('seek_deck_a', [0], () => {}));
+  bind('btn-prev-a', () => callBridgeAsync('seek_deck_a', [0], () => {}));
+  bind('btn-play-a', () => {
+    if (!window.deckA) {
+      const next = getNextEvent();
+      if (!next) return;
+      callBridgeAsync('load_deck', ['A', next.file_path], function(res) {
+        if (res === null) return;
+        window.deckA = next;
+        updateDeckDisplay('A', next);
+        callBridgeAsync('play_deck', ['A'], function() {
+          window.activeDeck = 'A';
+          renderQueue();
+        });
+      });
+      return;
+    }
+    callBridgeAsync('play_deck', ['A'], function() {
+      window.activeDeck = 'A';
+      renderQueue();
+    });
+  });
+  bind('btn-pause-a', () => callBridgeAsync('pause_deck', ['A'], () => {}));
+  bind('btn-next-a', () => {
+    const next = getNextEvent();
+    if (!next) return;
+    callBridgeAsync('stop_deck', ['A'], function() {
+      callBridgeAsync('load_deck', ['A', next.file_path], function(res) {
+        if (res === null) return;
+        // Log skipped song
+        if (window.deckA) addToHistory({ song_id: window.deckA.id, type: 'song', duration_ms: window.deckA.duration_ms || 0, deck: 'A' });
+        window.deckA = next;
+        updateDeckDisplay('A', next);
+        callBridgeAsync('play_deck', ['A'], function() {
+          window.activeDeck = 'A';
+          renderQueue();
+          refreshHistory();
+        });
+      });
+    });
+  });
+  bind('btn-fade-a', () => startManualCrossfade());
+
+  // Deck B
+  bind('btn-cue-b', () => callBridgeAsync('seek_deck_b', [0], () => {}));
+  bind('btn-prev-b', () => callBridgeAsync('seek_deck_b', [0], () => {}));
+  bind('btn-play-b', () => {
+    if (!window.deckB) {
+      const next = getNextEvent();
+      if (!next) return;
+      callBridgeAsync('load_deck', ['B', next.file_path], function(res) {
+        if (res === null) return;
+        window.deckB = next;
+        updateDeckDisplay('B', next);
+        callBridgeAsync('play_deck', ['B'], function() {
+          window.activeDeck = 'B';
+          renderQueue();
+        });
+      });
+      return;
+    }
+    callBridgeAsync('play_deck', ['B'], function() {
+      window.activeDeck = 'B';
+      renderQueue();
+    });
+  });
+  bind('btn-pause-b', () => callBridgeAsync('pause_deck', ['B'], () => {}));
+  bind('btn-next-b', () => {
+    const next = getNextEvent();
+    if (!next) return;
+    callBridgeAsync('load_deck', ['B', next.file_path], function(res) {
+      if (res === null) return;
+      window.deckB = next;
+      updateDeckDisplay('B', next);
+      renderQueue();
+    });
+  });
+  bind('btn-load-new-b', () => {
+    const next = getNextEvent();
+    if (!next) return;
+    callBridgeAsync('load_deck', ['B', next.file_path], function(res) {
+      if (res === null) return;
+      window.deckB = next;
+      updateDeckDisplay('B', next);
+      renderQueue();
+    });
+  });
+
+  // Center
+  bind('btn-mix-now', () => startManualCrossfade());
+
+  // Crossfader slider
+  const cf = document.getElementById('crossfader-slider');
+  if (cf) {
+    cf.addEventListener('input', function() {
+      const val = parseInt(this.value, 10);
+      const volA = Math.max(0, Math.min(100, 100 - val));
+      const volB = Math.max(0, Math.min(100, val));
+      callBridgeAsync('set_deck_volume', [1, volA], () => {});
+      callBridgeAsync('set_deck_volume', [2, volB], () => {});
+      const disp = document.getElementById('crossfader-display');
+      if (disp) disp.textContent = `CROSSFADER  ${volA}% / ${volB}%`;
+    });
+  }
+}
+
+// ── Compact 20px animated waveform ───────────────
+// Stable base shape (Math.sin) so each deck has its own consistent
+// "song silhouette"; bars oscillate via a phase counter while the
+// deck is playing, driven by requestAnimationFrame.
+const waveState = {
+  A: { phase: 0, progress: 0, playing: false },
+  B: { phase: 0, progress: 0, playing: false }
+};
+
+function drawWave(deck) {
+  const id = 'deck-' + deck.toLowerCase() + '-waveform';
+  const canvas = document.getElementById(id);
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  // The canvas lives inside a 20px-tall div with 8px horizontal padding,
+  // so subtract that from the parent's offsetWidth.
+  const parentW = canvas.parentElement ? canvas.parentElement.offsetWidth : 354;
+  const W = Math.max(40, parentW - 16);
+  const H = 20;
+  if (canvas.width !== W) canvas.width = W;
+  canvas.height = H;
+
+  // Background
+  ctx.fillStyle = '#070812';
+  ctx.fillRect(0, 0, W, H);
+
+  const bw = 3, gap = 1, step = bw + gap;
+  const total = Math.floor(W / step);
+  const played = Math.floor(total * (waveState[deck].progress || 0));
+  const phase = waveState[deck].phase;
+  const isPlaying = waveState[deck].playing;
+
+  for (let i = 0; i < total; i++) {
+    // Stable base height
+    const base = 2 + Math.abs(Math.sin(i * 0.38 + 0.5) * H * 0.75);
+
+    // Animate while playing
+    let h = base;
+    if (isPlaying) {
+      const anim = Math.sin(i * 0.55 + phase) * H * 0.35;
+      h = Math.max(1, Math.min(H - 1, base + anim));
+    }
+
+    const x = i * step;
+    const y = (H - h) / 2;
+
+    if (i < played) {
+      ctx.fillStyle = (deck === 'A') ? '#10B981' : '#06B6D4';
+    } else if (i === played && played > 0) {
+      ctx.fillStyle = '#F59E0B'; // playhead
+    } else {
+      ctx.fillStyle = '#1C1F38';
+    }
+    ctx.fillRect(x, y, bw, h);
+  }
+}
+
+// Continuous animation loop
+(function waveLoop() {
+  if (waveState.A.playing) waveState.A.phase += 0.14;
+  if (waveState.B.playing) waveState.B.phase += 0.11;
+  drawWave('A');
+  drawWave('B');
+  requestAnimationFrame(waveLoop);
+})();
+
+function updateWaveformProgress(deck, progressPercent, isPlaying) {
+  const k = (deck === 'A') ? 'A' : 'B';
+  if (waveState[k]) {
+    waveState[k].progress = progressPercent;
+    waveState[k].playing = !!isPlaying;
+  }
+}
+
+// ── Real-time position polling ───────────────────
+function updatePositionUI(pos) {
+  if (!pos || pos.error) return;
+  const da = pos.deck_a, db = pos.deck_b;
+
+  if (da) {
+    const elA = document.getElementById('deck-a-elapsed');
+    const reA = document.getElementById('deck-a-remaining');
+    if (elA) elA.textContent = da.elapsed;
+    if (reA) reA.textContent = '-' + da.remaining;
+    updateWaveformProgress('A', da.progress || 0, !!da.is_playing);
+  }
+
+  if (db) {
+    const elB = document.getElementById('deck-b-elapsed');
+    const reB = document.getElementById('deck-b-remaining');
+    const totB = document.getElementById('deck-b-total');
+    if (elB) elB.textContent = db.elapsed;
+    if (totB) totB.textContent = db.total;
+    if (reB) {
+      // If Deck B is playing show remaining; otherwise show total
+      reB.innerHTML = db.is_playing ? ('-' + db.remaining) : ('<span id="deck-b-total">' + db.total + '</span>');
+    }
+    updateWaveformProgress('B', db.progress || 0, !!db.is_playing);
+  }
+}
+
+function pollPosition() {
+  callBridgeAsync('get_playback_position', [], function(data) {
+    if (data) updatePositionUI(data);
+  });
+}
+
+// ═════════════════════════════════════════════════
+// ── BREAK SCHEDULER UI ───────────────────────────
+// ═════════════════════════════════════════════════
+var TODAYS_BREAKS = [];
+var NEXT_BREAK_TIME = null;
+
+function hhmmToSec(t) {
+  if (!t || t.indexOf(':') < 0) return null;
+  var p = t.split(':');
+  return parseInt(p[0], 10) * 3600 + parseInt(p[1], 10) * 60;
+}
+function secNow() {
+  var n = new Date();
+  return n.getHours() * 3600 + n.getMinutes() * 60 + n.getSeconds();
+}
+
+function loadNextBreak() {
+  callBridgeAsync('get_next_break', [], function(data) {
+    var timeEl = document.getElementById('next-break-time');
+    var bigEl = document.getElementById('next-break-big');
+    var inEl = document.getElementById('next-break-countdown');
+    NEXT_BREAK_TIME = (data && typeof data === 'string' && data.length > 0) ? data : null;
+    if (!NEXT_BREAK_TIME) {
+      if (timeEl) timeEl.textContent = '—:—';
+      if (bigEl) bigEl.textContent = '—:—';
+      if (inEl) inEl.textContent = 'no breaks today';
+      const sub = document.getElementById('next-break-subtitle');
+      if (sub) sub.textContent = 'no breaks scheduled';
+      return;
+    }
+    if (timeEl) timeEl.textContent = NEXT_BREAK_TIME;
+    if (bigEl) bigEl.textContent = NEXT_BREAK_TIME;
+    updateBreakCountdown();
+  });
+}
+
+function updateBreakCountdown() {
+  if (!NEXT_BREAK_TIME) return;
+  var inEl = document.getElementById('next-break-countdown');
+  var sub = document.getElementById('next-break-subtitle');
+  var target = hhmmToSec(NEXT_BREAK_TIME);
+  var now = secNow();
+  var diff = target - now;
+  if (diff <= 0) {
+    if (inEl) inEl.textContent = 'NOW';
+    if (sub) sub.textContent = 'NOW';
+    return;
+  }
+  var h = Math.floor(diff / 3600);
+  var m = Math.floor((diff % 3600) / 60);
+  var s = diff % 60;
+  var label;
+  if (h > 0) {
+    label = 'in ' + h + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+  } else {
+    label = 'in ' + m + ':' + String(s).padStart(2, '0');
+  }
+  if (inEl) inEl.textContent = label;
+  if (sub) sub.textContent = label;
+}
+
+function loadTodaysBreaks() { /* no-op — unified queue */ }
+
+// ── Break banner show/hide helpers (single source of truth) ─
+function showBreakBanner(campaignText) {
+  const el = document.getElementById('break-banner');
+  if (el) {
+    el.style.display = 'flex';
+    el.style.visibility = 'visible';
+    el.style.opacity = '1';
+  }
+  if (campaignText !== undefined) {
+    const campEl = document.getElementById('break-banner-campaign');
+    if (campEl) campEl.textContent = campaignText || '—';
+  }
+}
+
+function hideBreakBanner() {
+  const el = document.getElementById('break-banner');
+  if (el) {
+    el.style.display = 'none';
+    el.style.visibility = 'hidden';
+    el.style.opacity = '0';
+  }
+  const campEl = document.getElementById('break-banner-campaign');
+  if (campEl) campEl.textContent = '—';
+}
+
+// pollBreakStatus is intentionally a no-op now: the banner is owned
+// by onBreakStarted/onAllSpotsDone exclusively. The Python-side
+// `current_break` flag is set but never cleared (the new scheduler
+// is notification-only and the JS handles spot playback), so polling
+// it would keep the banner stuck on forever.
+function pollBreakStatus() {
+  if (NEXT_BREAK_TIME) {
+    var target = hhmmToSec(NEXT_BREAK_TIME);
+    if (target !== null && target <= secNow() && !window.inBreak) {
+      loadNextBreak();
+    }
+  }
+}
+
+// ═════════════════════════════════════════════════
+// ── UPCOMING SPOTS (next 20 minutes) ─────────────
+// ═════════════════════════════════════════════════
+function loadUpcomingSpots() {
+  callBridgeAsync('get_upcoming_spots', [], function(data) {
+    if (!data) return;
+    const spots = data.spots || [];
+    const container = document.getElementById('upcoming-spots-list');
+    if (!container) return;
+
+    if (spots.length === 0) {
+      container.innerHTML = '<div class="up-empty">No spots in next 20 minutes</div>';
+      return;
+    }
+    container.innerHTML = spots.map(spot => {
+      const isNow = spot.mins_until === 0;
+      return `<div class="up-row${isNow ? ' now' : ''}">
+        <div class="up-time">${spot.break_time}</div>
+        <div class="up-name">${escapeHtml(spot.name)} <span style="color:var(--t3);font-size:9px">(${spot.spot_count} spots)</span></div>
+        <span class="up-badge">${isNow ? '🔴 NOW' : spot.label}</span>
+      </div>`;
+    }).join('');
+  });
+}
+
+// ═════════════════════════════════════════════════
+// ── LIBRARIES PANEL ──────────────────────────────
+// ═════════════════════════════════════════════════
+function loadLibrary(tab, query) {
+  tab = tab || 'songs';
+  query = query || '';
+  window.LIB_CURRENT_TAB = tab;
+  callBridgeAsync('get_library_songs', [tab, query], function(data) {
+    window.LIB_LAST_RESULTS = data || [];
+    renderLibrary();
+  });
+}
+
+function renderLibrary() {
+  const body = document.getElementById('library-list');
+  const count = document.getElementById('library-count');
+  if (!body) return;
+  const items = window.LIB_LAST_RESULTS || [];
+  if (items.length === 0) {
+    body.innerHTML = '<div class="lib-empty">No items found in this library</div>';
+    if (count) count.textContent = '0 items found • Click to Add / Insert / Replace';
+    return;
+  }
+  body.innerHTML = '';
+  items.forEach((item, i) => {
+    const row = document.createElement('div');
+    row.className = 'lib-row';
+    row.innerHTML = `
+      <div class="l-num">${i + 1}</div>
+      <div class="l-artist">${escapeHtml(item.artist || '—')}</div>
+      <div class="l-title">${escapeHtml(item.title || '—')}</div>
+      <div class="l-cat">${escapeHtml(item.category || '')}</div>
+      <div class="l-bpm">${item.bpm || ''}</div>
+      <div class="l-yr">${item.year || ''}</div>
+    `;
+    row.addEventListener('click', (e) => showLibContextMenu(e, item));
+    row.addEventListener('dblclick', () => addLibItemToQueue(item));
+    body.appendChild(row);
+  });
+  if (count) count.textContent = `${items.length} items found • Click to Add / Insert / Replace • Double-click to Add`;
+}
+
+function showLibContextMenu(e, item) {
+  closeLibContextMenu();
+  const menu = document.createElement('div');
+  menu.className = 'lib-menu';
+  menu.id = '_lib_context_menu';
+  menu.style.left = (e.clientX + 4) + 'px';
+  menu.style.top = (e.clientY + 4) + 'px';
+  menu.innerHTML = `
+    <div class="lib-menu-item" data-action="add">+ Add to Queue</div>
+    <div class="lib-menu-item" data-action="next">⏭ Play Next (load to standby)</div>
+    <div class="lib-menu-item" data-action="now">▶ Replace Standby Now</div>
+  `;
+  document.body.appendChild(menu);
+  menu.querySelectorAll('.lib-menu-item').forEach(el => {
+    el.addEventListener('click', () => {
+      const a = el.dataset.action;
+      if (a === 'add') addLibItemToQueue(item);
+      else if (a === 'next') insertNextLib(item);
+      else if (a === 'now') replaceNowLib(item);
+      closeLibContextMenu();
+    });
+  });
+  setTimeout(() => document.addEventListener('click', closeLibContextMenu, { once: true }), 0);
+}
+function closeLibContextMenu() {
+  const m = document.getElementById('_lib_context_menu');
+  if (m) m.remove();
+}
+
+function addLibItemToQueue(item) {
+  if (!item || !item.file_path) { toast('No file path'); return; }
+  // Append to the end of the in-memory event queue
+  window.eventQueue.push({
+    id: item.id, file_path: item.file_path, artist: item.artist,
+    title: item.title, duration: item.duration, category: item.category,
+    bpm: item.bpm, year: item.year, type: item.type || 'song',
+  });
+  toast('Added to queue: ' + (item.title || item.artist));
+  renderQueue();
+}
+
+function insertNextLib(item) {
+  if (!item || !item.file_path) return;
+  // Insert at the front of the queue and load to standby
+  window.eventQueue.unshift({
+    id: item.id, file_path: item.file_path, artist: item.artist,
+    title: item.title, duration: item.duration, category: item.category,
+    bpm: item.bpm, year: item.year, type: item.type || 'song',
+  });
+  window.queueIndex = 0;
+  manualLoadToStandby(item);
+}
+
+function replaceNowLib(item) {
+  if (!item || !item.file_path) return;
+  manualLoadToStandby(item);
+}
+
+function wireLibraryUI() {
+  document.querySelectorAll('.lib-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.lib-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      const q = (document.getElementById('lib-search-input').value || '').trim();
+      loadLibrary(tab.dataset.tab, q);
+    });
+  });
+  const searchBtn = document.getElementById('lib-search-btn');
+  const searchInput = document.getElementById('lib-search-input');
+  if (searchBtn) searchBtn.addEventListener('click', () => loadLibrary(window.LIB_CURRENT_TAB, searchInput.value));
+  if (searchInput) {
+    searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') loadLibrary(window.LIB_CURRENT_TAB, searchInput.value);
+    });
+  }
+}
+
+// ═════════════════════════════════════════════════
+// ── HISTORY PANEL ────────────────────────────────
+// ═════════════════════════════════════════════════
+function refreshHistory() {
+  callBridgeAsync('get_play_history', [], function(data) {
+    const body = document.getElementById('history-list');
+    if (!body) return;
+    if (!data || data.length === 0) {
+      body.innerHTML = '<div class="hist-empty">No history yet</div>';
+      return;
+    }
+    body.innerHTML = data.map(item => `
+      <div class="hist-row">
+        <div class="h-time">${escapeHtml(item.time || '')}</div>
+        <div class="h-artist">${escapeHtml(item.artist || '')}</div>
+        <div class="h-title">${escapeHtml(item.title || '')}</div>
+        <div class="h-dur">${escapeHtml(item.duration || '—')}</div>
+      </div>
+    `).join('');
+  });
+}
+
+function addToHistory(item) {
+  if (!item) return;
+  callBridgeAsync('add_to_history', [JSON.stringify(item)], function() {
+    refreshHistory();
+  });
+}
+
+// ═════════════════════════════════════════════════
+// ── AI INSIGHTS PANEL ────────────────────────────
+// ═════════════════════════════════════════════════
+function loadAIInsights() {
+  callBridgeAsync('get_ai_insights', [], function(data) {
+    const body = document.getElementById('ai-insights-list');
+    if (!body) return;
+    const items = data || [];
+    if (items.length === 0) {
+      body.innerHTML = '<div style="padding:8px;color:var(--t3);font-size:10px">No insights</div>';
+      return;
+    }
+    body.innerHTML = items.slice(0, 4).map(it => `
+      <div class="ai-insight-row ${escapeHtml(it.severity || 'info')}">
+        <div class="ai-icon">${escapeHtml(it.icon || '✦')}</div>
+        <div class="ai-msg">${escapeHtml(it.message || '')}</div>
+      </div>
+    `).join('');
+  });
+}
+
+// ═════════════════════════════════════════════════
+// ── AUTO DECK SWITCHING (preserved 2-deck arch) ──
+// ═════════════════════════════════════════════════
+const XFADE_LEAD_MS = 4000;
+const XFADE_DURATION = 3.0;
+const XFADE_COMPLETE_MS = 3500;
+
+function startManualCrossfade() {
+  if (window.xfading) return;
+  if (!window.deckB && !window.deckA) return;
+  const standby = (window.activeDeck === 'A') ? 'B' : 'A';
+  if (!window['deck' + standby]) {
+    const next = getNextEvent();
+    if (!next) return;
+    callBridgeAsync('load_deck', [standby, next.file_path], function(r) {
+      if (r === null) return;
+      window['deck' + standby] = next;
+      updateDeckDisplay(standby, next);
+      renderQueue();
+      setTimeout(triggerCrossfadeNow, 400);
+    });
+    return;
+  }
+  triggerCrossfadeNow();
+}
+
+function triggerCrossfadeNow() {
+  if (window.xfading) return;
+  const outgoing = window.activeDeck;
+  const incoming = (outgoing === 'A') ? 'B' : 'A';
+  window.xfading = true;
+  // Log the outgoing song to history before clearing
+  const outgoingSong = window['deck' + outgoing];
+  if (outgoingSong) {
+    addToHistory({ song_id: outgoingSong.id, type: 'song', duration_ms: outgoingSong.duration_ms || 0, deck: outgoing });
+  }
+  callBridgeAsync('start_crossfade', [], function() {});
+  setTimeout(function() {
+    window.activeDeck = incoming;
+    if (outgoing === 'A') window.deckA = null;
+    else window.deckB = null;
+    updateDeckDisplay(outgoing, null);
+    window.xfading = false;
+    renderQueue();
+    // Schedule sweeper for the newly active song (if assigned)
+    var newSong = window['deck' + incoming];
+    if (newSong) checkAndScheduleSweeper(newSong);
+    setTimeout(function() { loadNextToStandby(outgoing); }, 300);
+  }, XFADE_COMPLETE_MS + 200);
+}
+
+function checkAutoSwitch(state) {
+  if (window.xfading) return;
+  if (window.inBreak) return;
+
+  const active = window.activeDeck;
+  const standby = (active === 'A') ? 'B' : 'A';
+  const ds = (active === 'A') ? state.deck_a : state.deck_b;
+
+  if (ds && ds.is_playing && ds.length_ms > 0 &&
+      ds.remaining_ms > 0 && ds.remaining_ms <= XFADE_LEAD_MS &&
+      window['deck' + standby]) {
+    triggerCrossfadeNow();
+    return;
+  }
+
+  if (ds && ds.was_started && ds.is_ended && !ds.is_playing) {
+    console.log('[auto] failsafe: deck ' + active + ' ended — switching');
+    const inc = standby;
+    // Log the deck that just ended
+    const endedSong = window['deck' + active];
+    if (endedSong) {
+      addToHistory({ song_id: endedSong.id, type: 'song', duration_ms: endedSong.duration_ms || 0, deck: active });
+    }
+    if (window['deck' + inc]) {
+      callBridgeAsync('play_deck', [inc], function() {
+        window.activeDeck = inc;
+        if (active === 'A') window.deckA = null;
+        else window.deckB = null;
+        updateDeckDisplay(active, null);
+        renderQueue();
+        setTimeout(function() { loadNextToStandby(active); }, 400);
+      });
+    } else {
+      const next = getNextEvent();
+      if (!next) return;
+      callBridgeAsync('load_deck', [active, next.file_path], function(r) {
+        if (r === null) return;
+        if (active === 'A') window.deckA = next;
+        else window.deckB = next;
+        updateDeckDisplay(active, next);
+        callBridgeAsync('play_deck', [active], function() {
+          renderQueue();
+        });
+      });
+    }
+  }
+}
+
+function deckMonitor() {
+  callBridgeAsync('get_playback_state', [], function(state) {
+    if (!state) return;
+    if (state.active_deck && !window.xfading) {
+      window.activeDeck = state.active_deck;
+    }
+    checkAutoSwitch(state);
+  });
+}
+
+// ═════════════════════════════════════════════════
+// ── BREAK HANDLER (spots on active deck) ─────────
+// ═════════════════════════════════════════════════
+//
+// Sequence per spec:
+//   1. 10-second fade out of the active music deck
+//   2. For each spot (in order):
+//        - force the active deck volume back to 85 (so spots are
+//          NEVER silent, no matter where the crossfader was)
+//        - stop → load(spot) → play
+//        - wait for is_ended (with a duration-based timeout safety net)
+//        - log to history
+//   3. Crossfade to the standby music deck
+//   4. Load the next event onto the freed (formerly spot) deck
+
+const SPOT_VOLUME = 85;
+const MUSIC_FADE_OUT_MS = 3000; // 3 seconds — professional broadcast standard
+const SPOT_DECK_NUMBER = { A: 1, B: 2 };
+
+function onBreakStarted(payload) {
+  let spots;
+  try { spots = JSON.parse(payload); } catch (e) {
+    console.warn('[break] payload parse failed', e);
+    return;
+  }
+  // DEBUG: surface the full break payload so file paths are
+  // visible in the DevTools console for troubleshooting.
+  console.log('[break] payload:', JSON.stringify(spots));
+  if (!spots || !spots.length) return;
+
+  window.inBreak = true;
+  showBreakBanner(spots.map(function(s) { return s.campaign || s.filename; }).join(' + '));
+
+  // Run the async sequence
+  runBreakSequence(spots).catch(function(err) {
+    console.error('[break] sequence error', err);
+    window.inBreak = false;
+    hideBreakBanner();
+  });
+}
+
+// ── Promise helpers ────────────────────────────
+function bridgeCall(method, args) {
+  return new Promise(function(resolve) {
+    callBridgeAsync(method, args || [], function(data) { resolve(data); });
+  });
+}
+
+function sleep(ms) {
+  return new Promise(function(r) { setTimeout(r, ms); });
+}
+
+// 20-step volume ramp on the given deck (A or B), in `durationMs` total.
+function fadeOutActiveDeck(deck, durationMs) {
+  return new Promise(function(resolve) {
+    const steps = 20;
+    const stepTime = Math.max(10, Math.floor(durationMs / steps));
+    const startVol = SPOT_VOLUME;
+    let currentStep = 0;
+    const fadeTimer = setInterval(function() {
+      currentStep++;
+      const newVol = Math.max(0, Math.round(startVol * (1 - currentStep / steps)));
+      callBridgeAsync('set_volume', [deck, newVol], function() {});
+      if (currentStep >= steps) {
+        clearInterval(fadeTimer);
+        resolve();
+      }
+    }, stepTime);
+  });
+}
+
+// Wait for a spot to play out. PRIMARY signal is the spot's known
+// duration_ms (we asked the bridge for it and it came from spot_files
+// in the DB). The is_ended polling is only used as an EARLY exit
+// AFTER a 1.5s minimum wait — this fixes the "race-skip" bug where
+// VLC reports NothingSpecial / Stopped for a few hundred ms right
+// after play_deck() is called and the loop thinks the spot finished
+// before it ever started.
+function waitForDeckToFinish(deck, durationMs) {
+  return new Promise(function(resolve) {
+    const minWait = 1500;
+    // Jazler standard: spots must play START to END of actual audio.
+    // We give VLC a generous 3000ms tail past the stored duration_ms
+    // so a slightly-inaccurate duration (common with MP3 last-frame
+    // rounding) never truncates the spot. The early-exit is_ended
+    // poll below will finish us sooner if VLC naturally ends first.
+    const totalWait = (durationMs && durationMs > 0) ? Math.max(minWait, durationMs) + 3000 : 45000;
+    let done = false;
+    const finish = function() {
+      if (done) return;
+      done = true;
+      clearTimeout(safetyCap);
+      clearInterval(pollTimer);
+      resolve();
+    };
+    // Hard cap — always resolves at the duration
+    const safetyCap = setTimeout(finish, totalWait);
+    // Early-exit poll only kicks in after the minimum wait
+    let pollTimer = null;
+    setTimeout(function() {
+      pollTimer = setInterval(function() {
+        callBridgeAsync('get_playback_state', [], function(s) {
+          if (!s) return;
+          const ds = (deck === 'A') ? s.deck_a : s.deck_b;
+          if (!ds) return;
+          // Only treat as finished if VLC reports the natural Ended
+          // state. We can't trust Stopped/NothingSpecial here because
+          // those can also mean "transitioning into Playing".
+          if (ds.was_started && ds.is_ended && !ds.is_playing && ds.elapsed_ms > 500) {
+            finish();
+          }
+        });
+      }, 400);
+    }, minWait);
+  });
+}
+
+// ── Main break orchestration ───────────────────
+async function runBreakSequence(spots) {
+  const active = window.activeDeck;
+  const standby = (active === 'A') ? 'B' : 'A';
+
+  // Make sure the standby deck has a music track cued so we have
+  // something to crossfade back to after the spots finish.
+  if (!window['deck' + standby]) {
+    const nextMusic = getNextEvent();
+    if (nextMusic) {
+      const r = await bridgeCall('load_deck', [standby, nextMusic.file_path]);
+      if (r !== null) {
+        window['deck' + standby] = nextMusic;
+        updateDeckDisplay(standby, nextMusic);
+        renderQueue();
+      }
+    }
+  }
+
+  // STEP 1: 3s music fade-out on the active deck (professional standard)
+  console.log('[break] step 1: fading active deck ' + active + ' over ' + MUSIC_FADE_OUT_MS + 'ms');
+  await fadeOutActiveDeck(active, MUSIC_FADE_OUT_MS);
+  await bridgeCall('stop_deck', [active]);
+
+  // STEP 1.5: Play the Stitcher "Coming Up Next" sequence (if enabled).
+  // The entire chain is played by Python's AudioEngine.play_stitcher_chain
+  // on a background thread — no JS round-trips between steps, so there
+  // are ZERO audible gaps. Each step has a 300ms volume crossfade and
+  // opening/closing files play to their full parsed duration.
+  try {
+    // Pass the live playlist queue to Python so it picks hooks from
+    // the ACTUAL upcoming songs (Jazler standard), not from the library.
+    var queueJson = JSON.stringify(window.eventQueue || []);
+    var chainResult = await bridgeCall('play_stitcher_chain', [active, queueJson]);
+    if (chainResult && chainResult.running && chainResult.steps > 0) {
+      console.log('[break] step 1.5: stitcher chain started (' +
+        chainResult.steps + ' steps, ~' + chainResult.estimated_sec + 's)');
+
+      updateDeckDisplay(active, {
+        artist: 'STITCHER',
+        title: 'Coming Up Next (' + chainResult.steps + ' hooks)',
+        category: 'Coming Up Next',
+        bpm: '', year: ''
+      });
+
+      // Wait for the StitcherEngine background thread to finish.
+      // Poll the engine's own is_running flag — NOT the Studio deck
+      // state, because the stitcher uses its own independent VLC
+      // players that are invisible to get_playback_state.
+      var waitMs = Math.max(10000, (chainResult.estimated_sec || 50) * 1000 + 5000);
+      console.log('[stitcher] waiting up to ' + (waitMs / 1000).toFixed(0) + 's for engine to finish');
+
+      await new Promise(function(resolve) {
+        var pollChain = setInterval(function() {
+          callBridgeAsync('is_stitcher_running', [], function(running) {
+            if (running === false) {
+              clearInterval(pollChain);
+              clearTimeout(safetyTimeout);
+              console.log('[stitcher] engine reports done');
+              resolve();
+            }
+          });
+        }, 500);
+        // Hard safety cap so we never hang forever
+        var safetyTimeout = setTimeout(function() {
+          clearInterval(pollChain);
+          console.warn('[stitcher] safety timeout reached — moving to spots');
+          resolve();
+        }, waitMs);
+      });
+
+      console.log('[stitcher] chain complete');
+
+      // Log to history
+      addToHistory({
+        type: 'stitcher',
+        duration_ms: (chainResult.estimated_sec || 30) * 1000,
+        deck: active,
+      });
+    }
+  } catch (stitcherErr) {
+    console.warn('[break] stitcher chain error (continuing to spots):', stitcherErr);
+  }
+
+  // STEP 2: play each spot in order on the active deck
+  for (let i = 0; i < spots.length; i++) {
+    const spot = spots[i];
+    const path = spot.file_path;
+    if (!path) {
+      console.warn('[break] spot ' + i + ' has no file_path, skipping', spot);
+      continue;
+    }
+
+    // Show the spot on the deck display
+    updateDeckDisplay(active, {
+      artist: spot.campaign || 'COMMERCIAL',
+      title: spot.filename || spot.campaign || '—',
+      category: 'Spot',
+      bpm: '',
+      year: '',
+    });
+
+    // CRITICAL: force the spot deck volume back to a guaranteed
+    // audible level BEFORE load. The pre-fade left it at 0.
+    await bridgeCall('set_volume', [active, SPOT_VOLUME]);
+
+    // Hard-stop the deck so VLC is in a clean state, then load + play
+    await bridgeCall('stop_deck', [active]);
+    const loadOk = await bridgeCall('load_deck', [active, path]);
+    if (loadOk === null) {
+      console.warn('[break] load_deck failed for', path);
+      continue;
+    }
+    // Force volume again post-load (load_deck re-reads the stored
+    // volume which we just set, but we want belt-and-braces here).
+    await bridgeCall('set_volume', [active, SPOT_VOLUME]);
+    await bridgeCall('play_deck', [active]);
+    // And ONCE MORE post-play — Python audio_engine.play_deck also
+    // re-applies volume on a background timer for VLC quirks, but
+    // this synchronous call ensures the stored value is right.
+    await bridgeCall('set_volume', [active, SPOT_VOLUME]);
+
+    console.log('[break] spot ' + (i + 1) + '/' + spots.length + ' playing:', spot.filename || path, 'duration_ms:', spot.duration_ms);
+
+    // Wait for it to finish — primary signal is duration_ms, with a
+    // 1.5s minimum so VLC has time to actually start before any
+    // is_ended polling kicks in.
+    await waitForDeckToFinish(active, spot.duration_ms || 30000);
+
+    // Log to history
+    addToHistory({
+      campaign_id: spot.campaign_id || null,
+      type: 'spot',
+      duration_ms: spot.duration_ms || 0,
+      deck: active,
+    });
+
+    // Jazler standard: 0ms gap between spots. Each spot plays fully,
+    // next spot loads and plays instantly.
+  }
+
+  // STEP 3: Spot → Music handoff (Jazler standard)
+  //   - Last spot has already played to its natural end (no fade-out).
+  //   - Spot deck is stopped cleanly.
+  //   - Music deck is already pre-loaded at volume 0 (loaded at STEP 1).
+  //   - Music deck is started and faded IN from 0 to target over 1s.
+  //   - Zero perceived gap, smooth reintroduction of music.
+  console.log('[break] step 3: clean spot→music handoff');
+  await bridgeCall('stop_deck', [active]);
+  onAllSpotsDone(active, standby);
+}
+
+function playBreakOnActiveDeck(spots) {
+  // Legacy entry point — forward to the new async sequence so any
+  // older callers keep working.
+  runBreakSequence(spots).catch(function(e) {
+    console.error('[break] legacy entry sequence error', e);
+    window.inBreak = false;
+  });
+}
+
+// ── DIAGNOSTIC: TEST SPOT button ───────────────
+// Force-loads and force-plays a real spot file from the DB so we
+// can verify end-to-end audio plumbing without waiting for a
+// scheduled break to actually fire.
+async function testSpotAudio() {
+  console.log('=== SPOT AUDIO TEST STARTING ===');
+
+  // 1) Pull a real spot path from the DB. The library "spots" tab
+  //    returns rows with file_path filled in.
+  const libSpots = await bridgeCall('get_library_songs', ['spots', '']);
+  console.log('[test] library spots:', libSpots && libSpots.length);
+  if (!libSpots || libSpots.length === 0) {
+    alert('No spot files found in DB. Add spot files to a campaign first.');
+    return;
+  }
+
+  const spot = libSpots[0];
+  console.log('[test] using spot:', JSON.stringify(spot));
+  console.log('[test] file_path:', spot.file_path);
+
+  if (!spot.file_path) {
+    alert('First spot has no file_path. Check spot_files table.');
+    return;
+  }
+
+  const deck = window.activeDeck || 'A';
+  console.log('[test] active deck:', deck);
+
+  // 2) Force volume to 100 BEFORE load
+  let r = await bridgeCall('set_volume', [deck, 100]);
+  console.log('[test] set_volume pre-load →', r);
+
+  // 3) Stop, load, set volume again, play
+  r = await bridgeCall('stop_deck', [deck]);
+  console.log('[test] stop_deck →', r);
+
+  r = await bridgeCall('load_deck', [deck, spot.file_path]);
+  console.log('[test] load_deck →', r);
+  if (r === null) {
+    alert('load_deck returned null. File path probably wrong:\n' + spot.file_path);
+    return;
+  }
+
+  r = await bridgeCall('set_volume', [deck, 100]);
+  console.log('[test] set_volume post-load →', r);
+
+  r = await bridgeCall('play_deck', [deck]);
+  console.log('[test] play_deck →', r);
+
+  r = await bridgeCall('set_volume', [deck, 100]);
+  console.log('[test] set_volume post-play →', r);
+
+  // 4) Poll the playback state for the next 4 seconds so we can see
+  //    whether the deck actually entered Playing.
+  for (let i = 0; i < 8; i++) {
+    await sleep(500);
+    const s = await bridgeCall('get_playback_state', []);
+    if (!s) continue;
+    const ds = (deck === 'A') ? s.deck_a : s.deck_b;
+    console.log('[test] state @' + ((i + 1) * 500) + 'ms:',
+      'is_playing=' + ds.is_playing,
+      'is_ended=' + ds.is_ended,
+      'elapsed=' + ds.elapsed,
+      'volume=' + ds.volume,
+      'file=' + (ds.file ? ds.file.split(/[\\/]/).pop() : 'null'));
+  }
+
+  console.log('=== SPOT AUDIO TEST COMPLETE ===');
+  alert('Spot test fired. Check console (F12 / DevTools) for full trace.');
+}
+
+// Jazler standard spot→music handoff. The spot deck is already stopped
+// (no fade, full audio played). If a music track is pre-loaded on the
+// standby deck, we start it at volume 0 and ramp it up over ~1s for a
+// smooth fade-in. Zero gap between last spot sample and first music
+// sample — the fade-in happens ON the music, not the spot.
+const MUSIC_FADE_IN_MS = 1000;
+
+function fadeInMusicDeck(deck, durationMs) {
+  return new Promise(function(resolve) {
+    const target = 100;
+    const steps = 20;
+    const stepMs = Math.max(20, Math.floor(durationMs / steps));
+    let i = 0;
+    // Start at zero, then ramp.
+    callBridgeAsync('set_volume', [deck, 0], function() {
+      callBridgeAsync('play_deck', [deck], function() {
+        const timer = setInterval(function() {
+          i++;
+          const vol = Math.min(target, Math.round((target * i) / steps));
+          callBridgeAsync('set_volume', [deck, vol], function() {});
+          if (i >= steps) {
+            clearInterval(timer);
+            resolve();
+          }
+        }, stepMs);
+      });
+    });
+  });
+}
+
+function onAllSpotsDone(spotDeck, musicDeck) {
+  console.log('[break] spots done → fade in music (no crossfade)');
+  hideBreakBanner();
+
+  if (window['deck' + musicDeck]) {
+    // Fast handoff: music deck is pre-loaded. Instant play + fade-in.
+    fadeInMusicDeck(musicDeck, MUSIC_FADE_IN_MS).then(function() {
+      window.activeDeck = musicDeck;
+      if (spotDeck === 'A') window.deckA = null;
+      else window.deckB = null;
+      updateDeckDisplay(spotDeck, null);
+      window.xfading = false;
+      window.inBreak = false;
+      renderQueue();
+      setTimeout(function() { loadNextToStandby(spotDeck); }, 400);
+    });
+  } else {
+    // Fallback: no pre-loaded music. Load+play on the freed spot deck.
+    const next = getNextEvent();
+    if (next) {
+      callBridgeAsync('load_deck', [spotDeck, next.file_path], function(r) {
+        if (r === null) { window.inBreak = false; return; }
+        if (spotDeck === 'A') window.deckA = next;
+        else window.deckB = next;
+        updateDeckDisplay(spotDeck, next);
+        fadeInMusicDeck(spotDeck, MUSIC_FADE_IN_MS).then(function() {
+          window.inBreak = false;
+          renderQueue();
+        });
+      });
+    } else {
+      window.inBreak = false;
+    }
+  }
+}
+
+function wireBridgeSignals() {
+  if (typeof bridge === 'undefined' || !bridge) return;
+  try {
+    if (bridge.break_started && bridge.break_started.connect) {
+      bridge.break_started.connect(onBreakStarted);
+      console.log('[bridge] break_started signal connected');
+    }
+  } catch (e) {
+    console.warn('[bridge] signal connect failed:', e);
+  }
+}
+
+function wireAutoButton() {
+  const btn = document.getElementById('ai-auto-btn');
+  if (!btn) return;
+  const statusEl = document.getElementById('ai-auto-status');
+  if (statusEl) { statusEl.textContent = 'ON — always'; statusEl.style.color = 'var(--gn)'; }
+  btn.addEventListener('click', function() {
+    toast('Auto-switching is always active');
+  });
+}
+
+// ── Hour-change clock monitor ───────────────────
+// Polls every 30 seconds. When the hour changes and a different
+// clock is assigned in the grid, rebuilds the playlist queue so
+// the new clock's slots drive what plays next.
+var _lastClockHour = -1;
+var _lastClockId = 0;
+
+function checkClockChange() {
+  callBridgeAsync('get_active_clock_info', [], function(info) {
+    if (!info) return;
+    var statusEl = document.getElementById('ai-auto-status');
+
+    if (info.active) {
+      // Show active clock name
+      if (statusEl) {
+        statusEl.textContent = info.clock_name + ' (' + String(info.hour).padStart(2,'0') + ':00)';
+        statusEl.style.color = 'var(--gn)';
+      }
+      // Detect hour/clock change → rebuild queue
+      if (info.hour !== _lastClockHour || info.clock_id !== _lastClockId) {
+        if (_lastClockHour >= 0) {
+          console.log('[clock-monitor] hour changed ' + _lastClockHour + ' -> ' + info.hour +
+            ' clock: ' + info.clock_name + ' (id=' + info.clock_id + ') — rebuilding queue');
+          // Rebuild the queue from the new clock
+          loadStudioQueue();
+        }
+        _lastClockHour = info.hour;
+        _lastClockId = info.clock_id;
+      }
+    } else {
+      if (statusEl) {
+        statusEl.textContent = 'No clock — fallback';
+        statusEl.style.color = 'var(--am)';
+      }
+      // If we HAD a clock and now don't, rebuild with fallback
+      if (_lastClockId > 0) {
+        console.log('[clock-monitor] no clock for hour ' + info.hour + ' — switching to fallback');
+        loadStudioQueue();
+      }
+      _lastClockHour = info.hour;
+      _lastClockId = 0;
+    }
+  });
+}
+
+// ── Queue action buttons (placeholders for now) ───
+function wireQueueActions() {
+  const bind = (id, fn) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('click', fn);
+  };
+  bind('btn-add-song', () => toast('Use the Libraries panel → click a song → Add to Queue'));
+  bind('btn-move-up', () => toast('Move up (queue editor coming soon)'));
+  bind('btn-move-down', () => toast('Move down (queue editor coming soon)'));
+  bind('btn-skip', () => {
+    // Skip the active deck: stop and load next
+    const next = getNextEvent();
+    if (!next) return;
+    const active = window.activeDeck;
+    callBridgeAsync('stop_deck', [active], function() {
+      callBridgeAsync('load_deck', [active, next.file_path], function(res) {
+        if (res === null) return;
+        if (active === 'A') window.deckA = next;
+        else window.deckB = next;
+        updateDeckDisplay(active, next);
+        callBridgeAsync('play_deck', [active], function() {
+          renderQueue();
+        });
+      });
+    });
+  });
+  bind('btn-lock-entry', () => toast('Lock entry (coming soon)'));
+}
+
+// ═════════════════════════════════════════════════
+// ── SWEEPER SYSTEM ───────────────────────────────
+// ═════════════════════════════════════════════════
+// Per-song sweeper assignment. When a song starts playing on a deck,
+// if it has an assigned sweeper, the SweeperEngine fires the overlay
+// at the calculated trigger point (Bridge at End, Before Intro, etc).
+
+window.queueSweepers = {};  // {song_id: sweeper_id}
+window.availableSweepers = [];
+
+function loadAvailableSweepers() {
+  callBridgeAsync('get_sweepers_for_assignment', [20], function(data) {
+    window.availableSweepers = data || [];
+  });
+}
+
+function assignSweeperToSong(songId, sweeperId) {
+  window.queueSweepers[songId] = sweeperId;
+  renderQueue();
+  var sw = (window.availableSweepers || []).find(function(s) { return s.id === sweeperId; });
+  toast('Sweeper assigned: ' + (sw ? sw.name : sweeperId));
+}
+
+function showSweeperMenu(e, songId) {
+  // Close any existing menu
+  var old = document.getElementById('_sweeper_menu');
+  if (old) old.remove();
+
+  if (!window.availableSweepers || window.availableSweepers.length === 0) {
+    toast('No sweepers available — add them in Sweepers Library');
+    return;
+  }
+
+  var menu = document.createElement('div');
+  menu.id = '_sweeper_menu';
+  menu.className = 'lib-menu';
+  menu.style.left = (e.clientX + 4) + 'px';
+  menu.style.top = (e.clientY + 4) + 'px';
+
+  var html = '<div class="lib-menu-item" style="color:var(--t3);font-size:9px;cursor:default">Assign Sweeper:</div>';
+  window.availableSweepers.forEach(function(sw) {
+    html += '<div class="lib-menu-item" data-swid="' + sw.id + '">' +
+      sw.name + ' <span style="color:var(--t3);font-size:9px">(' + sw.position + ', ' + sw.duration + ')</span></div>';
+  });
+  if (window.queueSweepers[songId]) {
+    html += '<div class="lib-menu-item" style="color:var(--rs)" data-swid="0">Remove Sweeper</div>';
+  }
+  menu.innerHTML = html;
+  document.body.appendChild(menu);
+
+  menu.querySelectorAll('.lib-menu-item[data-swid]').forEach(function(el) {
+    el.addEventListener('click', function() {
+      var swid = parseInt(el.dataset.swid, 10);
+      if (swid === 0) {
+        delete window.queueSweepers[songId];
+        renderQueue();
+        toast('Sweeper removed');
+      } else {
+        assignSweeperToSong(songId, swid);
+      }
+      menu.remove();
+    });
+  });
+
+  setTimeout(function() {
+    document.addEventListener('click', function() {
+      var m = document.getElementById('_sweeper_menu');
+      if (m) m.remove();
+    }, { once: true });
+  }, 0);
+}
+
+// Auto-trigger sweeper when a song starts playing
+function checkAndScheduleSweeper(songItem) {
+  if (!songItem || !songItem.id) return;
+  var swId = window.queueSweepers[songItem.id];
+  if (!swId) return;
+  callBridgeAsync('schedule_sweeper_for_song', [songItem.id, swId], function(result) {
+    if (result && result.scheduled) {
+      console.log('[sweeper] scheduled for song ' + songItem.id + ' position=' + result.position);
+    }
+  });
+}
+
+// ── Boot ────────────────────────────────────────
+onBridgeReady(function() {
+  // Waveform IIFE waveLoop already self-started; nothing to wire here.
+  // Make sure the break banner starts hidden — onBreakStarted will
+  // show it when a spot break actually fires.
+  hideBreakBanner();
+  loadStudioQueue();
+  loadStudioJingles();
+  loadNextBreak();
+  loadTodaysBreaks();
+  loadUpcomingSpots();
+  loadLibrary('songs', '');
+  refreshHistory();
+  loadAIInsights();
+  wireTransport();
+  wireAutoButton();
+  wireBridgeSignals();
+  wireLibraryUI();
+  wireQueueActions();
+  loadAvailableSweepers();
+  setInterval(pollPosition, 500);
+  setInterval(deckMonitor, 500);
+  setInterval(updateBreakCountdown, 1000);
+  setInterval(pollBreakStatus, 2000);
+  setInterval(loadNextBreak, 30000);
+  setInterval(loadUpcomingSpots, 60000);
+  // Clock-change monitor: check every 30s if the hour changed
+  // and a different clock is now assigned → rebuild queue
+  checkClockChange();
+  setInterval(checkClockChange, 30000);
+  setInterval(refreshHistory, 30000);
+  setInterval(loadAIInsights, 60000);
+});
+
+// ── Clock ────────────────────────────────────────
+// IMPORTANT: bridge_helper.js already runs its own
+// `setInterval(updateClock, 1000)` and it respects the user's
+// 12h / 24h format setting. Running a second interval here caused
+// the #clock element to flicker between two formats every second.
+// We deliberately do NOT define our own updateClock or interval —
+// the helper owns the clock entirely. The window._clockInterval
+// guard below makes sure that if any other code (test scripts etc)
+// later tries to register a clock interval, it gets cleaned up.
+if (window._clockInterval) {
+  clearInterval(window._clockInterval);
+  window._clockInterval = null;
+}
+
+// ── Page-load safety: banner stays hidden until a real break fires
+document.addEventListener('DOMContentLoaded', function() {
+  if (typeof hideBreakBanner === 'function') hideBreakBanner();
+});
+
+// ── Navigation ───────────────────────────────────
+// Studio runs in its own persistent QMainWindow. "Go back" just hides
+// this window — VLC decks, timers and playback stay alive. Next time the
+// user clicks Studio from the Control Panel, this same window is raised
+// back into focus with playback uninterrupted.
+function goBack() {
+  try {
+    if (window.bridge && typeof window.bridge.close_studio === 'function') {
+      window.bridge.close_studio();
+      return;
+    }
+  } catch (e) {}
+  // Fallback only if the bridge isn't wired — should never happen in
+  // production. Do NOT reload studio_screen.html here (that kills playback).
+}
+</script>
+</body>
+</html>

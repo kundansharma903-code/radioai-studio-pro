@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Soundcards — RadioAI Studio Pro</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+/* ── Soundcards-specific overrides ──────────── */
+.breadcrumb .active{color:var(--cy);font-weight:600}
+
+/* Full-width scrollable content area */
+.main{display:flex;flex-direction:column;overflow-y:auto}
+.main::-webkit-scrollbar{width:6px}
+.main::-webkit-scrollbar-thumb{background:var(--b2);border-radius:3px}
+
+.content-area{flex:1;padding:24px 28px;overflow-y:auto}
+.content-area::-webkit-scrollbar{width:6px}
+.content-area::-webkit-scrollbar-thumb{background:var(--b2);border-radius:3px}
+
+/* Section title with left border */
+.section-header{padding-left:14px;border-left:3px solid var(--cy);margin-bottom:24px}
+.section-title{font-size:16px;font-weight:700;color:var(--t1);margin-bottom:4px}
+.section-subtitle{font-size:12px;color:var(--t3);line-height:1.5}
+
+/* Channel cards row */
+.channels-row{display:flex;gap:16px;margin-bottom:24px}
+.channel-card{flex:1;min-width:0;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius-lg);padding:18px 16px;display:flex;flex-direction:column;gap:14px;position:relative}
+.channel-card:hover{border-color:var(--b2)}
+
+/* Card header */
+.card-header{display:flex;align-items:flex-start;gap:10px}
+.card-icon{width:40px;height:40px;border-radius:var(--radius);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0}
+.card-icon.purple{background:var(--p4);color:var(--p1)}
+.card-icon.green{background:var(--gnD);color:var(--gn)}
+.card-icon.cyan{background:var(--cyD);color:var(--cy)}
+.card-icon.amber{background:var(--amD);color:var(--am)}
+.card-icon.rose{background:var(--rsD);color:var(--rs)}
+.card-title-area{flex:1;min-width:0}
+.card-title{font-size:13px;font-weight:700;color:var(--t1);margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card-desc{font-size:10px;color:var(--t3);line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.critical-badge{display:inline-block;font-size:8px;font-weight:700;color:var(--rs);background:var(--rsD);padding:2px 6px;border-radius:4px;letter-spacing:0.5px;text-transform:uppercase;margin-left:6px;vertical-align:middle}
+
+/* Form fields */
+.field{margin-bottom:0}
+.field-label{font-size:9px;font-weight:600;color:var(--t3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:5px}
+.field-select{width:100%;padding:7px 10px;background:var(--card2);border:1px solid var(--b1);border-radius:var(--radius);color:var(--t1);font-size:11px;font-family:'Inter',sans-serif;appearance:none;cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23454D6D'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center}
+.field-select:focus{outline:none;border-color:var(--cy)}
+.field-select.amber-text{color:var(--am)}
+.field-select.rose-text{color:var(--rs)}
+
+/* Volume slider */
+.slider-row{display:flex;align-items:center;gap:8px}
+.slider-track{flex:1;height:6px;background:var(--b1);border-radius:3px;position:relative;cursor:pointer;overflow:hidden}
+.slider-fill{height:100%;border-radius:3px;transition:width 0.15s}
+.slider-fill.purple{background:var(--p1)}
+.slider-fill.green{background:var(--gn)}
+.slider-fill.cyan{background:var(--cy)}
+.slider-fill.amber{background:var(--am)}
+.slider-fill.rose{background:var(--rs)}
+.slider-value{font-family:'Roboto Mono',monospace;font-size:11px;font-weight:700;color:var(--t1);min-width:32px;text-align:right}
+
+/* Latency + channel row */
+.info-row{display:flex;gap:10px}
+.info-item{flex:1}
+.info-value{font-family:'Roboto Mono',monospace;font-size:12px;color:var(--t1);background:var(--card2);border:1px solid var(--b1);border-radius:var(--radius);padding:6px 10px;text-align:center}
+
+/* Test button */
+.test-btn{width:100%;padding:8px 12px;border:none;border-radius:var(--radius);font-family:'Inter',sans-serif;font-size:11px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;transition:opacity 0.15s}
+.test-btn:hover{opacity:0.85}
+.test-btn.green{background:var(--gnD);color:var(--gn);border:1px solid rgba(16,185,129,0.2)}
+.test-btn.cyan{background:var(--cyD);color:var(--cy);border:1px solid rgba(6,182,212,0.2)}
+.test-btn.amber{background:var(--amD);color:var(--am);border:1px solid rgba(245,158,11,0.2)}
+.test-btn.rose{background:var(--rsD);color:var(--rs);border:1px solid rgba(244,63,94,0.2)}
+
+/* Status indicator */
+.card-status{display:flex;align-items:center;gap:6px;font-size:10px;font-weight:600;padding-top:4px;border-top:1px solid var(--b1)}
+.card-status .dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.card-status.active .dot{background:var(--gn)}
+.card-status.active{color:var(--gn)}
+.card-status.warning .dot{background:var(--am)}
+.card-status.warning{color:var(--am)}
+
+/* Warning bar */
+.warning-bar{display:flex;align-items:center;gap:14px;padding:14px 28px;background:rgba(245,158,11,0.08);border-top:1px solid rgba(245,158,11,0.15);border-bottom:1px solid rgba(245,158,11,0.15)}
+.warning-icon{font-size:18px;color:var(--am);flex-shrink:0}
+.warning-text{flex:1;font-size:12px;color:var(--am);line-height:1.5}
+.warning-actions{display:flex;gap:10px;flex-shrink:0}
+.btn-test-all{padding:8px 18px;background:var(--amD);color:var(--am);border:1px solid rgba(245,158,11,0.3);border-radius:var(--radius);font-family:'Inter',sans-serif;font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px}
+.btn-test-all:hover{opacity:0.85}
+.btn-save{padding:8px 22px;background:var(--p1);color:#fff;border:none;border-radius:var(--radius);font-family:'Inter',sans-serif;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:6px}
+.btn-save:hover{background:var(--p2)}
+</style>
+</head>
+<body>
+
+<!-- ═══════════ HEADER ═══════════ -->
+<header class="header">
+  <div class="logo" onclick="goBack()">
+    <div class="logo-icon">R</div>
+    <div class="logo-text">
+      <div class="logo-title">RadioAI</div>
+      <div class="logo-sub">STUDIO PRO</div>
+    </div>
+  </div>
+
+  <div class="breadcrumb">
+    <a onclick="goBack()">Control Panel</a>
+    <span class="bc-sep">&rsaquo;</span>
+    <a onclick="goToSettings()">Settings</a>
+    <span class="bc-sep">&rsaquo;</span>
+    <span class="active">Soundcards</span>
+  </div>
+
+  <div class="page-title-area">
+    <div class="page-title">Soundcards</div>
+    <div class="page-subtitle">Audio output and input routing &mdash; assign devices to each channel</div>
+  </div>
+
+  <div class="header-spacer"></div>
+
+  <div style="display:flex;flex-direction:column;align-items:flex-end">
+    <div class="clock-time" id="clock">00:00:00</div>
+    <div class="clock-date" id="clockDate">--</div>
+  </div>
+
+  <div class="station-box">
+    <div class="station-label">ON AIR</div>
+    <div class="station-name">KISS FM 91.5</div>
+    <div class="station-loc">Jaipur, Rajasthan</div>
+  </div>
+
+  <button class="open-studio-btn" onclick="navigateTo('studio_screen')">
+    <span>&#9654;</span> Open Studio
+  </button>
+</header>
+
+<!-- ═══════════ MAIN CONTENT ═══════════ -->
+<div class="main">
+  <div class="content-area">
+
+    <!-- Section header -->
+    <div class="section-header">
+      <div class="section-title">Audio Routing Configuration</div>
+      <div class="section-subtitle">Assign Windows audio devices to each RadioAI output channel. Changes require restart.</div>
+    </div>
+
+    <!-- 5 Channel cards -->
+    <div class="channels-row">
+
+      <!-- Card 1: Output 1 — Main On-Air -->
+      <div class="channel-card">
+        <div class="card-header">
+          <div class="card-icon purple">&#128266;</div>
+          <div class="card-title-area">
+            <div class="card-title">Output 1 &mdash; Main On-Air <span class="critical-badge">CRITICAL</span></div>
+            <div class="card-desc">Goes to transmitter / broadcast chain. Primary on-air output.</div>
+          </div>
+        </div>
+
+        <div class="field">
+          <div class="field-label">Device</div>
+          <select class="field-select device-select" id="device-output-1" data-key="audio_output_1" data-type="output">
+            <option value="">Loading devices...</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <div class="field-label">Volume</div>
+          <div class="slider-row">
+            <div class="slider-track vol-slider" data-channel="0" data-vol-key="audio_vol_output1" onclick="handleSliderClick(event)">
+              <div class="slider-fill purple" style="width:100%"></div>
+            </div>
+            <div class="slider-value">100%</div>
+          </div>
+        </div>
+
+        <div class="info-row">
+          <div class="info-item">
+            <div class="field-label">Latency</div>
+            <div class="info-value">8ms</div>
+          </div>
+          <div class="info-item">
+            <div class="field-label">Channel</div>
+            <select class="field-select channel-select" id="channel-output-1" data-ch-key="audio_channel_output1" style="padding:6px 10px;font-size:11px;margin-top:0">
+              <option>Stereo</option>
+              <option>Mono</option>
+            </select>
+          </div>
+        </div>
+
+        <button class="test-btn green" onclick="testChannel(0)">
+          <span>&#9654;</span> Test Tone Channel
+        </button>
+
+        <div class="card-status active">
+          <span class="dot"></span>
+          Connected &amp; Active
+        </div>
+      </div>
+
+      <!-- Card 2: Output 2 — Studio Monitor -->
+      <div class="channel-card">
+        <div class="card-header">
+          <div class="card-icon green">&#128266;</div>
+          <div class="card-title-area">
+            <div class="card-title">Output 2 &mdash; Studio Monitor</div>
+            <div class="card-desc">Local monitoring for the DJ booth. Not sent to air.</div>
+          </div>
+        </div>
+
+        <div class="field">
+          <div class="field-label">Device</div>
+          <select class="field-select device-select" id="device-output-2" data-key="audio_output_2" data-type="output">
+            <option value="">Loading devices...</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <div class="field-label">Volume</div>
+          <div class="slider-row">
+            <div class="slider-track vol-slider" data-channel="1" data-vol-key="audio_vol_output2" onclick="handleSliderClick(event)">
+              <div class="slider-fill green" style="width:85%"></div>
+            </div>
+            <div class="slider-value">85%</div>
+          </div>
+        </div>
+
+        <div class="info-row">
+          <div class="info-item">
+            <div class="field-label">Latency</div>
+            <div class="info-value">16ms</div>
+          </div>
+          <div class="info-item">
+            <div class="field-label">Channel</div>
+            <select class="field-select channel-select" id="channel-output-2" data-ch-key="audio_channel_output2" style="padding:6px 10px;font-size:11px;margin-top:0">
+              <option>Stereo</option>
+              <option>Mono</option>
+            </select>
+          </div>
+        </div>
+
+        <button class="test-btn green" onclick="testChannel(1)">
+          <span>&#9654;</span> Test Tone Channel
+        </button>
+
+        <div class="card-status active">
+          <span class="dot"></span>
+          Connected &amp; Active
+        </div>
+      </div>
+
+      <!-- Card 3: Output 3 — Cue / Preview -->
+      <div class="channel-card">
+        <div class="card-header">
+          <div class="card-icon cyan">&#127911;</div>
+          <div class="card-title-area">
+            <div class="card-title">Output 3 &mdash; Cue / Preview</div>
+            <div class="card-desc">Headphone cue for previewing tracks before broadcast.</div>
+          </div>
+        </div>
+
+        <div class="field">
+          <div class="field-label">Device</div>
+          <select class="field-select device-select" id="device-output-3" data-key="audio_output_3" data-type="output">
+            <option value="">Loading devices...</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <div class="field-label">Volume</div>
+          <div class="slider-row">
+            <div class="slider-track vol-slider" data-channel="2" data-vol-key="audio_vol_output3" onclick="handleSliderClick(event)">
+              <div class="slider-fill cyan" style="width:80%"></div>
+            </div>
+            <div class="slider-value">80%</div>
+          </div>
+        </div>
+
+        <div class="info-row">
+          <div class="info-item">
+            <div class="field-label">Latency</div>
+            <div class="info-value">8ms</div>
+          </div>
+          <div class="info-item">
+            <div class="field-label">Channel</div>
+            <select class="field-select channel-select" id="channel-output-3" data-ch-key="audio_channel_output3" style="padding:6px 10px;font-size:11px;margin-top:0">
+              <option>Stereo</option>
+              <option>Mono</option>
+            </select>
+          </div>
+        </div>
+
+        <button class="test-btn cyan" onclick="testChannel(2)">
+          <span>&#9654;</span> Test Tone Channel
+        </button>
+
+        <div class="card-status active">
+          <span class="dot"></span>
+          Connected &amp; Active
+        </div>
+      </div>
+
+      <!-- Card 4: Output 4 — Instant Jingles -->
+      <div class="channel-card">
+        <div class="card-header">
+          <div class="card-icon amber">&#9889;</div>
+          <div class="card-title-area">
+            <div class="card-title">Output 4 &mdash; Instant Jingles</div>
+            <div class="card-desc">Dedicated output for instant jingle pads and stingers.</div>
+          </div>
+        </div>
+
+        <div class="field">
+          <div class="field-label">Device</div>
+          <select class="field-select device-select amber-text" id="device-output-4" data-key="audio_output_4" data-type="output">
+            <option value="">Loading devices...</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <div class="field-label">Volume</div>
+          <div class="slider-row">
+            <div class="slider-track vol-slider" data-channel="3" data-vol-key="audio_vol_output4" onclick="handleSliderClick(event)">
+              <div class="slider-fill amber" style="width:90%"></div>
+            </div>
+            <div class="slider-value">90%</div>
+          </div>
+        </div>
+
+        <div class="info-row">
+          <div class="info-item">
+            <div class="field-label">Latency</div>
+            <div class="info-value">8ms</div>
+          </div>
+          <div class="info-item">
+            <div class="field-label">Channel</div>
+            <select class="field-select channel-select" id="channel-output-4" data-ch-key="audio_channel_output4" style="padding:6px 10px;font-size:11px;margin-top:0">
+              <option>Stereo</option>
+              <option>Mono</option>
+            </select>
+          </div>
+        </div>
+
+        <button class="test-btn amber" onclick="testChannel(3)">
+          <span>&#9654;</span> Test Tone Channel
+        </button>
+
+        <div class="card-status active">
+          <span class="dot"></span>
+          Connected &amp; Active
+        </div>
+      </div>
+
+      <!-- Card 5: Input 1 — Microphone -->
+      <div class="channel-card">
+        <div class="card-header">
+          <div class="card-icon rose">&#127908;</div>
+          <div class="card-title-area">
+            <div class="card-title">Input 1 &mdash; Microphone</div>
+            <div class="card-desc">Live microphone input for DJ voice and talk segments.</div>
+          </div>
+        </div>
+
+        <div class="field">
+          <div class="field-label">Device</div>
+          <select class="field-select device-select rose-text" id="device-input-1" data-key="audio_input_1" data-type="input">
+            <option value="">Loading devices...</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <div class="field-label">Volume</div>
+          <div class="slider-row">
+            <div class="slider-track vol-slider" data-channel="4" data-vol-key="audio_vol_input1" onclick="handleSliderClick(event)">
+              <div class="slider-fill rose" style="width:75%"></div>
+            </div>
+            <div class="slider-value">75%</div>
+          </div>
+        </div>
+
+        <div class="info-row">
+          <div class="info-item">
+            <div class="field-label">Latency</div>
+            <div class="info-value">4ms</div>
+          </div>
+          <div class="info-item">
+            <div class="field-label">Channel</div>
+            <select class="field-select channel-select" id="channel-input-1" data-ch-key="audio_channel_input1" style="padding:6px 10px;font-size:11px;margin-top:0">
+              <option>Mono Input</option>
+              <option>Stereo</option>
+            </select>
+          </div>
+        </div>
+
+        <button class="test-btn rose" onclick="testChannel(4)">
+          <span>&#127908;</span> Monitor Channel
+        </button>
+
+        <div class="card-status active">
+          <span class="dot"></span>
+          Connected &amp; Active
+        </div>
+      </div>
+
+    </div><!-- /channels-row -->
+
+  </div><!-- /content-area -->
+
+  <!-- Warning bar -->
+  <div class="warning-bar">
+    <div class="warning-icon">&#9888;</div>
+    <div class="warning-text">Audio driver changes and volume settings require RadioAI restart to take full effect. Always use 'Test Tone' to verify output before going on air.</div>
+    <div class="warning-actions">
+      <button class="btn-test-all" onclick="testAllChannels()">
+        <span>&#9654;</span> Test ALL
+      </button>
+      <button class="btn-save" onclick="saveRouting()">
+        <span>&#128190;</span> Save Routing
+      </button>
+    </div>
+  </div>
+
+</div><!-- /main -->
+
+<!-- ═══════════ STATUS BAR ═══════════ -->
+<footer class="status-bar">
+  <div class="status-indicator">
+    <span class="status-dot" style="background:var(--gn)"></span>
+    AUTO MODE
+  </div>
+  <div class="status-indicator">
+    <span class="status-dot" style="background:var(--cy)"></span>
+    <span style="color:var(--cy)">5 Channels Active</span>
+  </div>
+  <div class="status-indicator">
+    <span class="status-dot" style="background:var(--gn)"></span>
+    <span style="color:var(--gn)">All Devices Found</span>
+  </div>
+  <div class="status-spacer"></div>
+  <div class="status-info">RadioAI Studio Pro v1.0</div>
+</footer>
+
+<!-- ═══════════ JAVASCRIPT ═══════════ -->
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script src="js/bridge_helper.js"></script>
+<script>
+// goBack, goToSettings, updateClock provided by bridge_helper.js
+
+var _audioDevices = {outputs:[], inputs:[]};
+
+// ── Load real audio devices on bridge ready ──────
+onBridgeReady(function(){
+  // 1. Load detected devices
+  callBridgeAsync('get_audio_devices', [], function(data){
+    if(!data) return;
+    _audioDevices = data;
+    populateDeviceDropdowns();
+    // 2. Load saved settings — devices, volumes, channels
+    callBridgeAsync('get_all_settings', [], function(settings){
+      if(!settings) return;
+      // Restore device selections
+      document.querySelectorAll('.device-select').forEach(function(sel){
+        var key = sel.getAttribute('data-key');
+        if(settings[key]) sel.value = settings[key];
+      });
+      // Restore volume sliders
+      document.querySelectorAll('.vol-slider').forEach(function(track){
+        var key = track.getAttribute('data-vol-key');
+        if(settings[key]){
+          var pct = parseInt(settings[key]);
+          track.querySelector('.slider-fill').style.width = pct+'%';
+          var valEl = track.parentElement.querySelector('.slider-value');
+          if(valEl) valEl.textContent = pct+'%';
+        }
+      });
+      // Restore channel type selections
+      document.querySelectorAll('.channel-select').forEach(function(sel){
+        var key = sel.getAttribute('data-ch-key');
+        if(settings[key]) sel.value = settings[key];
+      });
+      updateStatusIndicators();
+    });
+  });
+});
+
+// ── Auto-save device selection on change ─────────
+document.querySelectorAll('.device-select').forEach(function(sel){
+  sel.addEventListener('change', function(){
+    callBridgeAsync('save_setting', [this.getAttribute('data-key'), this.value], function(){});
+    updateStatusIndicators();
+  });
+});
+
+// ── Auto-save channel type on change ─────────────
+document.querySelectorAll('.channel-select').forEach(function(sel){
+  sel.addEventListener('change', function(){
+    callBridgeAsync('save_setting', [this.getAttribute('data-ch-key'), this.value], function(){});
+  });
+});
+
+function populateDeviceDropdowns(){
+  var selects = document.querySelectorAll('.device-select');
+  for(var i=0; i<selects.length; i++){
+    var sel = selects[i];
+    var type = sel.getAttribute('data-type');
+    var devices = (type === 'input') ? _audioDevices.inputs : _audioDevices.outputs;
+    sel.innerHTML = '<option value="">-- Select Device --</option>';
+    for(var j=0; j<devices.length; j++){
+      var opt = document.createElement('option');
+      opt.value = String(devices[j].index);
+      opt.textContent = devices[j].name + ' (' + devices[j].sample_rate + 'Hz, ' + devices[j].channels + 'ch)';
+      sel.appendChild(opt);
+    }
+  }
+}
+
+function updateStatusIndicators(){
+  var cards = document.querySelectorAll('.channel-card');
+  cards.forEach(function(card){
+    var sel = card.querySelector('.device-select');
+    var status = card.querySelector('.card-status');
+    if(sel && status){
+      if(sel.value){
+        status.className = 'card-status active';
+        status.innerHTML = '<span class="dot"></span>Connected &amp; Active';
+      } else {
+        status.className = 'card-status';
+        status.innerHTML = '<span class="dot" style="background:var(--am)"></span>No Device Selected';
+      }
+    }
+  });
+}
+
+// ── Slider interaction ───────────────────────────
+function handleSliderClick(e){
+  var track = e.currentTarget;
+  var rect = track.getBoundingClientRect();
+  var pct = Math.max(0, Math.min(100, Math.round(((e.clientX-rect.left)/rect.width)*100)));
+  track.querySelector('.slider-fill').style.width = pct+'%';
+  var valEl = track.parentElement.querySelector('.slider-value');
+  if(valEl) valEl.textContent = pct+'%';
+}
+
+document.querySelectorAll('.vol-slider').forEach(function(track){
+  var dragging = false;
+  track.addEventListener('mousedown', function(e){ dragging=true; handleSliderClick(e); });
+  document.addEventListener('mousemove', function(e){
+    if(!dragging) return;
+    var rect = track.getBoundingClientRect();
+    var pct = Math.max(0, Math.min(100, Math.round(((e.clientX-rect.left)/rect.width)*100)));
+    track.querySelector('.slider-fill').style.width = pct+'%';
+    var valEl = track.parentElement.querySelector('.slider-value');
+    if(valEl) valEl.textContent = pct+'%';
+  });
+  document.addEventListener('mouseup', function(){
+    if(dragging){
+      dragging = false;
+      // Auto-save volume to DB
+      var key = track.getAttribute('data-vol-key');
+      var valEl = track.parentElement.querySelector('.slider-value');
+      var pct = parseInt(valEl ? valEl.textContent : '100');
+      callBridgeAsync('save_setting', [key, String(pct)], function(){});
+    }
+  });
+});
+
+// ── Test tone — plays real 1kHz tone on selected device ──
+function testChannel(ch){
+  var selectIds = ['device-output-1','device-output-2','device-output-3','device-output-4','device-input-1'];
+  var sel = document.getElementById(selectIds[ch]);
+  var deviceIndex = sel ? parseInt(sel.value) : -1;
+  var btn = document.querySelectorAll('.test-btn')[ch];
+  var origText = btn.innerHTML;
+
+  if(isNaN(deviceIndex) || deviceIndex < 0){
+    btn.innerHTML = '<span>&#9888;</span> No device selected';
+    btn.style.opacity = '0.6';
+    setTimeout(function(){ btn.innerHTML=origText; btn.style.opacity='1'; }, 1500);
+    return;
+  }
+
+  btn.innerHTML = '<span>&#9632;</span> Playing 1kHz tone...';
+  btn.style.opacity = '0.6';
+  btn.style.pointerEvents = 'none';
+
+  callBridgeAsync('play_test_tone', [deviceIndex], function(data){
+    setTimeout(function(){
+      btn.innerHTML = data ? '<span>&#10003;</span> Tone Complete!' : '<span>&#9888;</span> Error';
+      setTimeout(function(){ btn.innerHTML=origText; btn.style.opacity='1'; btn.style.pointerEvents='auto'; }, 1500);
+    }, 2000);
+  });
+}
+
+function testAllChannels(){
+  var btn = document.querySelector('.btn-test-all');
+  var origText = btn.innerHTML;
+  btn.innerHTML = '<span>&#9632;</span> Testing All Outputs...';
+  btn.style.opacity = '0.6';
+  btn.style.pointerEvents = 'none';
+  callBridgeAsync('play_test_tone_all', [], function(data){
+    var count = data ? data.length : 0;
+    btn.innerHTML = '<span>&#10003;</span> Tested ' + count + ' channels';
+    setTimeout(function(){ btn.innerHTML=origText; btn.style.opacity='1'; btn.style.pointerEvents='auto'; }, 2000);
+  });
+}
+
+// ── Save routing — saves all 5 device selections to DB ──
+function saveRouting(){
+  var routing = {};
+  // Collect device selections
+  document.querySelectorAll('.device-select').forEach(function(sel){
+    routing[sel.getAttribute('data-key')] = sel.value;
+  });
+  // Collect volume levels from slider data attributes
+  document.querySelectorAll('.vol-slider').forEach(function(track){
+    var key = track.getAttribute('data-vol-key');
+    var valEl = track.parentElement.querySelector('.slider-value');
+    routing[key] = valEl ? parseInt(valEl.textContent) : 100;
+  });
+  // Collect channel type selections
+  document.querySelectorAll('.channel-select').forEach(function(sel){
+    routing[sel.getAttribute('data-ch-key')] = sel.value;
+  });
+
+  callBridgeAsync('save_audio_routing', [JSON.stringify(routing)], function(data){
+    var btn = document.querySelector('.btn-save');
+    var origText = btn.innerHTML;
+    if(data){
+      btn.innerHTML = '<span>&#10003;</span> Routing Saved! (' + (data.count || '') + ' settings)';
+      btn.style.background = 'var(--gn)';
+    } else {
+      btn.innerHTML = '<span>&#9888;</span> Save Failed!';
+      btn.style.background = 'var(--rs)';
+    }
+    setTimeout(function(){ btn.innerHTML=origText; btn.style.background=''; }, 2500);
+  });
+}
+
+function openStudio(){ navigateTo('studio_screen'); }
+</script>
+</body>
+</html>

@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Jingles Library — RadioAI Studio Pro</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+/* ── Jingles-specific overrides ─────────────────── */
+.breadcrumb .active{color:var(--am);font-weight:600}
+.rp-tab.active{color:var(--am);border-bottom-color:var(--am)}
+tr.selected{background:rgba(45,26,0,0.5)!important;border-left:3px solid var(--am)}
+
+/* Play button in table rows */
+.row-play-btn{width:26px;height:26px;border-radius:50%;background:var(--am);border:none;color:#000;font-size:11px;cursor:pointer;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity 0.15s}
+tr:hover .row-play-btn{opacity:1}
+.row-play-btn:hover{opacity:1;filter:brightness(1.15)}
+
+/* Properties badge */
+.prop-badge{display:inline-block;padding:2px 8px;border-radius:6px;font-size:10px;font-weight:600;background:rgba(69,77,109,0.3);color:var(--t2)}
+
+/* Last used cell */
+.last-used{font-size:11px;color:var(--t3)}
+
+/* Jingle detail card icon */
+.jingle-art{width:50px;height:50px;border-radius:var(--radius);background:rgba(245,158,11,0.15);display:flex;align-items:center;justify-content:center;font-size:22px;color:var(--am);flex-shrink:0}
+
+/* Audio preview bar */
+.audio-preview{background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);padding:10px 12px;margin-bottom:10px;display:flex;align-items:center;gap:10px}
+.preview-play{width:32px;height:32px;border-radius:50%;background:var(--am);border:none;color:#000;font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.preview-play:hover{filter:brightness(1.15)}
+.waveform-placeholder{flex:1;height:28px;background:var(--card2);border-radius:4px;position:relative;overflow:hidden}
+.waveform-bars{display:flex;align-items:flex-end;gap:1px;height:100%;padding:2px}
+.waveform-bar{flex:1;background:var(--am);border-radius:1px;opacity:0.5;min-width:2px}
+.preview-dur{font-family:'Roboto Mono',monospace;font-size:11px;color:var(--t2);flex-shrink:0}
+
+/* Schedule info box */
+.schedule-box{background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);padding:10px 12px;margin-bottom:10px;font-size:11px;color:var(--t2)}
+.schedule-box .sched-label{font-size:9px;color:var(--t3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px}
+
+/* AI insight inline */
+.ai-insight-box{background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);padding:10px 12px;margin-bottom:10px;display:flex;gap:8px;align-items:flex-start}
+.ai-insight-icon{font-size:14px;color:var(--am);flex-shrink:0;margin-top:1px}
+.ai-insight-text{font-size:11px;color:var(--t2);line-height:1.5}
+.ai-insight-text b{color:var(--gn);font-weight:600}
+
+/* Stats inline */
+.stat-inline{background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);padding:8px 12px;margin-bottom:10px;font-size:11px;color:var(--t2)}
+.stat-inline b{color:var(--am);font-family:'Roboto Mono',monospace;font-weight:700}
+
+/* Integration buttons */
+.lp-btn-teal-outline{background:transparent;color:var(--tl);border:1px solid var(--tl)}
+.lp-btn-teal-outline:hover{background:var(--tlD)}
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="header">
+  <div class="logo" onclick="goBack()">
+    <div class="logo-icon">((●))</div>
+    <div class="logo-text"><div class="logo-title">RadioAI</div><div class="logo-sub">STUDIO PRO</div></div>
+  </div>
+  <div class="breadcrumb">
+    <a onclick="goBack()">Control Panel</a><span class="bc-sep">></span>
+    <a onclick="goBack()">Libraries</a><span class="bc-sep">></span>
+    <span class="active">Jingles</span>
+  </div>
+  <div class="page-title-area">
+    <div class="page-title">Jingles Library</div>
+    <div class="page-subtitle">Station identity audio — manage categories and rotation</div>
+  </div>
+  <div class="header-spacer"></div>
+  <div style="display:flex;flex-direction:column;align-items:center;gap:1px">
+    <div class="clock-time" id="clock-time">00:00:00</div>
+    <div class="clock-date" id="clock-date"></div>
+  </div>
+  <div class="station-box">
+    <div class="station-label">ACTIVE STATION</div>
+    <div class="station-name" id="station-name">KISS FM 91.5</div>
+    <div class="station-loc" id="station-loc">Jaipur, Rajasthan</div>
+  </div>
+  <button class="open-studio-btn" onclick="openStudio()">▶ Open Studio</button>
+</div>
+
+<!-- MAIN 3-COLUMN LAYOUT -->
+<div class="main">
+
+  <!-- LEFT PANEL -->
+  <div class="left-panel">
+    <div class="lp-header">
+      <div class="lp-count"><b id="jingle-count">16</b> jingles</div>
+      <button class="lp-btn lp-btn-amber" onclick="addJingleFull()">+ Add New Jingle</button>
+      <button class="lp-btn lp-btn-green">Mass Import</button>
+      <button class="lp-btn lp-btn-danger" style="background:transparent;border:none;color:var(--tl);font-weight:600;padding:5px 12px;margin-bottom:4px;cursor:pointer">Edit Categories</button>
+      <button class="lp-btn" style="background:transparent;color:var(--cy);border:1px solid var(--cy);margin-top:2px" onclick="editJingleFull()">✎ Edit Jingle</button>
+      <button class="lp-btn lp-btn-danger" onclick="deleteJingle()">× Delete</button>
+    </div>
+    <div class="lp-section">
+      <div class="lp-section-title">Search</div>
+      <input class="lp-input" type="text" placeholder="Search jingles..." id="search-input" oninput="onSearchChanged()">
+    </div>
+    <div class="lp-section">
+      <div class="lp-section-title">Filters</div>
+      <select class="lp-select" id="filter-category" onchange="onSearchChanged()">
+        <option>Category (All)</option>
+        <option>Station ID</option>
+        <option>Shotguns</option>
+        <option>News Break</option>
+        <option>Ad Break</option>
+        <option>Weather</option>
+        <option>Traffic</option>
+        <option>Promo</option>
+      </select>
+      <select class="lp-select" id="filter-properties" onchange="onSearchChanged()">
+        <option>Properties (All)</option>
+        <option>Top of Hour</option>
+        <option>Regular</option>
+        <option>Special</option>
+        <option>Signature</option>
+        <option>News</option>
+        <option>Ads</option>
+        <option>Info</option>
+        <option>Promo</option>
+      </select>
+      <select class="lp-select" id="filter-duration" onchange="onSearchChanged()">
+        <option>Duration (All)</option>
+        <option>Under 0:04</option>
+        <option>0:04 - 0:06</option>
+        <option>Over 0:06</option>
+      </select>
+      <label class="lp-check"><input type="checkbox" checked id="filter-enabled" onchange="onSearchChanged()"> Only Enabled</label>
+    </div>
+    <div class="lp-actions">
+      <button class="lp-action-btn lp-btn-teal-outline" style="display:block;width:100%;padding:6px 10px;border-radius:var(--radius);font-family:'Inter',sans-serif;font-size:11px;font-weight:600;cursor:pointer;text-align:left">Export to Playlister</button>
+      <button class="lp-action-btn lp-btn-teal-outline" style="display:block;width:100%;padding:6px 10px;border-radius:var(--radius);font-family:'Inter',sans-serif;font-size:11px;font-weight:600;cursor:pointer;text-align:left">Playlister Code Prefix</button>
+    </div>
+  </div>
+
+  <!-- CENTER - JINGLE TABLE -->
+  <div class="center-panel">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th onclick="sortBy('name')">Jingle Name <span class="sort-arrow" id="sort-name"></span></th>
+            <th onclick="sortBy('category')">Category</th>
+            <th onclick="sortBy('duration_ms')" style="text-align:right">Duration</th>
+            <th onclick="sortBy('properties')">Properties</th>
+            <th onclick="sortBy('last_used')">Last Used</th>
+            <th style="width:40px"></th>
+          </tr>
+        </thead>
+        <tbody id="jingle-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- RIGHT PANEL -->
+  <div class="right-panel">
+    <div class="rp-tabs">
+      <div class="rp-tab active" onclick="switchRpTab(0,this)">Jingle Details</div>
+      <div class="rp-tab" onclick="switchRpTab(1,this)">Schedule</div>
+      <div class="rp-tab" onclick="switchRpTab(2,this)">Usage Stats</div>
+    </div>
+    <div class="rp-content" id="rp-content">
+
+      <!-- Jingle Detail Card -->
+      <div class="detail-card" id="detail-card">
+        <div class="jingle-art" id="detail-art">&#9835;</div>
+        <div class="detail-info">
+          <div class="detail-name" id="detail-name">KISS Main Ident</div>
+          <div class="detail-sub" id="detail-sub">Station ID · 0:05 · Top of Hour</div>
+          <div class="detail-badges" id="detail-badges">
+            <span class="detail-badge" style="background:rgba(16,185,129,0.15);color:#10B981">Enabled</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Fields -->
+      <div class="rp-section-title">DETAILS</div>
+      <div class="field-group">
+        <div class="field-label">Name</div>
+        <div class="field-value" id="field-name">KISS Main Ident</div>
+      </div>
+      <div class="field-group">
+        <div class="field-label">Category</div>
+        <div class="field-value" id="field-category">Station ID</div>
+      </div>
+      <div class="field-group">
+        <div class="field-label">Duration</div>
+        <div class="field-value mono" id="field-duration">0:05</div>
+      </div>
+      <div class="field-group">
+        <div class="field-label">Properties</div>
+        <div class="field-value" id="field-properties">Top of Hour</div>
+      </div>
+      <div class="field-group">
+        <div class="field-label">Playlister Code</div>
+        <div class="field-value" id="field-playlister">JNG-001</div>
+      </div>
+      <div class="field-group">
+        <div class="field-label">Comments</div>
+        <div class="field-value" id="field-comments">Main station identification jingle</div>
+      </div>
+
+      <!-- Audio Preview -->
+      <div class="rp-section-title">AUDIO PREVIEW</div>
+      <div class="audio-preview">
+        <button class="preview-play" id="preview-play-btn" onclick="togglePreview()">&#9654;</button>
+        <div class="waveform-placeholder">
+          <div class="waveform-bars" id="waveform-bars"></div>
+        </div>
+        <div class="preview-dur" id="preview-dur">0:05</div>
+      </div>
+
+      <!-- Scheduling -->
+      <div class="rp-section-title">SCHEDULING</div>
+      <div class="schedule-box">
+        <div class="sched-label">Clock Assignment</div>
+        Scheduled via Main Auto Clock — every 30 minutes
+      </div>
+
+      <!-- AI Insight -->
+      <div class="rp-section-title">AI INSIGHT</div>
+      <div class="ai-insight-box">
+        <div class="ai-insight-icon">&#10022;</div>
+        <div class="ai-insight-text">Playing every <b>28 min avg</b> — healthy rotation</div>
+      </div>
+
+      <!-- Stats -->
+      <div class="stat-inline">Last 7 days: played <b>24</b> times</div>
+
+    </div>
+  </div>
+
+</div>
+
+<!-- STATUS BAR -->
+<div class="status-bar">
+  <div class="status-indicator"><span class="status-dot" style="background:var(--p1);box-shadow:0 0 4px var(--p1)"></span>AUTO MODE</div>
+  <div class="status-indicator"><span class="status-dot" style="background:var(--gn);box-shadow:0 0 4px var(--gn)"></span>AI Active</div>
+  <div class="status-spacer"></div>
+  <div class="status-info" id="status-jingles">16 Jingles</div>
+</div>
+
+<!-- JAVASCRIPT -->
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script src="js/bridge_helper.js"></script>
+<script>
+let allJingles = [];
+let selectedJingleId = null;
+let sortField = 'name';
+let sortAsc = true;
+
+const CATEGORY_COLORS = {
+  'Station ID':  {bg:'rgba(244,63,94,0.15)',  color:'#F43F5E'},
+  'Shotguns':    {bg:'rgba(245,158,11,0.15)', color:'#F59E0B'},
+  'News Break':  {bg:'rgba(244,63,94,0.15)',  color:'#F43F5E'},
+  'Ad Break':    {bg:'rgba(245,158,11,0.15)', color:'#F59E0B'},
+  'Weather':     {bg:'rgba(6,182,212,0.15)',  color:'#06B6D4'},
+  'Traffic':     {bg:'rgba(16,185,129,0.15)', color:'#10B981'},
+  'Promo':       {bg:'rgba(236,72,153,0.15)', color:'#EC4899'},
+};
+
+function getCatStyle(name){
+  return CATEGORY_COLORS[name] || {bg:'rgba(69,77,109,0.3)',color:'#8891B8'};
+}
+
+// ── Seed Data ────────────────────────────────────
+const SEED_JINGLES = [
+  {id:1,  name:'KISS Main Ident',      category:'Station ID', duration_ms:5000,  properties:'Top of Hour', last_used:'7h ago',  playlister_code:'JNG-001', comments:'Main station identification jingle', is_enabled:1},
+  {id:2,  name:'KISS Shot 01',         category:'Station ID', duration_ms:3000,  properties:'Regular',     last_used:'30m ago', playlister_code:'JNG-002', comments:'Short station ID shot', is_enabled:1},
+  {id:3,  name:'KISS Shot 02',         category:'Station ID', duration_ms:3000,  properties:'Regular',     last_used:'1h ago',  playlister_code:'JNG-003', comments:'Short station ID shot variant', is_enabled:1},
+  {id:4,  name:'KISS Shot 03',         category:'Station ID', duration_ms:4000,  properties:'Regular',     last_used:'3h ago',  playlister_code:'JNG-004', comments:'Short station ID shot variant', is_enabled:1},
+  {id:5,  name:'KISS Shotgun 01',      category:'Shotguns',   duration_ms:4000,  properties:'Special',     last_used:'3h ago',  playlister_code:'JNG-005', comments:'Shotgun jingle', is_enabled:1},
+  {id:6,  name:'KISS Shotgun 02',      category:'Shotguns',   duration_ms:5000,  properties:'Special',     last_used:'1d ago',  playlister_code:'JNG-006', comments:'Shotgun jingle variant', is_enabled:1},
+  {id:7,  name:'KISS Shotgun 03',      category:'Shotguns',   duration_ms:4000,  properties:'Special',     last_used:'2d ago',  playlister_code:'JNG-007', comments:'Shotgun jingle variant', is_enabled:1},
+  {id:8,  name:'Jin Music Of The City',category:'Station ID', duration_ms:7000,  properties:'Signature',   last_used:'4h ago',  playlister_code:'JNG-008', comments:'Signature station jingle', is_enabled:1},
+  {id:9,  name:'Top Of Hour V1',       category:'News Break', duration_ms:6000,  properties:'News',        last_used:'1h ago',  playlister_code:'JNG-009', comments:'Top of hour news intro', is_enabled:1},
+  {id:10, name:'Top Of Hour V2',       category:'News Break', duration_ms:6000,  properties:'News',        last_used:'2h ago',  playlister_code:'JNG-010', comments:'Top of hour news intro variant', is_enabled:1},
+  {id:11, name:'COM Break Start',      category:'Ad Break',   duration_ms:4000,  properties:'Ads',         last_used:'3h ago',  playlister_code:'JNG-011', comments:'Commercial break opener', is_enabled:1},
+  {id:12, name:'COM Break End :30',    category:'Ad Break',   duration_ms:3000,  properties:'Ads',         last_used:'45m ago', playlister_code:'JNG-012', comments:'Commercial break closer - half hour', is_enabled:1},
+  {id:13, name:'COM Break End :00',    category:'Ad Break',   duration_ms:4000,  properties:'Ads',         last_used:'7h ago',  playlister_code:'JNG-013', comments:'Commercial break closer - on the hour', is_enabled:1},
+  {id:14, name:'Weather Sting',        category:'Weather',    duration_ms:5000,  properties:'Info',        last_used:'3h ago',  playlister_code:'JNG-014', comments:'Weather segment intro', is_enabled:1},
+  {id:15, name:'Traffic Sting',        category:'Traffic',    duration_ms:4000,  properties:'Info',        last_used:'1h ago',  playlister_code:'JNG-015', comments:'Traffic update intro', is_enabled:1},
+  {id:16, name:'Breakfast Best Of',    category:'Promo',      duration_ms:6000,  properties:'Promo',       last_used:'6h ago',  playlister_code:'JNG-016', comments:'Breakfast show promo jingle', is_enabled:1},
+];
+
+// ── Init ─────────────────────────────────────────
+function init(){
+  allJingles = SEED_JINGLES.slice();
+  renderTable();
+  generateWaveform();
+  if(allJingles.length > 0) selectJingle(allJingles[0].id);
+}
+
+// Load jingles from DB when bridge connects
+onBridgeReady(function(){ loadFromBridge(); loadJingleCategories(); });
+window.addEventListener('pageshow', function(){ if(typeof bridge !== 'undefined' && bridge) loadFromBridge(); });
+
+function loadFromBridge(){
+  if(typeof bridge === 'undefined' || !bridge) return;
+  var filters = {
+    search: document.getElementById('search-input') ? document.getElementById('search-input').value : '',
+    only_enabled: document.getElementById('filter-enabled') ? document.getElementById('filter-enabled').checked : false,
+  };
+  var catEl = document.getElementById('filter-category');
+  if(catEl && catEl.value && catEl.value !== 'Category (All)') filters.category = catEl.value;
+
+  callBridgeAsync('get_jingles', [JSON.stringify(filters)], function(data){
+    if(!data || !data.jingles) return;
+    allJingles = data.jingles;
+    renderTable();
+    if(allJingles.length > 0 && !selectedJingleId) selectJingle(allJingles[0].id);
+  });
+}
+
+function loadJingleCategories(){
+  callBridgeAsync('get_jingle_categories', [], function(data){
+    if(!data || !Array.isArray(data)) return;
+    var sel = document.getElementById('filter-category');
+    if(!sel) return;
+    var currentValue = sel.value;
+    sel.innerHTML = '<option>Category (All)</option>';
+    data.forEach(function(c){
+      var opt = document.createElement('option');
+      opt.value = c;
+      opt.textContent = c;
+      sel.appendChild(opt);
+    });
+    if(currentValue) sel.value = currentValue;
+  });
+}
+
+// ── Table Rendering ──────────────────────────────
+function renderTable(){
+  const tbody = document.getElementById('jingle-tbody');
+  const search = (document.getElementById('search-input').value || '').toLowerCase();
+  const catFilter = document.getElementById('filter-category').value;
+  const propFilter = document.getElementById('filter-properties').value;
+  const durFilter = document.getElementById('filter-duration').value;
+  const enabledOnly = document.getElementById('filter-enabled').checked;
+
+  let filtered = allJingles.filter(j => {
+    if(search && !(j.name || '').toLowerCase().includes(search) && !(j.category || '').toLowerCase().includes(search)) return false;
+    if(catFilter !== 'Category (All)' && j.category !== catFilter) return false;
+    if(propFilter !== 'Properties (All)' && j.properties !== propFilter) return false;
+    if(durFilter === 'Under 0:04' && j.duration_ms >= 4000) return false;
+    if(durFilter === '0:04 - 0:06' && (j.duration_ms < 4000 || j.duration_ms > 6000)) return false;
+    if(durFilter === 'Over 0:06' && j.duration_ms <= 6000) return false;
+    if(enabledOnly && !j.is_enabled) return false;
+    return true;
+  });
+
+  filtered.sort((a, b) => {
+    let va = a[sortField] || '', vb = b[sortField] || '';
+    if(typeof va === 'string') va = va.toLowerCase();
+    if(typeof vb === 'string') vb = vb.toLowerCase();
+    if(va < vb) return sortAsc ? -1 : 1;
+    if(va > vb) return sortAsc ? 1 : -1;
+    return 0;
+  });
+
+  document.getElementById('jingle-count').textContent = filtered.length;
+  document.getElementById('status-jingles').textContent = allJingles.length + ' Jingles';
+
+  tbody.innerHTML = '';
+  filtered.forEach(j => {
+    const tr = document.createElement('tr');
+    if(j.id === selectedJingleId) tr.className = 'selected';
+    tr.onclick = () => selectJingle(j.id);
+
+    const dur = formatDuration(j.duration_ms);
+    const cs = getCatStyle(j.category);
+
+    tr.innerHTML =
+      '<td style="font-weight:600">' + escHtml(j.name) + '</td>' +
+      '<td><span class="cat-badge" style="background:' + cs.bg + ';color:' + cs.color + '">' + escHtml(j.category) + '</span></td>' +
+      '<td class="dur-cell">' + dur + '</td>' +
+      '<td><span class="prop-badge">' + escHtml(j.properties) + '</span></td>' +
+      '<td class="last-used">' + escHtml(j.last_used || '--') + '</td>' +
+      '<td style="text-align:center"><button class="row-play-btn" onclick="event.stopPropagation();playJingle(' + j.id + ')">&#9654;</button></td>';
+
+    tbody.appendChild(tr);
+  });
+}
+
+function selectJingle(id){
+  selectedJingleId = id;
+  const j = allJingles.find(x => x.id === id);
+  if(!j) return;
+
+  document.getElementById('detail-name').textContent = j.name;
+  document.getElementById('detail-sub').textContent = j.category + ' · ' + formatDuration(j.duration_ms) + ' · ' + j.properties;
+
+  const cs = getCatStyle(j.category);
+  document.getElementById('detail-badges').innerHTML =
+    '<span class="detail-badge" style="background:rgba(16,185,129,0.15);color:#10B981">' + (j.is_enabled ? 'Enabled' : 'Disabled') + '</span>' +
+    '<span class="detail-badge" style="background:' + cs.bg + ';color:' + cs.color + '">' + escHtml(j.category) + '</span>';
+
+  document.getElementById('field-name').textContent = j.name;
+  document.getElementById('field-category').textContent = j.category;
+  document.getElementById('field-duration').textContent = formatDuration(j.duration_ms);
+  document.getElementById('field-properties').textContent = j.properties;
+  document.getElementById('field-playlister').textContent = j.playlister_code || '--';
+  document.getElementById('field-comments').textContent = j.comments || '--';
+  document.getElementById('preview-dur').textContent = formatDuration(j.duration_ms);
+
+  generateWaveform();
+  renderTable();
+}
+
+// ── Sort ─────────────────────────────────────────
+function sortBy(field){
+  if(sortField === field){ sortAsc = !sortAsc; }
+  else { sortField = field; sortAsc = true; }
+
+  // Update sort arrows
+  document.querySelectorAll('.sort-arrow').forEach(el => el.textContent = '');
+  const arrow = document.getElementById('sort-' + field);
+  if(arrow) arrow.textContent = sortAsc ? ' ↑' : ' ↓';
+
+  renderTable();
+}
+
+// ── Search / Filter ──────────────────────────────
+var _searchTimer = null;
+function onSearchChanged(){
+  // If bridge connected, re-fetch from DB
+  if(typeof bridge !== 'undefined' && bridge){
+    clearTimeout(_searchTimer);
+    _searchTimer = setTimeout(loadFromBridge, 200);
+  } else {
+    renderTable();
+  }
+}
+
+// ── Navigate to full-page Add/Edit Jingle ───────
+function addJingleFull(){
+  sessionStorage.removeItem('edit_jingle_id');
+  window.location.href = 'add_jingle.html';
+}
+
+function editJingleFull(){
+  if(!selectedJingleId){ alert('⚠ Select a jingle first!'); return; }
+  sessionStorage.setItem('edit_jingle_id', String(selectedJingleId));
+  window.location.href = 'add_jingle.html';
+}
+
+// ── Add / Edit / Delete (legacy quick prompts) ──
+function addJingle(){
+  var name = prompt('Jingle name:');
+  if(!name) return;
+  var category = prompt('Category (Station ID / Shotguns / News Break / Ad Break / Weather / Traffic / Promo / Signature):', 'Station ID') || 'Station ID';
+  var duration = prompt('Duration (mm:ss):', '0:05') || '0:05';
+  var properties = prompt('Properties (Regular / Special / Top of Hour / News / Info / Signature / Ads / Promo):', 'Regular') || 'Regular';
+
+  // Optionally browse for audio file
+  if(confirm('Browse for audio file?')){
+    callBridgeAsync('browse_audio_file', [], function(filePath){
+      var payload = JSON.stringify({
+        name: name, category: category, duration: duration,
+        properties: properties, file_path: filePath || '', is_enabled: true
+      });
+      callBridgeAsync('save_jingle', [payload], function(data){
+        if(data){ alert('✅ Jingle "'+name+'" added! Code: '+(data.playlister_code||'')); loadFromBridge(); }
+        else alert('❌ Failed to add jingle');
+      });
+    });
+  } else {
+    var payload = JSON.stringify({
+      name: name, category: category, duration: duration,
+      properties: properties, file_path: '', is_enabled: true
+    });
+    callBridgeAsync('save_jingle', [payload], function(data){
+      if(data){ alert('✅ Jingle "'+name+'" added! Code: '+(data.playlister_code||'')); loadFromBridge(); }
+      else alert('❌ Failed to add jingle');
+    });
+  }
+}
+
+function editJingle(){
+  if(!selectedJingleId){ alert('⚠ Select a jingle first!'); return; }
+  var j = allJingles.find(function(x){ return x.id === selectedJingleId; });
+  if(!j) return;
+  var name = prompt('Jingle name:', j.name);
+  if(!name) return;
+  var category = prompt('Category:', j.category) || j.category;
+  var duration = prompt('Duration (mm:ss):', j.duration || '0:05') || j.duration;
+  var properties = prompt('Properties:', j.properties) || j.properties;
+  var payload = JSON.stringify({
+    id: j.id, name: name, category: category, duration: duration,
+    properties: properties, playlister_code: j.playlister_code,
+    file_path: j.file_path, is_enabled: j.is_enabled
+  });
+  callBridgeAsync('save_jingle', [payload], function(data){
+    if(data){ alert('✅ Jingle updated!'); loadFromBridge(); }
+    else alert('❌ Failed to update');
+  });
+}
+
+function deleteJingle(){
+  if(!selectedJingleId){ alert('⚠ Select a jingle first!'); return; }
+  var j = allJingles.find(function(x){ return x.id === selectedJingleId; });
+  var name = j ? j.name : 'this jingle';
+  if(!confirm('Delete "'+name+'"?\n\nThis cannot be undone.')) return;
+  callBridgeAsync('delete_jingle', [selectedJingleId], function(data){
+    if(data){
+      alert('✅ Deleted: '+name);
+      selectedJingleId = null;
+      loadFromBridge();
+    } else {
+      alert('❌ Delete failed');
+    }
+  });
+}
+
+// ── Waveform ─────────────────────────────────────
+function generateWaveform(){
+  const container = document.getElementById('waveform-bars');
+  container.innerHTML = '';
+  const barCount = 60;
+  for(let i = 0; i < barCount; i++){
+    const bar = document.createElement('div');
+    bar.className = 'waveform-bar';
+    const h = Math.random() * 80 + 20;
+    bar.style.height = h + '%';
+    container.appendChild(bar);
+  }
+}
+
+// ── Preview ──────────────────────────────────────
+let previewPlaying = false;
+function togglePreview(){
+  previewPlaying = !previewPlaying;
+  document.getElementById('preview-play-btn').innerHTML = previewPlaying ? '&#9646;&#9646;' : '&#9654;';
+  if(bridge && selectedJingleId){
+    try {
+      if(previewPlaying) bridge.preview_jingle(selectedJingleId);
+      else bridge.stop_preview();
+    } catch(e){}
+  }
+}
+
+function playJingle(id){
+  if(bridge){
+    try { bridge.preview_jingle(id); } catch(e){}
+  }
+}
+
+// ── Right Panel Tabs ─────────────────────────────
+function switchRpTab(idx, el){
+  document.querySelectorAll('.rp-tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  // In full implementation, switch rp-content panels
+}
+
+// ── Navigation ───────────────────────────────────
+function goBack(){ window.location.href='control_panel.html'; }
+
+function openStudio(){
+  if(bridge){ try { navigateTo('studio_screen'); } catch(e){} }
+}
+
+// ── Clock ────────────────────────────────────────
+function updateClock(){
+  const now = new Date();
+  const hh = String(now.getHours()).padStart(2, '0');
+  const mm = String(now.getMinutes()).padStart(2, '0');
+  const ss = String(now.getSeconds()).padStart(2, '0');
+  document.getElementById('clock-time').textContent = hh + ':' + mm + ':' + ss;
+
+  const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  document.getElementById('clock-date').textContent = days[now.getDay()] + ', ' + now.getDate() + ' ' + months[now.getMonth()] + ' ' + now.getFullYear();
+}
+
+// ── Helpers ──────────────────────────────────────
+function formatDuration(ms){
+  if(!ms) return '0:00';
+  const totalSec = Math.round(ms / 1000);
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return m + ':' + String(s).padStart(2, '0');
+}
+
+function escHtml(str){
+  if(!str) return '';
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Boot ─────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>

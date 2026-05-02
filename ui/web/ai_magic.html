@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Magic | RadioAI Studio Pro</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+html,body{width:100%;height:100%;overflow-y:auto;overflow-x:hidden}
+body{display:flex;flex-direction:column}
+
+/* Hero */
+.aim-hero{padding:16px 24px 10px;background:var(--surf);border-bottom:1px solid var(--b1)}
+.aim-title{font-size:24px;font-weight:700;color:var(--t1);display:flex;align-items:center;gap:8px}
+.aim-title .star{color:var(--p2)}
+.aim-sub{font-size:11px;color:var(--t3);margin-top:2px;margin-bottom:10px}
+.aim-badges{display:flex;gap:8px;flex-wrap:wrap}
+.aim-badge{padding:5px 14px;border-radius:6px;font-size:10px;font-weight:700;border:1px solid}
+.aim-badge.engine{background:var(--gnD);color:var(--gn);border-color:rgba(16,185,129,0.4)}
+.aim-badge.engine .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--gn);margin-right:4px;animation:livePulse 1.5s ease-in-out infinite}
+.aim-badge.lastrun{background:var(--cyD);color:var(--cy);border-color:rgba(6,182,212,0.4)}
+.aim-badge.nextrun{background:var(--card);color:var(--t2);border-color:var(--b1)}
+
+/* Main 3-column */
+.aim-main{display:flex;gap:8px;padding:8px 24px;flex:1;min-height:0}
+
+/* LEFT — Brain + Components */
+.aim-left{width:420px;min-width:380px;display:flex;flex-direction:column;gap:8px}
+.aim-section{background:var(--card);border:1px solid var(--b1);border-radius:8px;padding:14px;position:relative;overflow:hidden}
+.aim-section-title{font-size:10px;font-weight:700;color:var(--t3);letter-spacing:1.5px;margin-bottom:10px}
+
+/* 3D Brain */
+.brain-wrap{display:flex;justify-content:center;align-items:center;height:240px;position:relative}
+.brain-container{width:240px;height:240px;position:relative;transform-style:preserve-3d;perspective:800px}
+.brain-core{position:absolute;width:70px;height:70px;top:50%;left:50%;transform:translate(-50%,-50%);background:radial-gradient(circle,#a78bfa,#7c3aed,#1e1535);border-radius:50%;animation:corePulse 3s ease-in-out infinite;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;color:#fff;z-index:10}
+.ring{position:absolute;border-radius:50%;top:50%;left:50%;transform-origin:center}
+.ring-1{width:160px;height:60px;border:1.5px solid rgba(6,182,212,0.45);transform:translate(-50%,-50%) rotateX(75deg);animation:orbit1 6s linear infinite}
+.ring-2{width:130px;height:170px;border:1.5px solid rgba(124,58,237,0.45);transform:translate(-50%,-50%) rotateX(20deg) rotateY(45deg);animation:orbit2 8s linear infinite}
+.ring-3{width:100px;height:40px;border:1px solid rgba(167,139,250,0.5);transform:translate(-50%,-50%) rotateY(60deg);animation:orbit3 4s linear infinite}
+.planet{position:absolute;width:10px;height:10px;border-radius:50%;top:50%;left:50%;z-index:5}
+.planet-1{background:#06b6d4;animation:planet1 6s linear infinite}
+.planet-2{background:#10b981;animation:planet1 6s linear infinite -2s}
+.planet-3{background:#f59e0b;animation:planet1 6s linear infinite -4s}
+.planet-4{background:#f43f5e;animation:planet1 7s linear infinite -1s}
+.planet-5{background:#a78bfa;animation:planet1 5s linear infinite -3s}
+/* Labels floating around brain */
+.brain-label{position:absolute;font-size:7px;font-weight:600;letter-spacing:0.5px;color:var(--t3);opacity:0.7}
+.bl-rotate{top:15%;right:10%;color:var(--cy)}
+.bl-schedule{bottom:25%;right:5%;color:var(--p2)}
+.bl-engine{bottom:10%;left:15%;color:var(--am)}
+.bl-learn{bottom:30%;left:5%;color:var(--gn)}
+.bl-report{top:25%;left:10%;color:var(--rs)}
+
+@keyframes corePulse{0%,100%{box-shadow:0 0 20px #7c3aed,0 0 40px #7c3aed44;transform:translate(-50%,-50%) scale(1)}50%{box-shadow:0 0 30px #a78bfa,0 0 60px #7c3aed66;transform:translate(-50%,-50%) scale(1.06)}}
+@keyframes orbit1{from{transform:translate(-50%,-50%) rotateZ(0deg) rotateX(75deg)}to{transform:translate(-50%,-50%) rotateZ(360deg) rotateX(75deg)}}
+@keyframes orbit2{from{transform:translate(-50%,-50%) rotateZ(0deg) rotateX(20deg) rotateY(45deg)}to{transform:translate(-50%,-50%) rotateZ(-360deg) rotateX(20deg) rotateY(45deg)}}
+@keyframes orbit3{from{transform:translate(-50%,-50%) rotateZ(0deg) rotateY(60deg)}to{transform:translate(-50%,-50%) rotateZ(360deg) rotateY(60deg)}}
+@keyframes planet1{from{transform:rotate(0deg) translateX(75px)}to{transform:rotate(360deg) translateX(75px)}}
+
+/* Component cards */
+.comp-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.comp-card{background:var(--bg);border:1px solid var(--b1);border-radius:6px;padding:8px;animation:glowPulse 4s ease-in-out infinite}
+.comp-icon{font-size:14px;margin-bottom:4px}
+.comp-name{font-size:9px;font-weight:700;color:var(--t1)}
+.comp-detail{font-size:7px;color:var(--t3);margin-top:1px}
+.comp-status{font-size:8px;font-weight:700;margin-top:4px;padding:2px 6px;border-radius:3px;display:inline-block}
+@keyframes glowPulse{0%,100%{border-color:rgba(28,31,56,1)}50%{border-color:rgba(124,58,237,0.5)}}
+
+/* CENTER — Timeline */
+.aim-center{flex:1;min-width:320px;display:flex;flex-direction:column;gap:8px}
+.timeline-list{flex:1;overflow-y:auto;padding-right:4px}
+.tl-step{display:flex;gap:10px;padding:8px 0;border-bottom:1px solid rgba(28,31,56,0.4);animation:stepIn 0.4s ease-out both}
+.tl-time{font-family:'Roboto Mono',monospace;font-size:9px;color:var(--t3);min-width:60px;padding-top:2px}
+.tl-dot{width:8px;height:8px;border-radius:50%;margin-top:4px;flex-shrink:0}
+.tl-dot.done{background:var(--gn)}
+.tl-dot.warn{background:var(--am)}
+.tl-dot.error{background:var(--rs)}
+.tl-content{flex:1}
+.tl-label{font-size:11px;font-weight:600;color:var(--t1)}
+.tl-label.warn{color:var(--am)}
+.tl-detail{font-size:9px;color:var(--t3);margin-top:1px}
+.tl-check{margin-left:auto;color:var(--gn);font-size:12px;flex-shrink:0;padding-top:2px}
+@keyframes stepIn{from{opacity:0;transform:translateX(-20px)}to{opacity:1;transform:translateX(0)}}
+
+/* RIGHT — Stats + Category Health */
+.aim-right{width:300px;min-width:260px;display:flex;flex-direction:column;gap:8px}
+.stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.stat-box{background:var(--card);border:1px solid var(--b1);border-radius:8px;padding:12px;text-align:center}
+.stat-icon{font-size:16px;margin-bottom:4px}
+.stat-val{font-size:28px;font-weight:700;font-family:'Roboto Mono',monospace;line-height:1}
+.stat-label{font-size:9px;color:var(--t3);margin-top:4px}
+.cat-row{display:flex;align-items:center;gap:8px;padding:5px 0}
+.cat-name{font-size:10px;color:var(--t2);min-width:90px}
+.cat-bar{flex:1;height:8px;background:var(--b1);border-radius:4px;overflow:hidden}
+.cat-fill{height:100%;border-radius:4px;transition:width 1s ease-out}
+.cat-count{font-size:9px;color:var(--t3);font-family:'Roboto Mono',monospace;min-width:36px;text-align:right}
+.cat-icon{font-size:10px;width:14px;text-align:center}
+
+/* BOTTOM — Decision Log */
+.aim-decisions{margin:0 24px 10px;background:var(--card);border:1px solid var(--b1);border-radius:8px;padding:12px}
+.dec-row{display:flex;gap:8px;padding:4px 0;font-size:10px;border-bottom:1px solid rgba(28,31,56,0.3)}
+.dec-time{font-family:'Roboto Mono',monospace;font-size:9px;color:var(--t3);min-width:60px}
+.dec-dot{width:6px;height:6px;border-radius:50%;margin-top:4px;flex-shrink:0}
+.dec-msg{flex:1;color:var(--t2)}
+
+/* AI tip */
+.aim-tip{margin:0 24px 8px;background:var(--p4);border:1px solid rgba(139,92,246,0.3);border-left:3px solid var(--p1);border-radius:6px;padding:8px 14px;font-size:10px;color:var(--p2)}
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="page-header" style="display:flex;align-items:center;height:50px;padding:0 16px;background:var(--surf);border-bottom:1px solid var(--b1);gap:12px">
+  <div class="logo" onclick="goBack()"><div class="logo-icon">((●))</div></div>
+  <div class="breadcrumb">
+    <a onclick="goBack()">Control Panel</a><span class="bc-sep">›</span>
+    <span class="active" style="color:var(--p2)">✦ AI Magic</span>
+  </div>
+  <div class="nav-tabs" style="display:flex;gap:4px;margin-left:16px">
+    <div class="nav-tab" onclick="goBack()">Libraries</div>
+    <div class="nav-tab" onclick="window.location.href='scheduling_screen.html'">Scheduling</div>
+    <div class="nav-tab" onclick="goToSettings()">Settings</div>
+    <div class="nav-tab active">✦ AI Magic</div>
+  </div>
+  <div style="flex:1"></div>
+  <div style="text-align:center"><div id="clock" style="font-family:'Roboto Mono',monospace;font-size:22px;font-weight:700">00:00:00</div><div id="clock-date" style="font-size:8px;color:var(--t3)"></div></div>
+  <div class="hdr-station" style="margin-left:12px;text-align:right"><div style="font-size:7px;color:var(--t3);letter-spacing:1px">ACTIVE STATION</div><div class="station-name" style="font-size:12px;font-weight:700">KISS FM 91.5</div></div>
+  <button class="open-studio-btn" onclick="navigateTo('studio_screen')">▶ Open Studio</button>
+</div>
+
+<!-- Hero -->
+<div class="aim-hero">
+  <div class="aim-title"><span class="star">✦</span> AI MAGIC ENGINE</div>
+  <div class="aim-sub">Real-time view of how AI manages your radio — scheduling, rotation & intelligence</div>
+  <div class="aim-badges">
+    <div class="aim-badge engine"><span class="dot"></span>ENGINE RUNNING</div>
+    <div class="aim-badge lastrun" id="badge-lastrun">✦ LAST RUN: —</div>
+    <div class="aim-badge nextrun" id="badge-countdown">NEXT: —</div>
+  </div>
+</div>
+
+<!-- Main 3-column -->
+<div class="aim-main">
+
+  <!-- LEFT -->
+  <div class="aim-left">
+    <div class="aim-section">
+      <div class="aim-section-title">AI SCHEDULING ENGINE</div>
+      <div class="brain-wrap">
+        <div class="brain-container">
+          <div class="ring ring-1"></div>
+          <div class="ring ring-2"></div>
+          <div class="ring ring-3"></div>
+          <div class="brain-core">AI</div>
+          <div class="planet planet-1"></div>
+          <div class="planet planet-2"></div>
+          <div class="planet planet-3"></div>
+          <div class="planet planet-4"></div>
+          <div class="planet planet-5"></div>
+          <div class="brain-label bl-rotate">Rotate</div>
+          <div class="brain-label bl-schedule">Schedule</div>
+          <div class="brain-label bl-engine">Engine</div>
+          <div class="brain-label bl-learn">Learn</div>
+          <div class="brain-label bl-report">Report</div>
+        </div>
+      </div>
+    </div>
+    <div class="aim-section">
+      <div class="aim-section-title">ENGINE COMPONENTS</div>
+      <div class="comp-grid" id="comp-grid"></div>
+    </div>
+  </div>
+
+  <!-- CENTER -->
+  <div class="aim-center">
+    <div class="aim-section" style="flex:1;display:flex;flex-direction:column">
+      <div class="aim-section-title">LAST RUN TIMELINE <span id="tl-date" style="color:var(--t3);font-weight:400"></span></div>
+      <div class="timeline-list" id="timeline-list"></div>
+    </div>
+  </div>
+
+  <!-- RIGHT -->
+  <div class="aim-right">
+    <div class="stat-grid">
+      <div class="stat-box"><div class="stat-icon">♫</div><div class="stat-val" style="color:var(--cy)" id="stat-songs">0</div><div class="stat-label">Songs Scheduled</div></div>
+      <div class="stat-box"><div class="stat-icon">⚠</div><div class="stat-val" style="color:var(--am)" id="stat-warns">0</div><div class="stat-label">Warnings</div></div>
+      <div class="stat-box"><div class="stat-icon">◆</div><div class="stat-val" style="color:var(--p2)" id="stat-cats">0/0</div><div class="stat-label">Categories Used</div></div>
+      <div class="stat-box"><div class="stat-icon">⏱</div><div class="stat-val" style="color:var(--t1);font-size:22px" id="stat-next">12:00</div><div class="stat-label">Next Run</div></div>
+    </div>
+    <div class="aim-section" style="flex:1">
+      <div class="aim-section-title">CATEGORY HEALTH</div>
+      <div style="font-size:9px;color:var(--t3);margin-bottom:8px">Song availability for rotation</div>
+      <div id="cat-health"></div>
+    </div>
+  </div>
+
+</div>
+
+<!-- AI Tip -->
+<div class="aim-tip" id="ai-tip">✦ AI: Add 50+ songs to empty categories to unlock perfect rotation</div>
+
+<!-- Decision Log -->
+<div class="aim-decisions">
+  <div class="aim-section-title">AI DECISION LOG — SAMPLE</div>
+  <div id="dec-list" style="max-height:60px;overflow-y:auto"></div>
+</div>
+
+<!-- Status Bar -->
+<div class="status-bar" style="display:flex;align-items:center;height:30px;background:var(--surf);border-top:1px solid var(--b1);padding:0 16px;gap:14px;flex-shrink:0">
+  <div style="display:flex;align-items:center;gap:4px;font-size:10px;font-weight:600"><span style="width:6px;height:6px;border-radius:50%;background:var(--p1);box-shadow:0 0 4px var(--p1)"></span>AUTO MODE</div>
+  <div style="display:flex;align-items:center;gap:4px;font-size:10px;font-weight:600"><span style="width:6px;height:6px;border-radius:50%;background:var(--gn);box-shadow:0 0 4px var(--gn)"></span>AI Active</div>
+  <div style="display:flex;align-items:center;gap:4px;font-size:10px;font-weight:600"><span style="width:6px;height:6px;border-radius:50%;background:var(--am)"></span><span id="sb-clocks">7 Clocks</span></div>
+  <div style="background:var(--p4);border:1px solid rgba(139,92,246,0.3);border-radius:4px;padding:2px 10px;font-size:10px;font-weight:700;color:var(--p2)">✦ AI Magic ON</div>
+  <div style="flex:1"></div>
+  <button class="open-studio-btn" style="padding:4px 12px;font-size:10px" onclick="navigateTo('studio_screen')">▶ Open Studio</button>
+</div>
+
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script src="js/bridge_helper.js"></script>
+<script>
+
+var COMP_ICONS = {'History Scanner':'📊','Rule Engine':'⚙','Song Picker':'🎵','Warning System':'⚠','Log Writer':'📋','Midnight Timer':'🕐'};
+
+onBridgeReady(function() {
+  loadAll();
+  setInterval(updateCountdown, 1000);
+  setInterval(loadAll, 30000);
+});
+
+function loadAll() {
+  loadStatus();
+  loadTimeline();
+  loadCategories();
+  loadDecisions();
+}
+
+function loadStatus() {
+  callBridgeAsync('get_ai_magic_status', [], function(data) {
+    if (!data) return;
+    var lr = document.getElementById('badge-lastrun');
+    if (lr) lr.textContent = '✦ LAST RUN: ' + (data.last_run || '—');
+    var t = data.today || {};
+    var ss = document.getElementById('stat-songs');
+    if (ss) ss.textContent = t.songs_scheduled || 0;
+    var sw = document.getElementById('stat-warns');
+    if (sw) sw.textContent = t.warnings_count || 0;
+    var sc = document.getElementById('stat-cats');
+    if (sc) sc.textContent = (t.categories_used || 0) + '/' + (t.total_categories || 0);
+    // Components
+    var grid = document.getElementById('comp-grid');
+    if (grid && data.components) {
+      grid.innerHTML = data.components.map(function(c) {
+        var icon = COMP_ICONS[c.name] || '●';
+        var stColor = c.status === 'ACTIVE' ? 'var(--gn)' : (c.status === 'DONE' ? 'var(--gn)' : (c.status === 'WAITING' ? 'var(--t3)' : 'var(--am)'));
+        return '<div class="comp-card"><div class="comp-icon">' + icon + '</div>' +
+          '<div class="comp-name">' + esc(c.name) + '</div>' +
+          '<div class="comp-detail">' + esc(c.detail || '') + '</div>' +
+          '<div class="comp-status" style="background:' + stColor + '22;color:' + stColor + '">● ' + esc(c.status) + '</div></div>';
+      }).join('');
+    }
+  });
+}
+
+function loadTimeline() {
+  callBridgeAsync('get_ai_magic_timeline', [], function(data) {
+    var list = document.getElementById('timeline-list');
+    if (!list) return;
+    if (!data || data.length === 0) {
+      list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--t3);font-size:10px">No timeline data — generate a schedule first</div>';
+      return;
+    }
+    list.innerHTML = '';
+    data.forEach(function(step, i) {
+      var el = document.createElement('div');
+      el.className = 'tl-step';
+      el.style.animationDelay = (i * 0.15) + 's';
+      var dotCls = step.status === 'warn' ? 'warn' : (step.status === 'error' ? 'error' : 'done');
+      var labelCls = step.status === 'warn' ? ' warn' : '';
+      el.innerHTML =
+        '<div class="tl-time">' + esc(step.time) + '</div>' +
+        '<div class="tl-dot ' + dotCls + '"></div>' +
+        '<div class="tl-content"><div class="tl-label' + labelCls + '">' + esc(step.label) + '</div>' +
+        '<div class="tl-detail">' + esc(step.detail) + '</div></div>' +
+        '<div class="tl-check">' + (step.status === 'done' ? '✓' : (step.status === 'warn' ? '⚠' : '✗')) + '</div>';
+      list.appendChild(el);
+    });
+  });
+}
+
+function loadCategories() {
+  callBridgeAsync('get_ai_magic_categories', [], function(data) {
+    var el = document.getElementById('cat-health');
+    if (!el || !data) return;
+    el.innerHTML = data.map(function(c) {
+      var icon = c.songs_total > 0 ? '<span style="color:var(--gn)">✓</span>' : '<span style="color:var(--rs)">●</span>';
+      var color = c.songs_total >= 10 ? 'var(--gn)' : (c.songs_total > 0 ? 'var(--am)' : 'var(--rs)');
+      return '<div class="cat-row">' +
+        '<div class="cat-icon">' + icon + '</div>' +
+        '<div class="cat-name">' + esc(c.name) + '</div>' +
+        '<div class="cat-bar"><div class="cat-fill" style="width:' + c.health_percent + '%;background:' + color + '"></div></div>' +
+        '<div class="cat-count">' + c.songs_total + '/30</div></div>';
+    }).join('');
+  });
+}
+
+function loadDecisions() {
+  callBridgeAsync('get_ai_magic_decisions', [], function(data) {
+    var el = document.getElementById('dec-list');
+    if (!el) return;
+    if (!data || data.length === 0) {
+      el.innerHTML = '<div style="color:var(--t3);font-size:9px">No decisions logged yet</div>';
+      return;
+    }
+    el.innerHTML = data.map(function(d) {
+      var color = d.type === 'skip' ? 'var(--am)' : (d.type === 'select' ? 'var(--gn)' : 'var(--cy)');
+      return '<div class="dec-row"><div class="dec-time">' + esc(d.time) + '</div>' +
+        '<div class="dec-dot" style="background:' + color + '"></div>' +
+        '<div class="dec-msg">' + esc(d.message) + '</div></div>';
+    }).join('');
+  });
+}
+
+function updateCountdown() {
+  var now = new Date();
+  var mid = new Date();
+  mid.setHours(24, 0, 0, 0);
+  var diff = mid - now;
+  var h = Math.floor(diff / 3600000);
+  var m = Math.floor((diff % 3600000) / 60000);
+  var s = Math.floor((diff % 60000) / 1000);
+  var el = document.getElementById('badge-countdown');
+  if (el) el.textContent = 'NEXT: ' + h + 'h ' + m + 'm ' + s + 's';
+}
+
+function esc(s) {
+  return (s == null ? '' : String(s)).replace(/[&<>"']/g, function(c) {
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+  });
+}
+</script>
+</body>
+</html>

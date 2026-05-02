@@ -1,0 +1,965 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RadioAI Studio Pro</title>
+<style>
+/* ── Local Font Faces ─────────────────────────────────────── */
+@font-face { font-family: 'Inter'; font-weight: 400; font-style: normal; font-display: swap; src: url('../../assets/fonts/Inter_18pt-Regular.ttf') format('truetype'); }
+@font-face { font-family: 'Inter'; font-weight: 500; font-style: normal; font-display: swap; src: url('../../assets/fonts/Inter_18pt-Medium.ttf') format('truetype'); }
+@font-face { font-family: 'Inter'; font-weight: 600; font-style: normal; font-display: swap; src: url('../../assets/fonts/Inter_18pt-SemiBold.ttf') format('truetype'); }
+@font-face { font-family: 'Inter'; font-weight: 700; font-style: normal; font-display: swap; src: url('../../assets/fonts/Inter_18pt-Bold.ttf') format('truetype'); }
+@font-face { font-family: 'Roboto Mono'; font-weight: 400; font-style: normal; font-display: swap; src: url('../../assets/fonts/RobotoMono-Regular.ttf') format('truetype'); }
+@font-face { font-family: 'Roboto Mono'; font-weight: 700; font-style: normal; font-display: swap; src: url('../../assets/fonts/RobotoMono-Bold.ttf') format('truetype'); }
+
+/* ── Reset & Base ─────────────────────────────────────────── */
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+
+:root {
+  --bg:    #070812;
+  --surf:  #0A0C18;
+  --panel: #0E1020;
+  --card:  #131626;
+  --card2: #181B2E;
+  --b1:    #1C1F38;
+  --b2:    #252848;
+  --p1:    #8B5CF6;
+  --p2:    #A78BFA;
+  --p3:    #6D28D9;
+  --p4:    #1E1535;
+  --gn:    #10B981;
+  --gnD:   #052E16;
+  --am:    #F59E0B;
+  --amD:   #2D1A00;
+  --rs:    #F43F5E;
+  --rsD:   #1F0A12;
+  --cy:    #06B6D4;
+  --cyD:   #083344;
+  --tl:    #14B8A6;
+  --tlD:   #042F2A;
+  --t1:    #F1F5FF;
+  --t2:    #8891B8;
+  --t3:    #454D6D;
+  --t4:    #252840;
+  --radius:    6px;
+  --radius-lg: 10px;
+}
+
+html, body {
+  width: 100%; height: 100%;
+  overflow: hidden;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 13px;
+  color: var(--t1);
+  background-color: var(--bg);
+  /* Dot grid */
+  background-image: radial-gradient(circle, rgba(74,82,128,0.15) 1px, transparent 1px);
+  background-size: 44px 44px;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Background Glow Blobs ────────────────────────────────── */
+body::before {
+  content: '';
+  position: fixed;
+  top: -200px; left: -200px;
+  width: 700px; height: 600px;
+  background: radial-gradient(ellipse, rgba(139,92,246,0.12) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+}
+body::after {
+  content: '';
+  position: fixed;
+  bottom: -200px; right: -200px;
+  width: 600px; height: 500px;
+  background: radial-gradient(ellipse, rgba(6,182,212,0.08) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ── Header ───────────────────────────────────────────────── */
+.header {
+  position: relative; z-index: 2;
+  display: flex;
+  align-items: center;
+  height: 72px;
+  min-height: 72px;
+  background: var(--surf);
+  border-bottom: 1px solid var(--b1);
+  padding: 0 20px;
+  gap: 0;
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-right: 28px;
+}
+
+.logo-icon {
+  font-size: 22px;
+  color: var(--p1);
+  font-weight: 700;
+}
+
+.logo-text { display: flex; flex-direction: column; gap: 1px; }
+.logo-title { font-size: 17px; font-weight: 700; color: var(--t1); line-height: 1.1; }
+.logo-sub { font-size: 8px; font-weight: 600; color: var(--p2); letter-spacing: 2.5px; text-transform: uppercase; }
+.logo-tag { font-size: 7px; color: var(--t3); letter-spacing: 1.5px; text-transform: uppercase; }
+
+/* Nav Tabs */
+.nav-tabs {
+  display: flex;
+  height: 100%;
+  gap: 0;
+}
+
+.nav-tab {
+  display: flex;
+  align-items: center;
+  padding: 0 22px;
+  height: 100%;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--t2);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s, border-color 0.15s;
+  user-select: none;
+}
+.nav-tab:hover { color: var(--t1); }
+.nav-tab.active {
+  color: var(--p1);
+  border-bottom-color: var(--p1);
+}
+
+.header-spacer { flex: 1; }
+
+/* Clock */
+.clock-area {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.clock-time {
+  font-family: 'Roboto Mono', monospace;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--t1);
+  letter-spacing: 1px;
+}
+
+.clock-date {
+  font-size: 10px;
+  color: var(--t3);
+}
+
+/* Station Info */
+.station-info {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  margin-left: 24px;
+  padding-left: 24px;
+  border-left: 1px solid var(--b1);
+}
+
+.station-label { font-size: 8px; color: var(--t3); letter-spacing: 1.5px; text-transform: uppercase; }
+.station-name { font-size: 15px; font-weight: 700; color: var(--t1); }
+.station-loc { font-size: 10px; color: var(--t3); }
+
+/* ── Main Content ─────────────────────────────────────────── */
+.content {
+  position: relative; z-index: 1;
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 16px 28px;
+}
+
+/* Scrollbar styling */
+.content::-webkit-scrollbar { width: 8px; }
+.content::-webkit-scrollbar-track { background: transparent; }
+.content::-webkit-scrollbar-thumb { background: var(--b2); border-radius: 4px; }
+.content::-webkit-scrollbar-thumb:hover { background: var(--t3); }
+
+/* Page Header */
+.page-header { margin-bottom: 12px; }
+.page-title { font-size: 26px; font-weight: 700; margin-bottom: 2px; }
+.page-subtitle { font-size: 12px; color: var(--t2); margin-bottom: 8px; }
+
+.badges {
+  display: flex;
+  gap: 10px;
+}
+
+.badge {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 4px 14px;
+  border-radius: 14px;
+  white-space: nowrap;
+}
+
+.badge-default {
+  color: var(--t1);
+  background: var(--card2);
+  border: 1px solid var(--b1);
+}
+
+.badge-green {
+  color: var(--gn);
+  background: var(--gnD);
+}
+
+/* ── Now On Air Bar ───────────────────────────────────────── */
+.now-on-air {
+  display: flex;
+  align-items: center;
+  background: var(--card);
+  border: 1px solid var(--b1);
+  border-left: 3px solid var(--p1);
+  border-radius: var(--radius-lg);
+  padding: 10px 20px;
+  margin-bottom: 12px;
+  gap: 16px;
+  min-height: 64px;
+  box-shadow: -4px 0 16px rgba(139,92,246,0.10);
+}
+
+.noa-info { display: flex; flex-direction: column; gap: 3px; }
+.noa-label { font-size: 9px; font-weight: 600; color: var(--rs); letter-spacing: 1.5px; text-transform: uppercase; }
+.noa-title { font-size: 15px; font-weight: 600; }
+.noa-meta { font-size: 10px; color: var(--t3); }
+
+.noa-spacer { flex: 1; }
+
+.noa-waveform {
+  font-family: 'Roboto Mono', monospace;
+  font-size: 16px;
+  color: var(--p1);
+  letter-spacing: -1px;
+  user-select: none;
+  animation: waveformPulse 2.5s ease-in-out infinite;
+}
+
+@keyframes waveformPulse {
+  0%, 100% { opacity: 0.5; text-shadow: 0 0 4px rgba(139,92,246,0.2); }
+  50%      { opacity: 0.9; text-shadow: 0 0 10px rgba(139,92,246,0.4); }
+}
+
+.noa-countdown {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.noa-countdown-time {
+  font-family: 'Roboto Mono', monospace;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--gn);
+}
+
+.noa-countdown-label { font-size: 10px; color: var(--t3); }
+
+/* ── Library Cards Grid ───────────────────────────────────── */
+.cards-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.library-card {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  padding: 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  cursor: pointer;
+  min-height: 150px;
+  position: relative;
+}
+
+.library-card:hover {
+  background: #1a1e34;
+  border-color: var(--card-accent);
+  box-shadow: 0 0 25px var(--card-glow), 0 4px 12px rgba(0,0,0,0.3);
+  transform: translateY(-2px);
+}
+
+.library-card {
+  transition: border-color 0.2s, background-color 0.2s, box-shadow 0.2s, transform 0.2s;
+}
+
+.library-card:hover .card-open {
+  color: var(--t1);
+  text-shadow: 0 0 8px rgba(255,255,255,0.15);
+}
+
+/* Card top row */
+.card-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.card-icon {
+  font-size: 20px;
+  width: 28px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.card-titles { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+.card-title { font-size: 15px; font-weight: 600; }
+.card-subtitle { font-size: 11px; color: var(--t2); }
+
+.card-badge {
+  font-size: 9px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 8px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Card count badge */
+.card-count {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 3px 12px;
+  border-radius: 10px;
+  align-self: flex-start;
+}
+
+/* Card description */
+.card-desc {
+  font-size: 11px;
+  color: var(--t3);
+  line-height: 1.5;
+  flex: 1;
+}
+
+/* Card bottom row */
+.card-bottom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: auto;
+}
+
+.card-chip {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 4px 12px;
+  border-radius: 10px;
+}
+
+.card-bottom-spacer { flex: 1; }
+
+.card-open {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--t2);
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.card-open:hover { color: var(--t1); }
+
+/* ── Studio Bar ───────────────────────────────────────────── */
+.studio-bar {
+  display: flex;
+  align-items: center;
+  background: var(--card);
+  border: 1px solid var(--b1);
+  border-radius: var(--radius-lg);
+  padding: 12px 20px;
+  gap: 18px;
+  min-height: 80px;
+}
+
+.studio-left {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.studio-title { font-size: 22px; font-weight: 700; }
+
+.studio-live {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--gn);
+}
+
+.studio-badge {
+  font-size: 8px;
+  font-weight: 600;
+  color: var(--p1);
+  background: var(--p4);
+  border-radius: 4px;
+  padding: 3px 10px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  width: fit-content;
+}
+
+.studio-np {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.studio-np-label { font-size: 9px; color: var(--t3); letter-spacing: 1.5px; text-transform: uppercase; }
+.studio-np-artist { font-size: 15px; font-weight: 600; }
+.studio-np-song { font-size: 11px; color: var(--t2); }
+
+.studio-spacer { flex: 1; }
+
+.studio-break {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+}
+
+.studio-break-label { font-size: 9px; color: var(--t3); letter-spacing: 1.5px; text-transform: uppercase; }
+.studio-break-time {
+  font-family: 'Roboto Mono', monospace;
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--am);
+}
+.studio-break-sub { font-size: 10px; color: var(--t3); }
+
+.studio-open-btn {
+  background: var(--p1);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-lg);
+  padding: 14px 22px;
+  font-family: 'Inter', sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.studio-open-btn:hover { background: var(--p2); }
+.studio-open-btn:active { background: var(--p3); }
+
+/* ── Status Bar ───────────────────────────────────────────── */
+.status-bar {
+  position: relative; z-index: 2;
+  display: flex;
+  align-items: center;
+  height: 50px;
+  min-height: 50px;
+  background: var(--surf);
+  border-top: 1px solid var(--b1);
+  padding: 0 20px;
+  gap: 20px;
+}
+
+.status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--t2);
+}
+
+.status-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.status-spacer { flex: 1; }
+
+.status-info {
+  font-size: 10px;
+  color: var(--t3);
+}
+
+.status-settings {
+  font-size: 11px;
+  color: var(--t3);
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.status-settings:hover { color: var(--t1); }
+
+/* ── Live indicator glow ──────────────────────────────────── */
+.live-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--rs);
+  display: inline-block;
+  box-shadow: 0 0 6px var(--rs);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 6px var(--rs); }
+  50% { opacity: 0.5; box-shadow: 0 0 12px var(--rs); }
+}
+
+/* ── Placeholder tabs ─────────────────────────────────────── */
+.tab-page { display: none; }
+.tab-page.active { display: block; }
+
+.placeholder-tab {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 400px;
+  color: var(--t3);
+  font-size: 18px;
+  font-weight: 500;
+  text-align: center;
+  line-height: 1.6;
+}
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════ HEADER ═══════════════════ -->
+<div class="header">
+  <div class="logo">
+    <div class="logo-icon">((●))</div>
+    <div class="logo-text">
+      <div class="logo-title">RadioAI</div>
+      <div class="logo-sub">STUDIO PRO</div>
+      <div class="logo-tag">BROADCAST AUTOMATION</div>
+    </div>
+  </div>
+
+  <div class="nav-tabs">
+    <div class="nav-tab active" data-tab="0" onclick="switchTab(0)">Libraries</div>
+    <div class="nav-tab" data-tab="1" onclick="window.location.href='scheduling_screen.html'">Scheduling</div>
+    <div class="nav-tab" data-tab="2" onclick="switchTab(2)">Settings</div>
+    <div class="nav-tab" data-tab="3" onclick="window.location.href='ai_magic.html'">AI Magic ✦</div>
+  </div>
+
+  <div class="header-spacer"></div>
+
+  <div class="clock-area">
+    <div class="clock-time" id="clock-time">00:00:00</div>
+    <div class="clock-date" id="clock-date"></div>
+  </div>
+
+  <div class="station-info">
+    <div class="station-label">ACTIVE STATION</div>
+    <div class="station-name" id="station-name">KISS FM 91.5</div>
+    <div class="station-loc" id="station-loc">Jaipur, Rajasthan</div>
+  </div>
+</div>
+
+<!-- ═══════════════════ CONTENT ═══════════════════ -->
+<div class="content">
+
+  <!-- TAB 0: Libraries -->
+  <div class="tab-page active" id="tab-0">
+
+    <!-- Page Header -->
+    <div class="page-header">
+      <div class="page-title">Libraries</div>
+      <div class="page-subtitle">Manage all your audio content</div>
+      <div class="badges">
+        <div class="badge badge-default">6 Libraries</div>
+        <div class="badge badge-green">● System OK</div>
+      </div>
+    </div>
+
+    <!-- Now On Air -->
+    <div class="now-on-air">
+      <div class="noa-info">
+        <div class="noa-label"><span class="live-dot"></span>&nbsp; NOW ON AIR</div>
+        <div class="noa-title" id="noa-title">Harry Styles — As It Was</div>
+        <div class="noa-meta" id="noa-meta">Pop • HOT CURRENTS • AIR CURRENTS A • 2020 • 98 BPM</div>
+      </div>
+      <div class="noa-spacer"></div>
+      <div class="noa-waveform">▁▂▃▅▇▅▃▂▁▂▃▅▇▅▃▂▁▂▃▅▇▅▃▂▁▂▃▅▇▅▃▂▁</div>
+      <div class="noa-spacer"></div>
+      <div class="noa-countdown">
+        <div class="noa-countdown-time" id="noa-countdown">02:18</div>
+        <div class="noa-countdown-label">Remaining</div>
+      </div>
+    </div>
+
+    <!-- Library Cards -->
+    <div class="cards-grid" id="cards-grid"></div>
+
+    <!-- Studio Bar -->
+    <div class="studio-bar">
+      <div class="studio-left">
+        <div class="studio-title">Studio</div>
+        <div class="studio-live">● LIVE NOW</div>
+        <div class="studio-badge">STUDIO</div>
+      </div>
+      <div class="studio-np">
+        <div class="studio-np-label">NOW PLAYING</div>
+        <div class="studio-np-artist">Billie Eilish</div>
+        <div class="studio-np-song">Bury A Friend • Pop • Happier Than Ever • 2021</div>
+      </div>
+      <div class="studio-spacer"></div>
+      <div class="studio-break">
+        <div class="studio-break-label">NEXT BREAK</div>
+        <div class="studio-break-time">22:00</div>
+        <div class="studio-break-sub">in 04:12</div>
+      </div>
+      <button class="studio-open-btn" onclick="onOpenStudio()">▶ Open Studio</button>
+    </div>
+
+  </div>
+
+  <!-- TAB 1: Scheduling -->
+  <div class="tab-page" id="tab-1">
+    <div class="page-header">
+      <div class="page-title">Scheduling</div>
+      <div class="page-subtitle">Design clocks, build playlists, generate broadcast logs</div>
+      <div class="badges">
+        <div class="badge badge-default">6 Tools</div>
+        <div class="badge badge-green">● Log Ready</div>
+      </div>
+    </div>
+    <div class="cards-grid" style="grid-template-columns:repeat(3,1fr);gap:12px">
+      <div class="library-card" style="--card-border:rgba(139,92,246,0.3);--card-accent:#8B5CF6;--card-glow:rgba(139,92,246,0.15);box-shadow:0 0 20px rgba(139,92,246,0.10);min-height:130px" onclick="navTo('clock_editor')">
+        <div class="card-top"><div class="card-icon" style="color:#8B5CF6">⏱</div><div class="card-titles"><div class="card-title">Clock Editor</div><div class="card-subtitle">Hourly broadcast templates</div></div><div class="card-badge" style="color:#8B5CF6;background:rgba(139,92,246,0.15)">CORE</div></div>
+        <div class="card-desc">Design what plays each hour — songs, jingles, breaks. AI-optimised rotation.</div>
+        <div class="card-bottom"><div class="card-chip" style="color:#8B5CF6;background:rgba(139,92,246,0.12)">8 Clocks</div><div class="card-bottom-spacer"></div><div class="card-open">Open →</div></div>
+      </div>
+      <div class="library-card" style="--card-border:rgba(167,139,250,0.3);--card-accent:#A78BFA;--card-glow:rgba(167,139,250,0.15);box-shadow:0 0 20px rgba(167,139,250,0.10);min-height:130px" onclick="navTo('playlists')">
+        <div class="card-top"><div class="card-icon" style="color:#A78BFA">☰</div><div class="card-titles"><div class="card-title">Playlists</div><div class="card-subtitle">Custom song sequences</div></div><div class="card-badge" style="color:#A78BFA;background:rgba(167,139,250,0.15)">MANUAL</div></div>
+        <div class="card-desc">Build ordered or shuffled playlists for special shows and countdowns.</div>
+        <div class="card-bottom"><div class="card-chip" style="color:#A78BFA;background:rgba(167,139,250,0.12)">5 Playlists</div><div class="card-bottom-spacer"></div><div class="card-open">Open →</div></div>
+      </div>
+      <div class="library-card" style="--card-border:rgba(245,158,11,0.3);--card-accent:#F59E0B;--card-glow:rgba(245,158,11,0.15);box-shadow:0 0 20px rgba(245,158,11,0.10);min-height:130px" onclick="navTo('force_clocks')">
+        <div class="card-top"><div class="card-icon" style="color:#F59E0B">📅</div><div class="card-titles"><div class="card-title">Force Clocks</div><div class="card-subtitle">Calendar overrides</div></div><div class="card-badge" style="color:#F59E0B;background:rgba(245,158,11,0.15)">OVERRIDE</div></div>
+        <div class="card-desc">Override regular clocks on holidays, special events, and specific dates.</div>
+        <div class="card-bottom"><div class="card-chip" style="color:#F59E0B;background:rgba(245,158,11,0.12)">4 Overrides</div><div class="card-bottom-spacer"></div><div class="card-open">Open →</div></div>
+      </div>
+      <div class="library-card" style="--card-border:rgba(16,185,129,0.3);--card-accent:#10B981;--card-glow:rgba(16,185,129,0.15);box-shadow:0 0 20px rgba(16,185,129,0.10);min-height:130px" onclick="navTo('final_log_creator')">
+        <div class="card-top"><div class="card-icon" style="color:#10B981">📋</div><div class="card-titles"><div class="card-title">Final Log Creator</div><div class="card-subtitle">Generate broadcast log</div></div><div class="card-badge" style="color:#10B981;background:rgba(16,185,129,0.15)">AI POWERED</div></div>
+        <div class="card-desc">AI generates the complete daily broadcast log from clocks and rules.</div>
+        <div class="card-bottom"><div class="card-chip" style="color:#10B981;background:rgba(16,185,129,0.12)">286 Entries</div><div class="card-bottom-spacer"></div><div class="card-open">Open →</div></div>
+      </div>
+      <div class="library-card" style="--card-border:rgba(20,184,166,0.3);--card-accent:#14B8A6;--card-glow:rgba(20,184,166,0.15);box-shadow:0 0 20px rgba(20,184,166,0.10);min-height:130px" onclick="navTo('log_viewer')">
+        <div class="card-top"><div class="card-icon" style="color:#14B8A6">📊</div><div class="card-titles"><div class="card-title">Log Viewer</div><div class="card-subtitle">Review broadcast history</div></div><div class="card-badge" style="color:#14B8A6;background:rgba(20,184,166,0.15)">ANALYTICS</div></div>
+        <div class="card-desc">View locked logs, compare actual vs planned, track timing variances.</div>
+        <div class="card-bottom"><div class="card-chip" style="color:#14B8A6;background:rgba(20,184,166,0.12)">7 Logs</div><div class="card-bottom-spacer"></div><div class="card-open">Open →</div></div>
+      </div>
+      <div class="library-card" style="--card-border:rgba(6,182,212,0.3);--card-accent:#06B6D4;--card-glow:rgba(6,182,212,0.15);box-shadow:0 0 20px rgba(6,182,212,0.10);min-height:130px" onclick="navTo('rds_settings')">
+        <div class="card-top"><div class="card-icon" style="color:#06B6D4">📡</div><div class="card-titles"><div class="card-title">RDS Settings</div><div class="card-subtitle">Radio Data System</div></div><div class="card-badge" style="color:#06B6D4;background:rgba(6,182,212,0.15)">BROADCAST</div></div>
+        <div class="card-desc">Configure what displays on car radios, digital tuners and streaming apps.</div>
+        <div class="card-bottom"><div class="card-chip" style="color:#06B6D4;background:rgba(6,182,212,0.12)">RDS Active</div><div class="card-bottom-spacer"></div><div class="card-open">Open →</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 2: Settings -->
+  <div class="tab-page" id="tab-2">
+    <div class="page-header">
+      <div class="page-title">Settings</div>
+      <div class="page-subtitle">Configure station identity, audio routing, security and integrations</div>
+      <div class="badges">
+        <div class="badge badge-default">6 Panels</div>
+        <div class="badge badge-green">● All OK</div>
+      </div>
+    </div>
+    <div class="cards-grid" style="grid-template-columns:repeat(3,1fr);gap:12px">
+      <div class="library-card" style="--card-border:rgba(245,158,11,0.3);--card-accent:#F59E0B;--card-glow:rgba(245,158,11,0.15);box-shadow:0 0 20px rgba(245,158,11,0.10);min-height:130px" onclick="navTo('general_settings')">
+        <div class="card-top"><div class="card-icon" style="color:#F59E0B">⚙</div><div class="card-titles"><div class="card-title">General Settings</div><div class="card-subtitle">Station identity & paths</div></div><div class="card-badge" style="color:#F59E0B;background:rgba(245,158,11,0.15)">CORE</div></div>
+        <div class="card-desc">Station name, file paths, startup behaviour, backup settings.</div>
+        <div class="card-bottom"><div class="card-chip station-name" style="color:#F59E0B;background:rgba(245,158,11,0.12)">KISS FM 91.5</div><div class="card-bottom-spacer"></div><div class="card-open">Open →</div></div>
+      </div>
+      <div class="library-card" style="--card-border:rgba(6,182,212,0.3);--card-accent:#06B6D4;--card-glow:rgba(6,182,212,0.15);box-shadow:0 0 20px rgba(6,182,212,0.10);min-height:130px" onclick="navTo('soundcards')">
+        <div class="card-top"><div class="card-icon" style="color:#06B6D4">🔊</div><div class="card-titles"><div class="card-title">Soundcards</div><div class="card-subtitle">Audio routing & devices</div></div><div class="card-badge" style="color:#06B6D4;background:rgba(6,182,212,0.15)">AUDIO</div></div>
+        <div class="card-desc">5 audio channels, device selection, volume levels, test tones.</div>
+        <div class="card-bottom"><div class="card-chip" style="color:#06B6D4;background:rgba(6,182,212,0.12)">5 Channels</div><div class="card-bottom-spacer"></div><div class="card-open">Open →</div></div>
+      </div>
+      <div class="library-card" style="--card-border:rgba(139,92,246,0.3);--card-accent:#8B5CF6;--card-glow:rgba(139,92,246,0.15);box-shadow:0 0 20px rgba(139,92,246,0.10);min-height:130px" onclick="navTo('studio_settings')">
+        <div class="card-top"><div class="card-icon" style="color:#8B5CF6">🎛</div><div class="card-titles"><div class="card-title">Studio Settings</div><div class="card-subtitle">Crossfade & audio engine</div></div><div class="card-badge" style="color:#8B5CF6;background:rgba(139,92,246,0.15)">ENGINE</div></div>
+        <div class="card-desc">Crossfade duration, AutoCue, fade curves, cue split, WASAPI.</div>
+        <div class="card-bottom"><div class="card-chip" style="color:#8B5CF6;background:rgba(139,92,246,0.12)">WASAPI</div><div class="card-bottom-spacer"></div><div class="card-open">Open →</div></div>
+      </div>
+      <div class="library-card" style="--card-border:rgba(244,63,94,0.3);--card-accent:#F43F5E;--card-glow:rgba(244,63,94,0.15);box-shadow:0 0 20px rgba(244,63,94,0.10);min-height:130px" onclick="navTo('users_security')">
+        <div class="card-top"><div class="card-icon" style="color:#F43F5E">👤</div><div class="card-titles"><div class="card-title">Users & Security</div><div class="card-subtitle">Accounts & permissions</div></div><div class="card-badge" style="color:#F43F5E;background:rgba(244,63,94,0.15)">SECURITY</div></div>
+        <div class="card-desc">User accounts, roles, password policies, session access logs.</div>
+        <div class="card-bottom"><div class="card-chip" style="color:#F43F5E;background:rgba(244,63,94,0.12)">3 Users</div><div class="card-bottom-spacer"></div><div class="card-open">Open →</div></div>
+      </div>
+      <div class="library-card" style="--card-border:rgba(20,184,166,0.3);--card-accent:#14B8A6;--card-glow:rgba(20,184,166,0.15);box-shadow:0 0 20px rgba(20,184,166,0.10);min-height:130px" onclick="navTo('database_settings')">
+        <div class="card-top"><div class="card-icon" style="color:#14B8A6">🗄</div><div class="card-titles"><div class="card-title">Database Settings</div><div class="card-subtitle">SQLite & backup</div></div><div class="card-badge" style="color:#14B8A6;background:rgba(20,184,166,0.15)">STORAGE</div></div>
+        <div class="card-desc">Database engine config, backup/restore, integrity check.</div>
+        <div class="card-bottom"><div class="card-chip" style="color:#14B8A6;background:rgba(20,184,166,0.12)">SQLite OK</div><div class="card-bottom-spacer"></div><div class="card-open">Open →</div></div>
+      </div>
+      <div class="library-card" style="--card-border:rgba(16,185,129,0.3);--card-accent:#10B981;--card-glow:rgba(16,185,129,0.15);box-shadow:0 0 20px rgba(16,185,129,0.10);min-height:130px" onclick="navTo('weather_api')">
+        <div class="card-top"><div class="card-icon" style="color:#10B981">🌤</div><div class="card-titles"><div class="card-title">Weather & API</div><div class="card-subtitle">External integrations</div></div><div class="card-badge" style="color:#10B981;background:rgba(16,185,129,0.15)">API</div></div>
+        <div class="card-desc">Weather feeds, Claude AI API key, usage stats and features.</div>
+        <div class="card-bottom"><div class="card-chip" style="color:#10B981;background:rgba(16,185,129,0.12)">API Active</div><div class="card-bottom-spacer"></div><div class="card-open">Open →</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 3: AI Magic -->
+  <div class="tab-page" id="tab-3">
+    <div class="page-header">
+      <div class="page-title">AI Magic ✦</div>
+      <div class="page-subtitle">AI-powered insights, automation and intelligent scheduling</div>
+      <div class="badges">
+        <div class="badge badge-default">10 AI Functions</div>
+        <div class="badge badge-green">● AI Active</div>
+      </div>
+    </div>
+    <div class="cards-grid" style="grid-template-columns:repeat(3,1fr);gap:12px">
+      <div class="library-card" style="--card-border:rgba(139,92,246,0.3);--card-accent:#8B5CF6;--card-glow:rgba(139,92,246,0.15);box-shadow:0 0 20px rgba(139,92,246,0.10);min-height:130px">
+        <div class="card-top"><div class="card-icon" style="color:#8B5CF6">✦</div><div class="card-titles"><div class="card-title">Rotation Health</div><div class="card-subtitle">Library diversity analysis</div></div></div>
+        <div class="card-desc">Monitors how many unique songs play in rotation. Alerts if diversity drops below 50%.</div>
+        <div class="card-bottom"><div class="card-chip" style="color:#8B5CF6;background:rgba(139,92,246,0.12)">87% Health</div><div class="card-bottom-spacer"></div></div>
+      </div>
+      <div class="library-card" style="--card-border:rgba(245,158,11,0.3);--card-accent:#F59E0B;--card-glow:rgba(245,158,11,0.15);box-shadow:0 0 20px rgba(245,158,11,0.10);min-height:130px">
+        <div class="card-top"><div class="card-icon" style="color:#F59E0B">⚠</div><div class="card-titles"><div class="card-title">Overplay Detection</div><div class="card-subtitle">Excessive repetition alerts</div></div></div>
+        <div class="card-desc">Flags songs played more than 4x per week. Prevents listener fatigue.</div>
+        <div class="card-bottom"><div class="card-chip" style="color:#F59E0B;background:rgba(245,158,11,0.12)">0 Alerts</div><div class="card-bottom-spacer"></div></div>
+      </div>
+      <div class="library-card" style="--card-border:rgba(16,185,129,0.3);--card-accent:#10B981;--card-glow:rgba(16,185,129,0.15);box-shadow:0 0 20px rgba(16,185,129,0.10);min-height:130px">
+        <div class="card-top"><div class="card-icon" style="color:#10B981">⚡</div><div class="card-titles"><div class="card-title">Energy Matching</div><div class="card-subtitle">Time-of-day optimization</div></div></div>
+        <div class="card-desc">Matches song energy to time slots. High energy for drive time, low for late night.</div>
+        <div class="card-bottom"><div class="card-chip" style="color:#10B981;background:rgba(16,185,129,0.12)">Active</div><div class="card-bottom-spacer"></div></div>
+      </div>
+      <div class="library-card" style="--card-border:rgba(6,182,212,0.3);--card-accent:#06B6D4;--card-glow:rgba(6,182,212,0.15);box-shadow:0 0 20px rgba(6,182,212,0.10);min-height:130px">
+        <div class="card-top"><div class="card-icon" style="color:#06B6D4">🎵</div><div class="card-titles"><div class="card-title">Similar Songs</div><div class="card-subtitle">BPM & energy matching</div></div></div>
+        <div class="card-desc">Finds songs within ±15 BPM with matching energy for smooth transitions.</div>
+        <div class="card-bottom"><div class="card-chip" style="color:#06B6D4;background:rgba(6,182,212,0.12)">BPM ±15</div><div class="card-bottom-spacer"></div></div>
+      </div>
+      <div class="library-card" style="--card-border:rgba(244,63,94,0.3);--card-accent:#F43F5E;--card-glow:rgba(244,63,94,0.15);box-shadow:0 0 20px rgba(244,63,94,0.10);min-height:130px">
+        <div class="card-top"><div class="card-icon" style="color:#F43F5E">📊</div><div class="card-titles"><div class="card-title">Break Conflicts</div><div class="card-subtitle">Spot overflow detection</div></div></div>
+        <div class="card-desc">Detects when scheduled spots exceed break duration. 10% buffer tolerance.</div>
+        <div class="card-bottom"><div class="card-chip" style="color:#F43F5E;background:rgba(244,63,94,0.12)">0 Conflicts</div><div class="card-bottom-spacer"></div></div>
+      </div>
+      <div class="library-card" style="--card-border:rgba(20,184,166,0.3);--card-accent:#14B8A6;--card-glow:rgba(20,184,166,0.15);box-shadow:0 0 20px rgba(20,184,166,0.10);min-height:130px">
+        <div class="card-top"><div class="card-icon" style="color:#14B8A6">📋</div><div class="card-titles"><div class="card-title">Auto Log Generation</div><div class="card-subtitle">Full AI scheduling</div></div></div>
+        <div class="card-desc">Autonomously generates complete daily broadcast logs from clock rules.</div>
+        <div class="card-bottom"><div class="card-chip" style="color:#14B8A6;background:rgba(20,184,166,0.12)">24h Coverage</div><div class="card-bottom-spacer"></div></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ═══════════════════ STATUS BAR ═══════════════════ -->
+<div class="status-bar">
+  <div class="status-indicator">
+    <span class="status-dot" style="background:var(--p1);box-shadow:0 0 4px var(--p1)"></span>
+    AUTO MODE
+  </div>
+  <div class="status-indicator">
+    <span class="status-dot" style="background:var(--gn);box-shadow:0 0 4px var(--gn)"></span>
+    AI Active
+  </div>
+  <div class="status-indicator">
+    <span class="status-dot" style="background:var(--gn);box-shadow:0 0 4px var(--gn)"></span>
+    Sync: OK
+  </div>
+  <div class="status-indicator">
+    <span class="status-dot" style="background:var(--gn);box-shadow:0 0 4px var(--gn)"></span>
+    No Problems
+  </div>
+  <div class="status-spacer"></div>
+  <div class="status-info" id="status-info">Program running: 0 minutes • RadioAI Studio v1.0</div>
+  <div class="status-settings" onclick="switchTab(2)">⚙ Settings</div>
+</div>
+
+<!-- ═══════════════════ JAVASCRIPT ═══════════════════ -->
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script src="js/bridge_helper.js"></script>
+<script>
+// bridge variable is provided by bridge_helper.js (global)
+var startTime = Date.now();
+var DEFAULT_STATS = { songs: 0, categories: 6, campaigns_active: 0, jingles: 0, sweepers: 0 };
+
+// Load stats from bridge when it connects
+function loadDataFromBridge() {
+  if (!bridge) return;
+  bc(bridge.get_stats, [], function(raw) {
+    if (!raw) return;
+    try {
+      var stats = JSON.parse(raw);
+      if (!stats.error) renderCards(stats);
+    } catch(e) {}
+  });
+}
+
+// ── Library Cards ────────────────────────────────────────
+const CARDS = [
+  {
+    key: 'songs', icon: '♫', title: 'Songs',
+    subtitle: 'Categories & Smart Rotation',
+    badge: 'MAIN LIBRARY',
+    countFn: s => `${s.songs} Songs Available`,
+    desc: 'Full music library with AI-powered rotation, play history analytics and category rules.',
+    chipsFn: s => [`${s.categories} Categories`, '87% Health'],
+    accent: '#8B5CF6',
+  },
+  {
+    key: 'instant', icon: '⚡', title: 'Instant Jingles',
+    subtitle: 'Live Broadcast Pads',
+    badge: 'LIVE TOOLS',
+    countFn: () => '0 Jingles • 1 Pallet',
+    desc: 'Quick-fire jingle pallets for live broadcast. Per-producer pallets, separate audio output.',
+    chipsFn: () => ['1 Pallet', 'Live Ready'],
+    accent: '#06B6D4',
+  },
+  {
+    key: 'spots', icon: '$', title: 'Spots & Commercials',
+    subtitle: 'Ad Breaks & Priority System',
+    badge: 'REVENUE',
+    countFn: s => `${s.campaigns_active} Active Campaigns`,
+    desc: 'Campaign management with break times, priorities, optional play & traffic sync.',
+    chipsFn: () => ['4 Active', 'Next: 22:00'],
+    accent: '#10B981',
+  },
+  {
+    key: 'jingles', icon: '♪', title: 'Jingles',
+    subtitle: 'Station Identity Audio',
+    badge: 'BRANDING',
+    countFn: s => `${s.jingles} Jingles Available`,
+    desc: 'Branding jingles organized by category. Schedule via clocks or playlists.',
+    chipsFn: () => ['4 Categories', 'Auto-Play'],
+    accent: '#F59E0B',
+  },
+  {
+    key: 'sweepers', icon: '◈', title: 'Sweepers',
+    subtitle: 'Audio Overlays on Songs',
+    badge: 'PRODUCTION',
+    countFn: s => `${s.sweepers} Sweepers Available`,
+    desc: 'Play over songs at defined positions: start, before intro, before end, bridge.',
+    chipsFn: () => ['3 Positions', 'Synced'],
+    accent: '#F43F5E',
+  },
+  {
+    key: 'stitcher', icon: '◆', title: 'The Stitcher',
+    subtitle: 'Automated Audio Assembly',
+    badge: 'AI POWERED',
+    countFn: () => '3 Active Modules',
+    desc: 'Auto-builds hooks, time announcements and news from prerecorded audio parts.',
+    chipsFn: () => ['Hooks+Time', '+ News'],
+    accent: '#14B8A6',
+  },
+];
+
+function hexToRgba(hex, alpha) {
+  const r = parseInt(hex.slice(1,3), 16);
+  const g = parseInt(hex.slice(3,5), 16);
+  const b = parseInt(hex.slice(5,7), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+function renderCards(stats) {
+  const grid = document.getElementById('cards-grid');
+  grid.innerHTML = '';
+
+  CARDS.forEach(c => {
+    const card = document.createElement('div');
+    card.className = 'library-card';
+    card.style.setProperty('--card-border', hexToRgba(c.accent, 0.3));
+    card.style.setProperty('--card-accent', c.accent);
+    card.style.setProperty('--card-glow', hexToRgba(c.accent, 0.15));
+    card.style.boxShadow = `0 0 20px ${hexToRgba(c.accent, 0.10)}`;
+    card.onclick = () => onCardClick(c.key);
+
+    const chips = c.chipsFn(stats).map(t =>
+      `<div class="card-chip" style="color:${c.accent};background:${hexToRgba(c.accent,0.12)}">${t}</div>`
+    ).join('');
+
+    card.innerHTML = `
+      <div class="card-top">
+        <div class="card-icon" style="color:${c.accent}">${c.icon}</div>
+        <div class="card-titles">
+          <div class="card-title">${c.title}</div>
+          <div class="card-subtitle">${c.subtitle}</div>
+        </div>
+        <div class="card-badge" style="color:${c.accent};background:${hexToRgba(c.accent,0.15)}">${c.badge}</div>
+      </div>
+      <div class="card-count" style="color:var(--t1);background:${hexToRgba(c.accent,0.2)}">${c.countFn(stats)}</div>
+      <div class="card-desc">${c.desc}</div>
+      <div class="card-bottom">
+        ${chips}
+        <div class="card-bottom-spacer"></div>
+        <div class="card-open">Open →</div>
+      </div>
+    `;
+
+    grid.appendChild(card);
+  });
+}
+
+// ── Navigation ───────────────────────────────────────────
+function switchTab(index) {
+  document.querySelectorAll('.nav-tab').forEach((tab, i) => {
+    tab.classList.toggle('active', i === index);
+  });
+  document.querySelectorAll('.tab-page').forEach((page, i) => {
+    page.classList.toggle('active', i === index);
+  });
+}
+
+function onCardClick(key) {
+  if (bridge) bridge.open_library(key);
+}
+
+function navTo(page) {
+  navigateTo(page);
+}
+
+function onOpenStudio() {
+  if (bridge) bridge.open_studio();
+}
+
+// ── Init ─────────────────────────────────────────────────
+// Render cards immediately with defaults
+renderCards(DEFAULT_STATS);
+
+// bridge_helper.js auto-connects and loads settings.
+// Poll for bridge connection to also load stats.
+(function waitForBridge(){
+  if(bridge){ loadDataFromBridge(); }
+  else { setTimeout(waitForBridge, 200); }
+})();
+
+// Auto-switch tab based on URL hash (used by breadcrumb back-navigation)
+(function(){
+  if (window.location.hash === '#ai' || window.location.hash === '#ai_magic') {
+    window.location.href = 'ai_magic.html';
+  }
+  var hashMap = {'#libraries':0, '#settings':2};
+  if (window.location.hash === '#scheduling') {
+    window.location.href = 'scheduling_screen.html';
+  }
+  var tab = hashMap[window.location.hash];
+  if(tab !== undefined) switchTab(tab);
+})();
+</script>
+</body>
+</html>

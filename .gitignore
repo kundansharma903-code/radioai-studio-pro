@@ -1,0 +1,86 @@
+# ─── Python ──────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+.installed.cfg
+*.egg
+
+# ─── Virtual environments ────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# ─── PyInstaller / build artifacts ───────────────────────────────────
+build/
+dist/
+*.manifest
+*.spec.bak
+installer_output/
+*.exe
+
+# ─── SQLite databases (the live DB lives in %LOCALAPPDATA%) ──────────
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+radioai.db
+backups/
+
+# ─── PyQt / Qt build cache ───────────────────────────────────────────
+*.qm
+*.qmlc
+*.jsc
+
+# ─── Windows ─────────────────────────────────────────────────────────
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# ─── macOS / Linux noise ─────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# ─── Editors / IDEs ──────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+
+# ─── Logs / coverage ─────────────────────────────────────────────────
+*.log
+*.tmp
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ─── Local secrets ───────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+secrets/
+*.key
+*.pem
+
+# ─── Project-specific ────────────────────────────────────────────────
+tests/reports/
+scripts/_local_*
+*.bak

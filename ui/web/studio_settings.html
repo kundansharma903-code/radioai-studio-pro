@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Studio Settings — RadioAI Studio Pro</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+/* ── Studio Settings overrides ─────────────────── */
+.breadcrumb .active{color:var(--p1);font-weight:600}
+
+/* 3-column layout */
+.main{display:flex;overflow:hidden}
+.col{flex:1;min-width:0;overflow-y:auto;padding:24px 22px;border-right:1px solid var(--b1)}
+.col:last-child{border-right:none}
+.col::-webkit-scrollbar{width:6px}
+.col::-webkit-scrollbar-thumb{background:var(--b2);border-radius:3px}
+.col-left{flex:0 0 30%}
+.col-center{flex:0 0 35%}
+.col-right{flex:0 0 35%}
+
+/* Section blocks */
+.config-section{margin-bottom:24px;padding-left:14px;border-left:3px solid var(--p1)}
+.config-section.amber{border-left-color:var(--am)}
+.config-section.green{border-left-color:var(--gn)}
+.config-section.rose{border-left-color:var(--rs)}
+.config-section.purple{border-left-color:var(--p1)}
+.config-section.dark{border-left:none;background:var(--card);border-radius:var(--radius);padding:14px 14px 14px 14px;margin-bottom:24px}
+
+.config-section-title{font-size:11px;font-weight:700;color:var(--p1);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:14px}
+.config-section.amber .config-section-title{color:var(--am)}
+.config-section.green .config-section-title{color:var(--gn)}
+.config-section.rose .config-section-title{color:var(--rs)}
+.config-section.dark .config-section-title{color:var(--t2)}
+
+/* Form rows */
+.form-row{margin-bottom:14px}
+.form-label{font-size:10px;font-weight:600;color:var(--t3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:5px}
+.form-select{width:100%;padding:8px 12px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);color:var(--t1);font-size:12px;font-family:'Inter',sans-serif;appearance:none;cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23454D6D'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center}
+.form-select:focus{outline:none;border-color:var(--p1)}
+
+/* Slider component */
+.slider-row{display:flex;align-items:center;gap:12px}
+.slider-wrap{flex:1;position:relative;height:6px;background:var(--b1);border-radius:3px;cursor:pointer}
+.slider-fill{height:100%;border-radius:3px;pointer-events:none;position:absolute;top:0;left:0}
+.slider-fill.purple{background:var(--p1)}
+.slider-fill.amber{background:var(--am)}
+.slider-fill.green{background:var(--gn)}
+.slider-fill.cyan{background:var(--cy)}
+.slider-fill.rose{background:var(--rs)}
+.slider-thumb{width:14px;height:14px;border-radius:50%;background:#fff;border:2px solid var(--p1);position:absolute;top:50%;transform:translate(-50%,-50%);cursor:grab;box-shadow:0 1px 4px rgba(0,0,0,0.4);pointer-events:none}
+.slider-thumb.purple{border-color:var(--p1)}
+.slider-thumb.amber{border-color:var(--am)}
+.slider-thumb.green{border-color:var(--gn)}
+.slider-thumb.cyan{border-color:var(--cy)}
+.slider-thumb.rose{border-color:var(--rs)}
+.slider-value{font-family:'Roboto Mono',monospace;font-size:12px;font-weight:700;color:var(--t1);min-width:48px;text-align:right}
+
+/* Fade curve buttons */
+.curve-btns{display:flex;gap:6px;flex-wrap:wrap}
+.curve-btn{padding:7px 14px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);color:var(--t2);font-family:'Inter',sans-serif;font-size:11px;font-weight:500;cursor:pointer;transition:all 0.15s}
+.curve-btn:hover{border-color:var(--p1);color:var(--t1)}
+.curve-btn.active{background:var(--p1);border-color:var(--p1);color:#fff;font-weight:600}
+
+/* Toggle switch */
+.toggle-row{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.toggle-label{flex:1;font-size:12px;color:var(--t2)}
+.toggle{width:38px;height:20px;border-radius:10px;background:var(--b2);position:relative;cursor:pointer;transition:background 0.2s;flex-shrink:0}
+.toggle.on{background:var(--gn)}
+.toggle.on.rose{background:var(--rs)}
+.toggle.on.purple{background:var(--p1)}
+.toggle-knob{width:16px;height:16px;border-radius:50%;background:#fff;position:absolute;top:2px;left:2px;transition:left 0.2s;box-shadow:0 1px 3px rgba(0,0,0,0.3)}
+.toggle.on .toggle-knob{left:20px}
+
+/* Radio options */
+.radio-group{display:flex;flex-direction:column;gap:8px}
+.radio-option{display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);cursor:pointer;transition:all 0.15s}
+.radio-option:hover{border-color:var(--b2);background:var(--card2)}
+.radio-option.selected{border-color:var(--gn);background:rgba(16,185,129,0.06)}
+.radio-dot{width:16px;height:16px;border-radius:50%;border:2px solid var(--b2);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.radio-option.selected .radio-dot{border-color:var(--gn)}
+.radio-dot-inner{width:8px;height:8px;border-radius:50%;background:var(--gn);display:none}
+.radio-option.selected .radio-dot-inner{display:block}
+.radio-text{font-size:12px;color:var(--t2)}
+.radio-option.selected .radio-text{color:var(--t1);font-weight:500}
+
+/* Engine info rows */
+.engine-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--b1)}
+.engine-row:last-child{border-bottom:none}
+.engine-label{font-size:11px;color:var(--t3)}
+.engine-value{font-family:'Roboto Mono',monospace;font-size:12px;font-weight:600;color:var(--gn)}
+
+/* Warning box */
+.warning-box{display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--amD);border:1px solid rgba(245,158,11,0.2);border-radius:var(--radius);margin-top:12px}
+.warning-icon{font-size:14px;flex-shrink:0}
+.warning-text{font-size:11px;color:var(--am);font-weight:500}
+
+/* Save buttons */
+.save-btn{width:100%;padding:11px;background:var(--gn);color:#fff;border:none;border-radius:var(--radius);font-family:'Inter',sans-serif;font-size:13px;font-weight:700;cursor:pointer;margin-top:8px;letter-spacing:0.3px}
+.save-btn:hover{opacity:0.85}
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="header">
+  <div class="logo" onclick="goBack()">
+    <div class="logo-icon">((&#9679;))</div>
+    <div class="logo-text"><div class="logo-title">RadioAI</div><div class="logo-sub">STUDIO PRO</div></div>
+  </div>
+  <div class="breadcrumb">
+    <a onclick="goBack()">Control Panel</a><span class="bc-sep">></span>
+    <a onclick="goToSettings()">Settings</a><span class="bc-sep">></span>
+    <span class="active">Studio Settings</span>
+  </div>
+  <div class="page-title-area">
+    <div class="page-title">Studio Settings</div>
+    <div class="page-subtitle">Crossfade, fade curves, AutoCue, cue split and audio engine preferences</div>
+  </div>
+  <div class="header-spacer"></div>
+  <div style="display:flex;flex-direction:column;align-items:center;gap:1px">
+    <div class="clock-time" id="clock-time">00:00:00</div>
+    <div class="clock-date" id="clock-date"></div>
+  </div>
+  <div class="station-box">
+    <div class="station-label">ACTIVE STATION</div>
+    <div class="station-name">KISS FM 91.5</div>
+    <div class="station-loc">Jaipur, Rajasthan</div>
+  </div>
+  <button class="open-studio-btn" onclick="openStudio()">&#9654; Open Studio</button>
+</div>
+
+<!-- MAIN 3-COLUMN LAYOUT -->
+<div class="main">
+
+  <!-- LEFT COLUMN (~30%) — Crossfade & Transitions -->
+  <div class="col col-left">
+
+    <!-- CROSSFADE & TRANSITIONS -->
+    <div class="config-section purple">
+      <div class="config-section-title">Crossfade &amp; Transitions</div>
+
+      <div class="form-row">
+        <div class="form-label">Crossfade Duration</div>
+        <div class="slider-row">
+          <div class="slider-wrap" id="slider-crossfade" data-min="0" data-max="10" data-value="3" data-color="purple" data-unit="s">
+            <div class="slider-fill purple" style="width:30%"></div>
+            <div class="slider-thumb purple" style="left:30%"></div>
+          </div>
+          <div class="slider-value" id="val-crossfade">3s</div>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">Fade Out Start</div>
+        <div class="slider-row">
+          <div class="slider-wrap" id="slider-fadeout" data-min="0" data-max="10" data-value="5" data-color="amber" data-unit="s">
+            <div class="slider-fill amber" style="width:50%"></div>
+            <div class="slider-thumb amber" style="left:50%"></div>
+          </div>
+          <div class="slider-value" id="val-fadeout">5s</div>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">Fade Curve Type</div>
+        <div class="curve-btns">
+          <button class="curve-btn" onclick="selectCurve(this)">Linear</button>
+          <button class="curve-btn active" onclick="selectCurve(this)">Logarithmic</button>
+          <button class="curve-btn" onclick="selectCurve(this)">Exponential</button>
+          <button class="curve-btn" onclick="selectCurve(this)">S-Curve</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- NEXT SONG LOAD -->
+    <div class="config-section dark">
+      <div class="config-section-title">Next Song Load</div>
+
+      <div class="form-row">
+        <div class="form-label">Load next song</div>
+        <select class="form-select">
+          <option selected>At mix point of current</option>
+          <option>At fade out start</option>
+          <option>At end of current song</option>
+          <option>Immediately after play</option>
+        </select>
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">Prefetch buffer</div>
+        <select class="form-select">
+          <option>5 seconds ahead</option>
+          <option selected>10 seconds ahead</option>
+          <option>15 seconds ahead</option>
+          <option>30 seconds ahead</option>
+        </select>
+      </div>
+
+      <div class="form-row" style="margin-bottom:0">
+        <div class="form-label">Autoplay trigger</div>
+        <select class="form-select">
+          <option selected>At song MIX POINT marker</option>
+          <option>At song OUTRO marker</option>
+          <option>At end of file</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- PLAYBACK FALLBACK -->
+    <div class="config-section rose">
+      <div class="config-section-title">Playback Fallback</div>
+
+      <div class="form-row">
+        <div class="form-label">If next song file is missing</div>
+        <select class="form-select">
+          <option selected>Skip and play next available song</option>
+          <option>Stop playback and alert operator</option>
+          <option>Play silence for scheduled duration</option>
+          <option>Play emergency jingle</option>
+        </select>
+      </div>
+
+      <div class="toggle-row">
+        <span class="toggle-label">Missing file alert &mdash; Show on-screen warning immediately</span>
+        <div class="toggle on" onclick="toggleSwitch(this)">
+          <div class="toggle-knob"></div>
+        </div>
+      </div>
+    </div>
+
+    <button class="save-btn" onclick="saveBtn(this,'Save Transition Settings')">Save Transition Settings</button>
+  </div>
+
+  <!-- CENTER COLUMN (~35%) — AutoCue, Volume, VU -->
+  <div class="col col-center">
+
+    <!-- AUTOCUE SETTINGS -->
+    <div class="config-section green">
+      <div class="config-section-title">AutoCue Settings</div>
+
+      <div class="form-row">
+        <div class="form-label">AutoCue dB Threshold</div>
+        <div class="slider-row">
+          <div class="slider-wrap" id="slider-autocue" data-min="-60" data-max="0" data-value="-40" data-color="green" data-unit=" dB">
+            <div class="slider-fill green" style="width:33.3%"></div>
+            <div class="slider-thumb green" style="left:33.3%"></div>
+          </div>
+          <div class="slider-value" id="val-autocue">-40 dB</div>
+        </div>
+      </div>
+
+      <div class="form-row" style="margin-bottom:0">
+        <div class="form-label">AutoCue scan mode</div>
+        <select class="form-select">
+          <option selected>Scan first 10s + last 10s (Fast)</option>
+          <option>Scan entire file (Accurate)</option>
+          <option>Scan first 5s + last 5s (Ultra Fast)</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- VOLUME & LEVELS -->
+    <div class="config-section amber">
+      <div class="config-section-title">Volume &amp; Levels</div>
+
+      <div class="form-row">
+        <div class="form-label">Master Output Level</div>
+        <div class="slider-row">
+          <div class="slider-wrap" id="slider-master" data-min="0" data-max="100" data-value="85" data-color="green" data-unit="">
+            <div class="slider-fill green" style="width:85%"></div>
+            <div class="slider-thumb green" style="left:85%"></div>
+          </div>
+          <div class="slider-value" id="val-master">85</div>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">Cue / Preview Level</div>
+        <div class="slider-row">
+          <div class="slider-wrap" id="slider-cue" data-min="0" data-max="100" data-value="70" data-color="cyan" data-unit="">
+            <div class="slider-fill cyan" style="width:70%"></div>
+            <div class="slider-thumb cyan" style="left:70%"></div>
+          </div>
+          <div class="slider-value" id="val-cue">70</div>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">Jingle Pad Level</div>
+        <div class="slider-row">
+          <div class="slider-wrap" id="slider-jingle" data-min="0" data-max="100" data-value="90" data-color="rose" data-unit="">
+            <div class="slider-fill rose" style="width:90%"></div>
+            <div class="slider-thumb rose" style="left:90%"></div>
+          </div>
+          <div class="slider-value" id="val-jingle">90</div>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">Microphone Level</div>
+        <div class="slider-row">
+          <div class="slider-wrap" id="slider-mic" data-min="0" data-max="100" data-value="75" data-color="rose" data-unit="">
+            <div class="slider-fill rose" style="width:75%"></div>
+            <div class="slider-thumb rose" style="left:75%"></div>
+          </div>
+          <div class="slider-value" id="val-mic">75</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- VU METERS -->
+    <div class="config-section amber">
+      <div class="config-section-title">VU Meters</div>
+
+      <div class="form-row">
+        <div class="form-label">VU meter decay speed</div>
+        <select class="form-select">
+          <option>Fast (150ms decay)</option>
+          <option selected>Normal (300ms decay)</option>
+          <option>Slow (600ms decay)</option>
+        </select>
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">Peak hold duration</div>
+        <select class="form-select">
+          <option>1 second</option>
+          <option selected>2 seconds</option>
+          <option>5 seconds</option>
+          <option>Infinite (until reset)</option>
+        </select>
+      </div>
+
+      <div class="toggle-row">
+        <span class="toggle-label">Over 0dB clip indicator &mdash; Flash red on clip</span>
+        <div class="toggle on rose" onclick="toggleSwitch(this)">
+          <div class="toggle-knob"></div>
+        </div>
+      </div>
+    </div>
+
+    <button class="save-btn" onclick="saveBtn(this,'Save Audio Settings')">Save Audio Settings</button>
+  </div>
+
+  <!-- RIGHT COLUMN (~35%) — Cue Split, Preview, Engine -->
+  <div class="col col-right">
+
+    <!-- CUE SPLIT -->
+    <div class="config-section" style="border-left:none">
+      <div class="config-section-title" style="color:var(--t2)">Cue Split (Headphone Monitoring)</div>
+
+      <div class="radio-group" id="cue-split-group">
+        <div class="radio-option" onclick="selectRadio(this)">
+          <div class="radio-dot"><div class="radio-dot-inner"></div></div>
+          <span class="radio-text">Off &mdash; Hear only monitor output</span>
+        </div>
+        <div class="radio-option" onclick="selectRadio(this)">
+          <div class="radio-dot"><div class="radio-dot-inner"></div></div>
+          <span class="radio-text">Left: Cue + Right: On-Air</span>
+        </div>
+        <div class="radio-option selected" onclick="selectRadio(this)">
+          <div class="radio-dot"><div class="radio-dot-inner"></div></div>
+          <span class="radio-text">Left: On-Air + Right: Cue</span>
+        </div>
+        <div class="radio-option" onclick="selectRadio(this)">
+          <div class="radio-dot"><div class="radio-dot-inner"></div></div>
+          <span class="radio-text">Blend: 50% Cue + 50% On-Air</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- CROSSFADE PREVIEW -->
+    <div class="config-section" style="border-left:none;margin-bottom:24px">
+      <div class="config-section-title" style="color:var(--t2)">Crossfade Preview</div>
+
+      <div class="toggle-row">
+        <span class="toggle-label">Show purple overlap zone on Studio waveforms</span>
+        <div class="toggle on purple" onclick="toggleSwitch(this)">
+          <div class="toggle-knob"></div>
+        </div>
+      </div>
+      <div class="toggle-row">
+        <span class="toggle-label">Flash green 10s before mix point</span>
+        <div class="toggle on" onclick="toggleSwitch(this)">
+          <div class="toggle-knob"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- AUDIO ENGINE -->
+    <div class="config-section purple">
+      <div class="config-section-title">Audio Engine</div>
+
+      <div class="engine-row">
+        <span class="engine-label">Audio buffer size</span>
+        <span class="engine-value">256 samples (5ms)</span>
+      </div>
+      <div class="engine-row">
+        <span class="engine-label">Sample rate</span>
+        <span class="engine-value">44100 Hz</span>
+      </div>
+      <div class="engine-row">
+        <span class="engine-label">Bit depth</span>
+        <span class="engine-value">32-bit float</span>
+      </div>
+      <div class="engine-row">
+        <span class="engine-label">Audio engine</span>
+        <span class="engine-value">WASAPI (Low Latency)</span>
+      </div>
+
+      <div class="warning-box">
+        <span class="warning-icon">&#9888;</span>
+        <span class="warning-text">Audio engine changes require restart.</span>
+      </div>
+    </div>
+
+    <button class="save-btn" onclick="saveBtn(this,'Save Studio Settings')">Save Studio Settings</button>
+  </div>
+
+</div>
+
+<!-- STATUS BAR -->
+<div class="status-bar">
+  <span class="status-indicator"><span class="status-dot" style="background:var(--p1)"></span> AUTO MODE</span>
+  <span class="status-indicator"><span class="status-dot" style="background:var(--gn)"></span> WASAPI Active</span>
+  <span class="status-indicator"><span class="status-dot" style="background:var(--gn)"></span> Audio OK</span>
+  <span class="status-spacer"></span>
+  <span class="status-info">RadioAI Studio Pro v1.0</span>
+</div>
+
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script src="js/bridge_helper.js"></script>
+<script>
+// goBack, goToSettings, updateClock provided by bridge_helper.js
+
+function openStudio(){ navigateTo('studio_screen'); }
+
+// ── Slider → DB key mapping ─────────────────────
+var SLIDER_KEYS = {
+  'slider-crossfade': 'crossfade_duration',
+  'slider-fadeout': 'fade_out_start',
+  'slider-autocue': 'autocue_threshold',
+  'slider-master': 'master_volume',
+  'slider-cue': 'cue_volume',
+  'slider-jingle': 'jingle_volume',
+  'slider-mic': 'mic_volume',
+};
+
+// ── Toggle Switch ───────────────────────────────
+function toggleSwitch(el){ el.classList.toggle('on'); }
+
+// ── Radio Group ─────────────────────────────────
+function selectRadio(el){
+  var items = el.parentElement.querySelectorAll('.radio-option');
+  for(var i=0;i<items.length;i++) items[i].classList.remove('selected');
+  el.classList.add('selected');
+}
+
+// ── Fade Curve Buttons ──────────────────────────
+function selectCurve(el){
+  var btns = el.parentElement.querySelectorAll('.curve-btn');
+  for(var i=0;i<btns.length;i++) btns[i].classList.remove('active');
+  el.classList.add('active');
+}
+
+// ── Slider Interaction ──────────────────────────
+function setSliderValue(sliderId, val){
+  var wrap = document.getElementById(sliderId);
+  if(!wrap) return;
+  var min = parseFloat(wrap.getAttribute('data-min'));
+  var max = parseFloat(wrap.getAttribute('data-max'));
+  var unit = wrap.getAttribute('data-unit') || '';
+  var pct = ((val-min)/(max-min))*100;
+  wrap.querySelector('.slider-fill').style.width = pct+'%';
+  wrap.querySelector('.slider-thumb').style.left = pct+'%';
+  wrap.setAttribute('data-value', val);
+  var valEl = document.getElementById('val-'+sliderId.replace('slider-',''));
+  if(valEl) valEl.textContent = val+unit;
+}
+
+function initSliders(){
+  document.querySelectorAll('.slider-wrap').forEach(function(wrap){
+    var min = parseFloat(wrap.getAttribute('data-min'));
+    var max = parseFloat(wrap.getAttribute('data-max'));
+    var unit = wrap.getAttribute('data-unit') || '';
+    var fill = wrap.querySelector('.slider-fill');
+    var thumb = wrap.querySelector('.slider-thumb');
+    var valEl = document.getElementById('val-'+wrap.id.replace('slider-',''));
+    var dragging = false;
+
+    function updateFromX(clientX){
+      var rect = wrap.getBoundingClientRect();
+      var pct = Math.max(0,Math.min(1,(clientX-rect.left)/rect.width));
+      var val = Math.round(min+pct*(max-min));
+      var displayPct = ((val-min)/(max-min))*100;
+      fill.style.width = displayPct+'%';
+      thumb.style.left = displayPct+'%';
+      wrap.setAttribute('data-value',val);
+      if(valEl) valEl.textContent = val+unit;
+    }
+
+    wrap.addEventListener('mousedown',function(e){ dragging=true; updateFromX(e.clientX); e.preventDefault(); });
+    document.addEventListener('mousemove',function(e){ if(dragging) updateFromX(e.clientX); });
+    document.addEventListener('mouseup',function(){ dragging=false; });
+  });
+}
+
+// ── Load settings from DB ───────────────────────
+onBridgeReady(function(){
+  callBridgeAsync('get_studio_settings', [], function(data){
+    if(!data) return;
+    // Sliders
+    for(var sid in SLIDER_KEYS){
+      var key = SLIDER_KEYS[sid];
+      if(data[key] !== undefined) setSliderValue(sid, parseInt(data[key]));
+    }
+    // Fade curve
+    if(data.fade_curve_type){
+      var btns = document.querySelectorAll('.curve-btn');
+      for(var i=0;i<btns.length;i++){
+        btns[i].classList.toggle('active', btns[i].textContent.trim() === data.fade_curve_type);
+      }
+    }
+    // Dropdowns
+    var dropdowns = document.querySelectorAll('.form-select');
+    var ddKeys = ['load_next_song','preload_buffer','automix_trigger','fallback_action',
+                  'autocue_scan_mode','vu_decay_speed','peak_hold_duration'];
+    for(var i=0;i<dropdowns.length && i<ddKeys.length;i++){
+      if(data[ddKeys[i]]){
+        for(var j=0;j<dropdowns[i].options.length;j++){
+          if(dropdowns[i].options[j].text.indexOf(data[ddKeys[i]]) !== -1 ||
+             dropdowns[i].options[j].value === data[ddKeys[i]]){
+            dropdowns[i].selectedIndex = j; break;
+          }
+        }
+      }
+    }
+    // Toggles
+    var toggles = document.querySelectorAll('.toggle-sw');
+    var togKeys = ['missing_file_alert','clip_indicator','show_crossfade_preview','flash_mix_point'];
+    for(var i=0;i<toggles.length && i<togKeys.length;i++){
+      if(data[togKeys[i]] === 'true') toggles[i].classList.add('on');
+      else toggles[i].classList.remove('on');
+    }
+    // Cue split radio
+    if(data.cue_split_mode){
+      var radios = document.querySelectorAll('.radio-option');
+      for(var i=0;i<radios.length;i++){
+        radios[i].classList.toggle('selected', radios[i].textContent.trim().indexOf(data.cue_split_mode) !== -1);
+      }
+    }
+    showToast('Studio settings loaded', true);
+  });
+});
+
+// ── Collect & Save ──────────────────────────────
+function collectTransitionSettings(){
+  var s = {};
+  s.crossfade_duration = document.getElementById('slider-crossfade').getAttribute('data-value');
+  s.fade_out_start = document.getElementById('slider-fadeout').getAttribute('data-value');
+  var activeBtn = document.querySelector('.curve-btn.active');
+  s.fade_curve_type = activeBtn ? activeBtn.textContent.trim() : 'Logarithmic';
+  var dds = document.querySelectorAll('.form-select');
+  s.load_next_song = dds[0] ? dds[0].options[dds[0].selectedIndex].text : '';
+  s.preload_buffer = dds[1] ? dds[1].options[dds[1].selectedIndex].text : '';
+  s.automix_trigger = dds[2] ? dds[2].options[dds[2].selectedIndex].text : '';
+  s.fallback_action = dds[3] ? dds[3].options[dds[3].selectedIndex].text : '';
+  var toggles = document.querySelectorAll('.toggle-sw');
+  s.missing_file_alert = toggles[0] && toggles[0].classList.contains('on') ? 'true' : 'false';
+  return s;
+}
+
+function collectAudioSettings(){
+  var s = {};
+  s.autocue_threshold = document.getElementById('slider-autocue').getAttribute('data-value');
+  var dds = document.querySelectorAll('.form-select');
+  s.autocue_scan_mode = dds[4] ? dds[4].options[dds[4].selectedIndex].text : '';
+  s.master_volume = document.getElementById('slider-master').getAttribute('data-value');
+  s.cue_volume = document.getElementById('slider-cue').getAttribute('data-value');
+  s.jingle_volume = document.getElementById('slider-jingle').getAttribute('data-value');
+  s.mic_volume = document.getElementById('slider-mic').getAttribute('data-value');
+  s.vu_decay_speed = dds[5] ? dds[5].options[dds[5].selectedIndex].text : '';
+  s.peak_hold_duration = dds[6] ? dds[6].options[dds[6].selectedIndex].text : '';
+  var toggles = document.querySelectorAll('.toggle-sw');
+  s.clip_indicator = toggles[1] && toggles[1].classList.contains('on') ? 'true' : 'false';
+  return s;
+}
+
+function collectStudioSettings(){
+  var s = {};
+  var selected = document.querySelector('.radio-option.selected');
+  s.cue_split_mode = selected ? selected.textContent.trim() : '';
+  var toggles = document.querySelectorAll('.toggle-sw');
+  s.show_crossfade_preview = toggles[2] && toggles[2].classList.contains('on') ? 'true' : 'false';
+  s.flash_mix_point = toggles[3] && toggles[3].classList.contains('on') ? 'true' : 'false';
+  s.audio_buffer_size = '256'; s.sample_rate = '44100';
+  s.bit_depth = '32-bit float'; s.audio_engine = 'WASAPI';
+  return s;
+}
+
+function saveBtn(btn, section){
+  var settings;
+  if(section === 'Save Transition Settings') settings = collectTransitionSettings();
+  else if(section === 'Save Audio Settings') settings = collectAudioSettings();
+  else settings = collectStudioSettings();
+
+  callBridgeAsync('save_studio_settings', [JSON.stringify(settings)], function(data){
+    var origText = btn.textContent;
+    if(data){
+      btn.textContent = 'Saved! Restart for engine changes.';
+      btn.style.background = '#059669';
+    } else {
+      btn.textContent = 'Save Failed!';
+      btn.style.background = '#F43F5E';
+    }
+    setTimeout(function(){ btn.textContent=origText; btn.style.background=''; }, 2500);
+  });
+}
+
+// ── Toast ────────────────────────────────────────
+function showToast(msg, success){
+  var t = document.getElementById('toast');
+  if(!t){ t=document.createElement('div'); t.id='toast';
+    t.style.cssText='position:fixed;bottom:60px;left:50%;transform:translateX(-50%);padding:10px 24px;border-radius:8px;font-size:12px;font-weight:600;z-index:999;transition:opacity 0.3s;pointer-events:none;';
+    document.body.appendChild(t); }
+  t.textContent=msg; t.style.background=success?'#10B981':'#F43F5E'; t.style.color='#fff'; t.style.opacity='1';
+  clearTimeout(t._timer); t._timer=setTimeout(function(){t.style.opacity='0';},3000);
+}
+
+// ── Init ────────────────────────────────────────
+initSliders();
+</script>
+</body>
+</html>

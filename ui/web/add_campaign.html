@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>New Campaign — RadioAI Studio Pro</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+body{overflow:hidden}
+body::before,body::after{display:none!important}
+.page-wrap{display:flex;flex-direction:column;height:100vh;position:relative;z-index:1}
+.page-header{display:flex;align-items:center;gap:12px;padding:12px 24px;background:var(--surf);border-bottom:1px solid var(--b1)}
+.page-icon{font-size:20px;color:var(--am)}
+.page-title{font-size:18px;font-weight:700;letter-spacing:1px}
+.page-subtitle{font-size:10px;color:var(--t3)}
+.auto-code{margin-left:auto;text-align:right;background:var(--card);padding:6px 12px;border-radius:var(--radius);border:1px solid var(--b1)}
+.auto-code-label{font-size:8px;color:var(--t3);letter-spacing:1px}
+.auto-code-val{font-family:'Roboto Mono',monospace;font-size:16px;font-weight:700;color:var(--am)}
+.close-btn{width:30px;height:30px;border-radius:50%;background:var(--card);border:1px solid var(--b1);display:flex;align-items:center;justify-content:center;color:var(--t2);font-size:14px;cursor:pointer;margin-left:12px}
+.close-btn:hover{background:var(--b1);color:var(--t1)}
+
+.page-body{flex:1;display:flex;overflow:hidden}
+.col-left{flex:1;padding:14px 24px;overflow-y:auto}
+.col-left::-webkit-scrollbar{width:6px}
+.col-left::-webkit-scrollbar-thumb{background:var(--b2);border-radius:3px}
+.col-right{width:320px;min-width:280px;border-left:1px solid var(--b1);padding:14px 20px;overflow-y:auto}
+.col-right::-webkit-scrollbar{width:6px}
+.col-right::-webkit-scrollbar-thumb{background:var(--b2);border-radius:3px}
+
+.form-row{display:flex;gap:12px;margin-bottom:10px}
+.form-row .form-group{flex:1}
+.form-group{margin-bottom:10px}
+.form-label{font-size:10px;color:var(--t3);margin-bottom:3px;text-transform:uppercase;letter-spacing:0.5px}
+.form-label .req{color:var(--rs)}
+.form-input{width:100%;padding:8px 12px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);color:var(--t1);font-size:12px;font-family:'Inter',sans-serif}
+.form-input:focus{outline:none;border-color:var(--am)}
+.form-input::placeholder{color:var(--t4)}
+.form-select{width:100%;padding:8px 12px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);color:var(--t2);font-size:12px;font-family:'Inter',sans-serif;appearance:none;cursor:pointer}
+.form-textarea{width:100%;padding:8px 12px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);color:var(--t1);font-size:12px;font-family:'Inter',sans-serif;resize:vertical;min-height:60px}
+
+.date-row{display:flex;gap:4px}
+.date-row .form-input{flex:1}
+.date-btn{padding:8px 12px;background:var(--card);border:1px solid var(--b1);color:var(--t2);border-radius:var(--radius);cursor:pointer;font-family:'Inter',sans-serif;font-size:12px}
+.date-btn:hover{background:var(--b1)}
+
+.section-title{font-size:10px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;padding:8px 0 6px;border-bottom:1px solid var(--b1);margin:8px 0 10px;border-left:3px solid;padding-left:10px}
+.section-title.am{color:var(--am);border-left-color:var(--am)}
+.section-title.gn{color:var(--gn);border-left-color:var(--gn)}
+.section-title.rs{color:var(--rs);border-left-color:var(--rs)}
+.section-title.p1{color:var(--p1);border-left-color:var(--p1)}
+
+/* Audio files table */
+.files-table{width:100%;margin-top:6px}
+.files-table th{background:var(--card);padding:6px 10px;font-size:10px;color:var(--t3);text-align:left;text-transform:uppercase}
+.files-table td{padding:8px 10px;font-size:11px;border-bottom:1px solid var(--b1);color:var(--t2)}
+.files-empty{padding:24px;text-align:center;color:var(--t3);font-size:12px;background:var(--card);border:1px dashed var(--b1);border-radius:var(--radius)}
+.file-actions-row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.act-btn{padding:7px 14px;border-radius:var(--radius);font-family:'Inter',sans-serif;font-size:11px;font-weight:600;cursor:pointer;border:1px solid}
+.act-add{background:transparent;border-color:var(--gn);color:var(--gn)}
+.act-add:hover{background:var(--gnD)}
+.act-stitch{background:transparent;border-color:var(--cy);color:var(--cy)}
+.act-stitch:hover{background:var(--cyD)}
+.act-sched{background:transparent;border-color:var(--p1);color:var(--p1)}
+.act-sched:hover{background:var(--p4)}
+
+/* Right panel sections */
+.avail-section{background:var(--gnD);border:1px solid var(--gn);border-radius:var(--radius);padding:12px;margin-bottom:12px}
+.avail-row{display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer}
+.avail-check{width:16px;height:16px;border-radius:4px;border:2px solid var(--b2);display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--gn)}
+.avail-check.active{background:var(--gnD);border-color:var(--gn)}
+.avail-label{font-size:12px;font-weight:600;color:var(--gn)}
+.avail-desc{font-size:10px;color:var(--t3)}
+
+.cat-pills{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.cat-pill{padding:8px 14px;border-radius:var(--radius);font-size:11px;font-weight:600;cursor:pointer;border:1px solid var(--b1);background:var(--card);color:var(--t3);transition:all 0.15s}
+.cat-pill.active{color:#fff;border-color:transparent}
+.cat-pill:hover{opacity:0.85}
+
+.contracted-total{background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);padding:10px 12px;margin-top:6px}
+.contracted-label{font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px}
+.contracted-val{font-family:'Roboto Mono',monospace;font-size:16px;font-weight:700;color:var(--am)}
+
+.ai-btn{display:block;width:100%;padding:12px;background:var(--p4);border:1px solid var(--p1);border-radius:var(--radius);color:var(--p1);font-size:12px;font-weight:600;cursor:pointer;font-family:'Inter',sans-serif;margin-top:14px;text-align:left}
+.ai-btn:hover{background:var(--p3)}
+.ai-btn-sub{font-size:10px;color:var(--t3);font-weight:400;margin-top:2px}
+
+/* Footer */
+.page-footer{display:flex;align-items:center;padding:10px 24px;background:var(--surf);border-top:1px solid var(--b1);gap:12px}
+.footer-note{font-size:10px;color:var(--t3);flex:1}
+.footer-note .req{color:var(--rs)}
+.btn-cancel{padding:8px 24px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);color:var(--t2);font-size:13px;font-weight:600;cursor:pointer;font-family:'Inter',sans-serif}
+.btn-cancel:hover{background:var(--b1);color:var(--t1)}
+.btn-save{padding:8px 24px;background:var(--p1);border:none;border-radius:var(--radius);color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:'Inter',sans-serif;display:flex;align-items:center;gap:6px}
+.btn-save:hover{background:var(--p2)}
+
+/* Date picker modal */
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:500;align-items:center;justify-content:center}
+.modal-overlay.visible{display:flex}
+.date-picker{width:480px;background:#0E1020;border:1px solid var(--b1);border-radius:12px;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,0.6)}
+.dp-header{padding:14px 20px;border-bottom:1px solid var(--b1);display:flex;align-items:center;justify-content:space-between}
+.dp-title{font-size:14px;font-weight:700;letter-spacing:1px}
+.dp-sub{font-size:10px;color:var(--t3);margin-top:2px}
+.dp-close{width:28px;height:28px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);color:var(--t2);cursor:pointer;font-size:14px}
+.dp-least{padding:10px 20px;background:var(--card);font-size:11px;color:var(--t3)}
+.dp-body{display:flex;padding:16px 20px;gap:20px}
+.dp-calendar{flex:1}
+.dp-nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.dp-nav button{background:var(--card);border:1px solid var(--b1);color:var(--t2);width:28px;height:28px;border-radius:var(--radius);cursor:pointer;font-size:14px}
+.dp-nav-title{font-size:14px;font-weight:700}
+.dp-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;font-size:11px}
+.dp-dayhead{text-align:center;color:var(--t3);padding:4px;font-weight:600}
+.dp-day{width:32px;height:32px;display:flex;align-items:center;justify-content:center;border-radius:50%;cursor:pointer;color:var(--t1);margin:0 auto}
+.dp-day:hover{background:var(--card)}
+.dp-day.disabled{color:var(--t4);cursor:default}
+.dp-day.disabled:hover{background:transparent}
+.dp-day.selected{background:var(--p1);color:#fff}
+.dp-day.empty{cursor:default}
+.dp-side{width:120px;display:flex;flex-direction:column;gap:6px}
+.dp-quick{padding:8px 14px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);color:var(--t2);font-size:11px;cursor:pointer;font-family:'Inter',sans-serif}
+.dp-quick:hover{background:var(--b1);color:var(--t1)}
+.dp-footer{padding:10px 20px;border-top:1px solid var(--b1);display:flex;align-items:center;gap:10px}
+.dp-selected{flex:1;font-size:11px;color:var(--t3);background:var(--card);padding:6px 12px;border-radius:var(--radius)}
+</style>
+</head>
+<body>
+<div class="page-wrap">
+
+  <div class="page-header">
+    <div class="page-icon">$</div>
+    <div>
+      <div class="page-title">NEW CAMPAIGN</div>
+      <div class="page-subtitle">Add a new advertising campaign</div>
+    </div>
+    <div class="auto-code">
+      <div class="auto-code-label">AUTO CODE</div>
+      <div class="auto-code-val" id="auto-code">------</div>
+    </div>
+    <div class="close-btn" onclick="cancelCampaign()">✕</div>
+  </div>
+
+  <div class="page-body">
+
+    <!-- LEFT SIDE -->
+    <div class="col-left">
+      <div class="form-group">
+        <div class="form-label">Spot General Title <span class="req">*</span></div>
+        <input class="form-input" type="text" id="camp-name" placeholder="Type campaign title...">
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <div class="form-label">Current Status</div>
+          <select class="form-select" id="camp-status">
+            <option>Active</option><option>Draft</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <div class="form-label">Programming Mode</div>
+          <select class="form-select" id="camp-mode">
+            <option>Weekly</option><option>Daily</option><option>Always On</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <div class="form-label">Ad Company</div>
+          <input class="form-input" type="text" id="camp-adco" placeholder="e.g. Coca Cola...">
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <div class="form-label">Start Date</div>
+          <div class="date-row">
+            <input class="form-input" type="text" id="camp-start" placeholder="Select date">
+            <button class="date-btn" onclick="openDatePicker('camp-start','Start Date','Choose campaign start date')">...</button>
+          </div>
+        </div>
+        <div class="form-group">
+          <div class="form-label">Expire Date</div>
+          <div class="date-row">
+            <input class="form-input" type="text" id="camp-end" value="Never" placeholder="Never">
+            <button class="date-btn" onclick="openDatePicker('camp-end','Expire Date','Choose campaign end date')">...</button>
+          </div>
+        </div>
+        <div class="form-group">
+          <div class="form-label">Category</div>
+          <select class="form-select" id="camp-category">
+            <option>Commercials</option><option>Station ID</option><option>Sponsor</option><option>News Break</option><option>Promo</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <div class="form-label">Client</div>
+          <input class="form-input" type="text" id="camp-client" placeholder="Client name...">
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <div class="form-label">Media Shop</div>
+          <input class="form-input" type="text" id="camp-mediashop" placeholder="Media agency...">
+        </div>
+        <div class="form-group">
+          <div class="form-label">Agreement Cost</div>
+          <input class="form-input" type="number" id="camp-cost" placeholder="0.0000" step="0.01">
+        </div>
+        <div class="form-group">
+          <div class="form-label">Priority</div>
+          <select class="form-select" id="camp-priority">
+            <option>Always</option><option>High</option><option selected>Medium</option><option>Low</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <div class="form-label">Playback Order</div>
+          <select class="form-select" id="camp-order">
+            <option>In Rotation</option><option>Sequential</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <div class="form-label">Comments</div>
+        <textarea class="form-textarea" id="camp-comments" placeholder="Created automatically — 04/10/2026"></textarea>
+      </div>
+
+      <div class="section-title am">AUDIO FILES</div>
+      <div id="files-container">
+        <div class="files-empty">No audio files added yet</div>
+      </div>
+      <div class="file-actions-row">
+        <button class="act-btn act-add" onclick="addAudioFile()">+ Add New File</button>
+        <button class="act-btn act-stitch">⚡ The Stitcher</button>
+        <button class="act-btn act-sched" onclick="openSpotProgramming()">📅 Spot Programming</button>
+      </div>
+    </div>
+
+    <!-- RIGHT SIDE -->
+    <div class="col-right">
+      <div class="section-title gn">AVAILABILITY</div>
+      <div class="avail-section">
+        <div class="avail-row" onclick="setAvail('active')">
+          <div class="avail-check active" id="avail-active">✓</div>
+          <div><div class="avail-label">Active</div><div class="avail-desc">Campaign will run on schedule</div></div>
+        </div>
+        <div class="avail-row" onclick="setAvail('draft')">
+          <div class="avail-check" id="avail-draft"></div>
+          <div><div class="avail-label" style="color:var(--t2)">Draft (Not scheduled yet)</div></div>
+        </div>
+      </div>
+
+      <div class="section-title am">CAMPAIGN TYPE</div>
+      <div class="cat-pills" id="cat-pills">
+        <div class="cat-pill active" style="background:var(--am);border-color:var(--am)" data-cat="Commercials">Commercials</div>
+        <div class="cat-pill" style="border-color:var(--cy);color:var(--cy)" data-cat="Station ID">Station ID</div>
+        <div class="cat-pill" style="border-color:var(--am);color:var(--am)" data-cat="Sponsor">Sponsor</div>
+        <div class="cat-pill" style="border-color:var(--rs);color:var(--rs)" data-cat="News Break">News Break</div>
+        <div class="cat-pill" style="border-color:var(--p1);color:var(--p1)" data-cat="Promo">Promo</div>
+      </div>
+
+      <div class="section-title gn">CONTRACTED PLAYS</div>
+      <div class="form-row">
+        <div class="form-group">
+          <div class="form-label">Plays per day</div>
+          <input class="form-input" type="number" id="camp-plays-day" value="3" oninput="calcTotal()">
+        </div>
+        <div class="form-group">
+          <div class="form-label">Days of week</div>
+          <input class="form-input" type="text" id="camp-days" value="Mon-Fri" oninput="calcTotal()">
+        </div>
+      </div>
+      <div class="contracted-total">
+        <div class="contracted-label">Total contracted plays</div>
+        <div class="contracted-val" id="camp-total">90 plays (30 days)</div>
+      </div>
+
+      <div class="section-title rs">BREAK PRIORITY</div>
+      <div class="form-row">
+        <div class="form-group">
+          <div class="form-label">Min gap between plays</div>
+          <select class="form-select" id="camp-mingap"><option>15 minutes</option><option selected>30 minutes</option><option>60 minutes</option><option>120 minutes</option></select>
+        </div>
+        <div class="form-group">
+          <div class="form-label">Max per break</div>
+          <select class="form-select" id="camp-maxbreak"><option selected>1 spot</option><option>2 spots</option><option>3 spots</option></select>
+        </div>
+      </div>
+
+      <button class="ai-btn">
+        ✦ AI Auto-fill Campaign
+        <div class="ai-btn-sub">Let AI suggest optimal break times</div>
+      </button>
+    </div>
+
+  </div>
+
+  <div class="page-footer">
+    <div class="footer-note"><span class="req">*</span> Required fields</div>
+    <button class="btn-cancel" onclick="cancelCampaign()">Cancel</button>
+    <button class="btn-save" onclick="saveCampaign()">✓ Save</button>
+  </div>
+
+</div>
+
+<!-- Date Picker Modal -->
+<div class="modal-overlay" id="dp-modal">
+  <div class="date-picker">
+    <div class="dp-header">
+      <div>
+        <div class="dp-title" id="dp-title">SELECT EXPIRE DATE</div>
+        <div class="dp-sub" id="dp-sub">Choose campaign end date</div>
+      </div>
+      <button class="dp-close" onclick="closeDatePicker()">✕</button>
+    </div>
+    <div class="dp-least" id="dp-least">Least Date: Today</div>
+    <div class="dp-body">
+      <div class="dp-calendar">
+        <div class="dp-nav">
+          <button onclick="dpPrev()">‹</button>
+          <div class="dp-nav-title" id="dp-month">April 2026</div>
+          <button onclick="dpNext()">›</button>
+        </div>
+        <div class="dp-grid" id="dp-grid"></div>
+      </div>
+      <div class="dp-side">
+        <button class="dp-quick" onclick="dpQuick('today')">Today</button>
+        <button class="dp-quick" onclick="dpQuick('month')">In One Month</button>
+        <button class="dp-quick" onclick="dpQuick('never')">Never</button>
+      </div>
+    </div>
+    <div class="dp-footer">
+      <div class="dp-selected" id="dp-selected">Selected: —</div>
+      <button class="btn-cancel" onclick="closeDatePicker()">Cancel</button>
+      <button class="btn-save" onclick="dpConfirm()">✓ OK</button>
+    </div>
+  </div>
+</div>
+
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script src="js/bridge_helper.js"></script>
+<script>
+var selectedCategory = 'Commercials';
+var availability = 'active';
+var audioFiles = [];
+var editCampaignId = null;
+var _dpField = null;
+var _dpDate = null;
+var _dpViewMonth = new Date().getMonth();
+var _dpViewYear = new Date().getFullYear();
+
+onBridgeReady(function(){
+  // 1. Check edit mode (returning from spots_library to edit)
+  var editId = sessionStorage.getItem('edit_campaign_id');
+  if(editId){
+    sessionStorage.removeItem('edit_campaign_id');
+    editCampaignId = parseInt(editId);
+    loadCampaignForEdit(editCampaignId);
+  }
+  // 2. Check if returning from spot_programming (restore form)
+  var saved = sessionStorage.getItem('campaign_form_data');
+  if(saved){
+    try { restoreFormData(JSON.parse(saved)); } catch(e){}
+  }
+  calcTotal();
+});
+
+function loadCampaignForEdit(id){
+  callBridgeAsync('get_campaign_details', [id], function(d){
+    if(!d) return;
+    document.querySelector('.page-title').textContent = 'EDIT CAMPAIGN';
+    document.getElementById('camp-name').value = d.name || '';
+    document.getElementById('camp-adco').value = d.description || '';
+    document.getElementById('camp-start').value = d.start_date || '';
+    document.getElementById('camp-end').value = d.end_date || 'Never';
+    if(d.programming_mode) document.getElementById('camp-mode').value = d.programming_mode;
+    if(d.playback_order) document.getElementById('camp-order').value = d.playback_order;
+    if(d.priority) document.getElementById('camp-priority').value = d.priority;
+    if(d.category) {
+      document.getElementById('camp-category').value = d.category;
+      selectCategoryByName(d.category);
+    }
+    document.getElementById('camp-plays-day').value = d.contracted_plays_per_day || 3;
+    // Load audio files
+    if(d.spot_files){
+      audioFiles = d.spot_files.map(function(sf){
+        return {id: sf.id, filename: sf.filename, file_path: sf.file_path, duration_ms: sf.duration_ms};
+      });
+      renderFiles();
+    }
+    var btn = document.querySelector('.btn-save');
+    btn.textContent = '✓ Update';
+    calcTotal();
+  });
+}
+
+// Category pills
+document.querySelectorAll('.cat-pill').forEach(function(p){
+  p.addEventListener('click', function(){
+    document.querySelectorAll('.cat-pill').forEach(function(x){ x.classList.remove('active'); x.style.background = ''; x.style.color = x.style.borderColor; });
+    p.classList.add('active');
+    var color = p.getAttribute('data-cat');
+    var colorMap = {'Commercials':'#F59E0B','Station ID':'#06B6D4','Sponsor':'#F59E0B','News Break':'#F43F5E','Promo':'#8B5CF6'};
+    var bg = colorMap[color] || '#F59E0B';
+    p.style.background = bg;
+    p.style.color = '#fff';
+    p.style.borderColor = bg;
+    selectedCategory = p.getAttribute('data-cat');
+    document.getElementById('camp-category').value = selectedCategory;
+  });
+});
+
+function selectCategoryByName(name){
+  var found = false;
+  document.querySelectorAll('.cat-pill').forEach(function(p){
+    if(p.getAttribute('data-cat') === name){ p.click(); found = true; }
+  });
+  if(!found) selectedCategory = name;
+}
+
+// Availability
+function setAvail(which){
+  availability = which;
+  document.getElementById('avail-active').classList.toggle('active', which === 'active');
+  document.getElementById('avail-active').innerHTML = which === 'active' ? '✓' : '';
+  document.getElementById('avail-draft').classList.toggle('active', which === 'draft');
+  document.getElementById('avail-draft').innerHTML = which === 'draft' ? '✓' : '';
+}
+
+// Total contracted plays calculation
+function calcTotal(){
+  var perDay = parseInt(document.getElementById('camp-plays-day').value) || 0;
+  var days = document.getElementById('camp-days').value || '';
+  var dayCount = /mon-fri/i.test(days) ? 5 : /mon-sun|all/i.test(days) ? 7 : /sat-sun|weekend/i.test(days) ? 2 : 5;
+  var weeks = 4; // assume ~30 days
+  var total = perDay * dayCount * weeks;
+  document.getElementById('camp-total').textContent = total + ' plays (' + (dayCount * weeks) + ' days)';
+}
+
+// Audio files
+function renderFiles(){
+  var container = document.getElementById('files-container');
+  if(audioFiles.length === 0){
+    container.innerHTML = '<div class="files-empty">No audio files added yet</div>';
+    return;
+  }
+  var html = '<table class="files-table"><thead><tr><th>File Name</th><th>Duration</th><th>Status</th><th>Actions</th></tr></thead><tbody>';
+  audioFiles.forEach(function(f, i){
+    var secs = Math.floor((f.duration_ms||0)/1000);
+    var dur = Math.floor(secs/60)+':'+String(secs%60).padStart(2,'0');
+    html += '<tr><td>'+f.filename+'</td><td>'+dur+'</td><td style="color:var(--gn)">Active</td>'
+      + '<td><span style="cursor:pointer;color:var(--rs)" onclick="removeFile('+i+')">✕</span></td></tr>';
+  });
+  html += '</tbody></table>';
+  container.innerHTML = html;
+}
+
+function addAudioFile(){
+  callBridgeAsync('browse_audio_file', [], function(path){
+    if(!path) return;
+    var filename = path.split('\\').pop().split('/').pop();
+    audioFiles.push({filename: filename, file_path: path, duration_ms: 30000});
+    renderFiles();
+  });
+}
+
+function removeFile(idx){
+  audioFiles.splice(idx, 1);
+  renderFiles();
+}
+
+// Save campaign (+ schedule + files + session cleanup)
+function saveCampaign(){
+  var name = document.getElementById('camp-name').value.trim();
+  if(!name){ alert('Campaign name is required!'); return; }
+  var payload = {
+    name: name,
+    category: document.getElementById('camp-category').value,
+    priority: document.getElementById('camp-priority').value,
+    programming_mode: document.getElementById('camp-mode').value,
+    playback_order: document.getElementById('camp-order').value,
+    start_date: document.getElementById('camp-start').value,
+    end_date: document.getElementById('camp-end').value || 'Never',
+    is_active: availability === 'active',
+    description: document.getElementById('camp-adco').value + ' / ' + document.getElementById('camp-client').value
+  };
+  if(editCampaignId) payload.id = editCampaignId;
+
+  callBridgeAsync('save_campaign', [JSON.stringify(payload)], function(data){
+    if(!data){ alert('❌ Failed to save campaign'); return; }
+    var newId = data.id || editCampaignId;
+
+    var finishUp = function(){
+      // Save any pending break schedule from sessionStorage
+      var savedSchedule = sessionStorage.getItem('spot_prog_schedule');
+      var onDone = function(){
+        sessionStorage.removeItem('campaign_form_data');
+        sessionStorage.removeItem('spot_prog_schedule');
+        sessionStorage.removeItem('spot_prog_campaign');
+        sessionStorage.setItem('last_saved_campaign_id', String(newId));
+        window.location.href = 'spots_library.html';
+      };
+      if(savedSchedule){
+        try {
+          var slots = JSON.parse(savedSchedule);
+          callBridgeAsync('save_break_schedule', [JSON.stringify({campaign_id: newId, schedule: slots})], function(){ onDone(); });
+        } catch(e){ onDone(); }
+      } else {
+        onDone();
+      }
+    };
+
+    // Save audio files that are new (no id)
+    var newFiles = audioFiles.filter(function(f){ return !f.id; });
+    if(newFiles.length === 0){
+      finishUp();
+      return;
+    }
+    var done = 0;
+    newFiles.forEach(function(f){
+      var spotPayload = JSON.stringify({campaign_id: newId, filename: f.filename, file_path: f.file_path, duration_ms: f.duration_ms});
+      callBridgeAsync('add_spot_file', [spotPayload], function(){
+        done++;
+        if(done === newFiles.length) finishUp();
+      });
+    });
+  });
+}
+
+function cancelCampaign(){
+  sessionStorage.removeItem('campaign_form_data');
+  sessionStorage.removeItem('spot_prog_schedule');
+  sessionStorage.removeItem('spot_prog_campaign');
+  window.location.href = 'spots_library.html';
+}
+
+// ── Form persistence helpers ────────────────────
+function collectFormData(){
+  return {
+    name: document.getElementById('camp-name').value,
+    status: document.getElementById('camp-status').value,
+    mode: document.getElementById('camp-mode').value,
+    ad_company: document.getElementById('camp-adco').value,
+    start_date: document.getElementById('camp-start').value,
+    end_date: document.getElementById('camp-end').value,
+    category: document.getElementById('camp-category').value,
+    client: document.getElementById('camp-client').value,
+    media_shop: document.getElementById('camp-mediashop').value,
+    agreement_cost: document.getElementById('camp-cost').value,
+    priority: document.getElementById('camp-priority').value,
+    order: document.getElementById('camp-order').value,
+    comments: document.getElementById('camp-comments').value,
+    plays_per_day: document.getElementById('camp-plays-day').value,
+    days_of_week: document.getElementById('camp-days').value,
+    min_gap: document.getElementById('camp-mingap').value,
+    max_per_break: document.getElementById('camp-maxbreak').value,
+    audio_files: audioFiles,
+    campaign_id: editCampaignId || null,
+    selected_category: selectedCategory,
+    availability: availability
+  };
+}
+
+function restoreFormData(data){
+  if(!data) return;
+  var setVal = function(id, val){ if(val!==undefined){ var el=document.getElementById(id); if(el) el.value=val; } };
+  setVal('camp-name', data.name);
+  setVal('camp-status', data.status);
+  setVal('camp-mode', data.mode);
+  setVal('camp-adco', data.ad_company);
+  setVal('camp-start', data.start_date);
+  setVal('camp-end', data.end_date);
+  setVal('camp-category', data.category);
+  setVal('camp-client', data.client);
+  setVal('camp-mediashop', data.media_shop);
+  setVal('camp-cost', data.agreement_cost);
+  setVal('camp-priority', data.priority);
+  setVal('camp-order', data.order);
+  setVal('camp-comments', data.comments);
+  setVal('camp-plays-day', data.plays_per_day);
+  setVal('camp-days', data.days_of_week);
+  setVal('camp-mingap', data.min_gap);
+  setVal('camp-maxbreak', data.max_per_break);
+  if(data.audio_files){ audioFiles = data.audio_files; renderFiles(); }
+  if(data.selected_category){ selectCategoryByName(data.selected_category); }
+  if(data.availability){ setAvail(data.availability); }
+  if(data.campaign_id){ editCampaignId = data.campaign_id; }
+  calcTotal();
+}
+
+// Spot Programming — save form state, then navigate
+function openSpotProgramming(){
+  var name = document.getElementById('camp-name').value.trim() || 'New Campaign';
+  // Save entire form state
+  sessionStorage.setItem('campaign_form_data', JSON.stringify(collectFormData()));
+  // Save context for spot_programming page
+  sessionStorage.setItem('spot_prog_campaign', JSON.stringify({id: editCampaignId || 0, name: name}));
+  window.location.href = 'spot_programming.html';
+}
+
+// ═══════ DATE PICKER ═══════
+function openDatePicker(fieldId, title, sub){
+  _dpField = fieldId;
+  _dpDate = null;
+  var existing = document.getElementById(fieldId).value;
+  if(existing && existing !== 'Never'){
+    var d = new Date(existing);
+    if(!isNaN(d)){ _dpDate = d; _dpViewMonth = d.getMonth(); _dpViewYear = d.getFullYear(); }
+  }
+  document.getElementById('dp-title').textContent = 'SELECT ' + title.toUpperCase();
+  document.getElementById('dp-sub').textContent = sub;
+  document.getElementById('dp-least').textContent = 'Least Date: ' + formatDate(new Date()) + '  12:00 AM';
+  renderDpCalendar();
+  document.getElementById('dp-modal').classList.add('visible');
+}
+
+function closeDatePicker(){
+  document.getElementById('dp-modal').classList.remove('visible');
+}
+
+function dpPrev(){ _dpViewMonth--; if(_dpViewMonth < 0){ _dpViewMonth = 11; _dpViewYear--; } renderDpCalendar(); }
+function dpNext(){ _dpViewMonth++; if(_dpViewMonth > 11){ _dpViewMonth = 0; _dpViewYear++; } renderDpCalendar(); }
+
+function dpQuick(which){
+  if(which === 'today'){ _dpDate = new Date(); _dpViewMonth = _dpDate.getMonth(); _dpViewYear = _dpDate.getFullYear(); renderDpCalendar(); }
+  else if(which === 'month'){ var d = new Date(); d.setMonth(d.getMonth()+1); _dpDate = d; _dpViewMonth = d.getMonth(); _dpViewYear = d.getFullYear(); renderDpCalendar(); }
+  else if(which === 'never'){ document.getElementById(_dpField).value = 'Never'; closeDatePicker(); }
+}
+
+function renderDpCalendar(){
+  var months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  document.getElementById('dp-month').textContent = months[_dpViewMonth] + ' ' + _dpViewYear;
+  var grid = document.getElementById('dp-grid');
+  grid.innerHTML = '';
+  var dayHeads = ['Mo','Tu','We','Th','Fr','Sa','Su'];
+  dayHeads.forEach(function(d){
+    var h = document.createElement('div'); h.className = 'dp-dayhead'; h.textContent = d; grid.appendChild(h);
+  });
+  var first = new Date(_dpViewYear, _dpViewMonth, 1);
+  var startDay = (first.getDay() + 6) % 7; // Monday=0
+  var daysInMonth = new Date(_dpViewYear, _dpViewMonth + 1, 0).getDate();
+  var today = new Date(); today.setHours(0,0,0,0);
+  for(var i = 0; i < startDay; i++){ var e = document.createElement('div'); e.className = 'dp-day empty'; grid.appendChild(e); }
+  for(var d = 1; d <= daysInMonth; d++){
+    var dayEl = document.createElement('div');
+    dayEl.className = 'dp-day';
+    dayEl.textContent = d;
+    var dayDate = new Date(_dpViewYear, _dpViewMonth, d);
+    if(dayDate < today){ dayEl.classList.add('disabled'); }
+    else {
+      (function(dt){
+        dayEl.onclick = function(){
+          _dpDate = dt;
+          renderDpCalendar();
+          document.getElementById('dp-selected').textContent = 'Selected: ' + formatDate(dt) + '  23:59';
+        };
+      })(dayDate);
+    }
+    if(_dpDate && dayDate.getTime() === new Date(_dpDate).setHours(0,0,0,0)){ dayEl.classList.add('selected'); }
+    grid.appendChild(dayEl);
+  }
+  if(_dpDate){ document.getElementById('dp-selected').textContent = 'Selected: ' + formatDate(_dpDate) + '  23:59'; }
+}
+
+function dpConfirm(){
+  if(!_dpDate){ closeDatePicker(); return; }
+  var y = _dpDate.getFullYear();
+  var m = String(_dpDate.getMonth() + 1).padStart(2, '0');
+  var d = String(_dpDate.getDate()).padStart(2, '0');
+  document.getElementById(_dpField).value = y + '-' + m + '-' + d;
+  closeDatePicker();
+}
+
+function formatDate(d){
+  var days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  var months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  return days[d.getDay()] + ', ' + d.getDate() + ' ' + months[d.getMonth()] + ' ' + d.getFullYear();
+}
+
+// Init defaults
+setAvail('active');
+document.getElementById('camp-start').value = new Date().toISOString().slice(0,10);
+</script>
+</body>
+</html>

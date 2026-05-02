@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Instant Jingles — RadioAI Studio Pro</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+/* ── Left Panel: Pallets ──────────────────────────── */
+.pallet-list{padding:8px 10px;border-bottom:1px solid var(--b1)}
+.pallet-item{background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);padding:10px 12px;margin-bottom:6px;cursor:pointer;transition:border-color 0.15s}
+.pallet-item:hover{border-color:var(--cy)}
+.pallet-item.active{border-color:var(--cy);background:var(--cyD)}
+.pallet-name{font-size:13px;font-weight:700}
+.pallet-meta{font-size:10px;color:var(--t3);margin-top:2px}
+
+.pallet-settings{padding:10px 14px}
+.ps-btn{display:block;width:100%;padding:6px 10px;border-radius:var(--radius);font-family:'Inter',sans-serif;font-size:11px;font-weight:600;cursor:pointer;margin-bottom:5px;text-align:left}
+.ps-btn-teal{background:var(--tl);border:none;color:#fff}
+.ps-btn-teal:hover{opacity:0.85}
+.ps-btn-cyan{background:transparent;border:1px solid var(--cy);color:var(--cy)}
+.ps-btn-cyan:hover{background:var(--cyD)}
+.ps-btn-amber{background:transparent;border:1px solid var(--am);color:var(--am)}
+.ps-btn-amber:hover{background:var(--amD)}
+.ps-btn-rose{background:transparent;border:1px solid var(--rs);color:var(--rs)}
+.ps-btn-rose:hover{background:var(--rsD)}
+
+.output-section{padding:10px 14px;margin-top:auto;border-top:1px solid var(--b1)}
+.output-label{font-size:9px;font-weight:600;color:var(--t3);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px}
+
+/* ── Center: Pad Grid ─────────────────────────────── */
+.grid-container{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.pallet-tabs{display:flex;padding:6px 12px;gap:4px;border-bottom:1px solid var(--b1);background:var(--surf);overflow-x:auto;min-height:38px;align-items:center}
+.pallet-tab{padding:5px 14px;font-size:11px;font-weight:600;border-radius:var(--radius);cursor:pointer;white-space:nowrap;background:transparent;border:1px solid var(--b1);color:var(--t2);transition:all 0.15s}
+.pallet-tab:hover{border-color:var(--cy);color:var(--t1)}
+.pallet-tab.active{background:var(--cy);color:#fff;border-color:var(--cy)}
+.pallet-add{width:28px;height:28px;border-radius:50%;background:var(--gn);border:none;color:#fff;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.pallet-add:hover{opacity:0.85}
+.search-box{margin-left:auto;padding:4px 10px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);color:var(--t1);font-size:11px;font-family:'Inter',sans-serif;width:120px}
+.search-box:focus{outline:none;border-color:var(--cy)}
+
+.pad-grid{flex:1;display:grid;grid-template-columns:repeat(5,1fr);grid-template-rows:repeat(6,1fr);gap:6px;padding:10px;overflow:auto}
+
+.pad{border-radius:var(--radius-lg);padding:10px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;border:2px solid transparent;transition:border-color 0.15s,transform 0.1s;position:relative;min-height:80px}
+.pad:hover{border-color:rgba(255,255,255,0.3);transform:scale(1.02)}
+.pad:active{transform:scale(0.97)}
+.pad-label{font-size:15px;font-weight:700;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,0.4)}
+.pad-dur{font-family:'Roboto Mono',monospace;font-size:10px;color:rgba(255,255,255,0.7);margin-top:auto}
+.pad-new{border:2px dashed var(--b2);background:transparent !important;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:4px}
+.pad-new-label{font-size:12px;font-weight:600;color:var(--cy)}
+.pad-new-sub{font-size:9px;color:var(--t3)}
+
+/* Pad controls bar */
+.pad-controls{display:flex;align-items:center;gap:6px;padding:6px 12px;background:var(--surf);border-top:1px solid var(--b1);min-height:38px;flex-wrap:wrap}
+.ctrl-btn{padding:4px 10px;border-radius:var(--radius);font-family:'Inter',sans-serif;font-size:10px;font-weight:600;cursor:pointer;border:1px solid var(--b1);background:var(--card);color:var(--t2);display:flex;align-items:center;gap:4px;white-space:nowrap}
+.ctrl-btn:hover{background:var(--b1);color:var(--t1)}
+.ctrl-btn-up{color:var(--gn)}
+.ctrl-btn-down{color:var(--am)}
+.ctrl-btn-stop{color:var(--rs)}
+.ctrl-btn-auto{color:#fff;background:var(--gn);border-color:var(--gn)}
+
+/* ── Right Panel: Pad Editor ──────────────────────── */
+.editor-header{padding:12px 14px;border-bottom:1px solid var(--b1)}
+.editor-title{font-size:13px;font-weight:700}
+.editor-sub{font-size:10px;color:var(--t3)}
+.editor-preview{display:flex;align-items:center;gap:12px;padding:14px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius-lg);margin:12px 14px}
+.editor-pad-preview{width:60px;height:60px;border-radius:var(--radius);display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:700;color:#fff}
+.editor-pad-info{display:flex;flex-direction:column;gap:2px}
+.editor-pad-name{font-size:16px;font-weight:700}
+.editor-pad-dur{font-family:'Roboto Mono',monospace;font-size:12px;color:var(--t2)}
+.color-dots{display:flex;gap:6px;margin-top:4px}
+.color-dot{width:18px;height:18px;border-radius:50%;cursor:pointer;border:2px solid transparent;transition:border-color 0.15s}
+.color-dot:hover,.color-dot.active{border-color:#fff}
+
+.editor-fields{padding:12px 14px}
+.ef-group{margin-bottom:10px}
+.ef-label{font-size:9px;color:var(--t3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px}
+.ef-value{font-size:12px;color:var(--t1);background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);padding:6px 10px;width:100%}
+
+.editor-actions{display:flex;gap:8px;padding:0 14px;margin-bottom:12px}
+.ea-btn{flex:1;padding:6px;border-radius:var(--radius);font-family:'Inter',sans-serif;font-size:11px;font-weight:600;cursor:pointer;text-align:center}
+.ea-assign{background:var(--gn);border:none;color:#fff}
+.ea-assign:hover{opacity:0.85}
+.ea-clear{background:transparent;border:1px solid var(--rs);color:var(--rs)}
+.ea-clear:hover{background:var(--rsD)}
+
+.ea-test{display:block;width:calc(100% - 28px);margin:0 14px 12px;padding:8px;border-radius:var(--radius);font-family:'Inter',sans-serif;font-size:12px;font-weight:600;cursor:pointer;text-align:center;background:transparent;border:1px solid var(--p1);color:var(--p1)}
+.ea-test:hover{background:var(--p4)}
+
+.ai-note{margin:0 14px;padding:10px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius)}
+.ai-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
+.ai-title{font-size:11px;font-weight:600;color:var(--p1)}
+.ai-desc{font-size:10px;color:var(--t3);margin-top:4px}
+</style>
+</head>
+<body>
+
+<!-- ═══ HEADER ═══ -->
+<div class="header">
+  <div class="logo" onclick="goBack()">
+    <div class="logo-icon">((●))</div>
+    <div class="logo-text"><div class="logo-title">RadioAI</div><div class="logo-sub">STUDIO PRO</div></div>
+  </div>
+  <div class="breadcrumb">
+    <a onclick="goBack()">Control Panel</a><span class="bc-sep">›</span>
+    <a onclick="goBack()">Libraries</a><span class="bc-sep">›</span>
+    <span class="active" style="color:var(--cy)">Instant Jingles</span>
+  </div>
+  <div class="page-title-area">
+    <div class="page-title">Instant Jingles</div>
+    <div class="page-subtitle">Live broadcast pads — manage pallets and button assignments</div>
+  </div>
+  <div class="header-spacer"></div>
+  <div style="display:flex;flex-direction:column;align-items:center;gap:1px">
+    <div class="clock-time" id="clock-time">00:00:00</div>
+    <div class="clock-date" id="clock-date"></div>
+  </div>
+  <div class="station-box">
+    <div class="station-label">ACTIVE STATION</div>
+    <div class="station-name">KISS FM 91.5</div>
+    <div class="station-loc">Jaipur, Rajasthan</div>
+  </div>
+  <button class="open-studio-btn">▶ Open Studio</button>
+</div>
+
+<!-- ═══ MAIN ═══ -->
+<div class="main">
+
+  <!-- LEFT: PALLETS -->
+  <div class="left-panel">
+    <div class="lp-header">
+      <div class="lp-count" style="font-size:11px;font-weight:600">PALLETS</div>
+    </div>
+    <div class="pallet-list">
+      <div class="pallet-item active" onclick="selectPallet(0)">
+        <div class="pallet-name">KISS MAIN</div>
+        <div class="pallet-meta">5×6 grid • DJ Kavish</div>
+      </div>
+      <div class="pallet-item" onclick="selectPallet(1)">
+        <div class="pallet-name">DJ VAS</div>
+        <div class="pallet-meta">3×4 grid • DJ Vas</div>
+      </div>
+      <div class="pallet-item" onclick="selectPallet(2)">
+        <div class="pallet-name">LATE NIGHT</div>
+        <div class="pallet-meta">4×4 grid • Night Show</div>
+      </div>
+      <div class="pallet-item" onclick="selectPallet(3)">
+        <div class="pallet-name">TOP 30</div>
+        <div class="pallet-meta">5×3 grid • Chart Show</div>
+      </div>
+      <div class="pallet-item" onclick="selectPallet(4)">
+        <div class="pallet-name">VALAS</div>
+        <div class="pallet-meta">3×3 grid • Weekend</div>
+      </div>
+    </div>
+    <div class="pallet-settings">
+      <div class="lp-section-title">PALLET SETTINGS</div>
+      <button class="ps-btn ps-btn-teal">✎ Rename Pallet</button>
+      <button class="ps-btn ps-btn-cyan">⊞ Edit Grid Size</button>
+      <button class="ps-btn ps-btn-amber">♪ Audio Output</button>
+      <button class="ps-btn ps-btn-rose">× Delete Pallet</button>
+    </div>
+    <div class="output-section">
+      <div class="output-label">OUTPUT ROUTING</div>
+      <select class="lp-select">
+        <option>Output 3 — Soundcard B</option>
+        <option>Output 1 — Main</option>
+        <option>Output 2 — Soundcard A</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- CENTER: PAD GRID -->
+  <div class="grid-container">
+    <div class="pallet-tabs" id="pallet-tabs">
+      <div class="pallet-tab active" onclick="selectPalletTab(0,this)">KISS MAIN</div>
+      <div class="pallet-tab" onclick="selectPalletTab(1,this)">DJ VAS</div>
+      <div class="pallet-tab" onclick="selectPalletTab(2,this)">LATE NIGHT</div>
+      <div class="pallet-tab" onclick="selectPalletTab(3,this)">TOP 30</div>
+      <div class="pallet-tab" onclick="selectPalletTab(4,this)">VALAS</div>
+      <input class="search-box" type="text" placeholder="Search...">
+    </div>
+    <div class="pad-grid" id="pad-grid"></div>
+    <div class="pad-controls">
+      <button class="ctrl-btn ctrl-btn-up">▲ Up</button>
+      <button class="ctrl-btn ctrl-btn-down">▼ Down</button>
+      <button class="ctrl-btn ctrl-btn-stop">● Stop All</button>
+      <button class="ctrl-btn ctrl-btn-auto">■ AutoGain</button>
+      <button class="ctrl-btn">≈ MixFade</button>
+      <button class="ctrl-btn">↻ Loop</button>
+      <button class="ctrl-btn">⊟ Latch</button>
+    </div>
+  </div>
+
+  <!-- RIGHT: PAD EDITOR -->
+  <div class="right-panel">
+    <div class="editor-header">
+      <div class="editor-title" id="ed-title">PAD EDITOR — N30</div>
+      <div class="editor-sub">Right-click any pad to edit</div>
+    </div>
+    <div class="rp-content">
+      <div class="editor-preview" id="ed-preview">
+        <div class="editor-pad-preview" id="ed-pad-color" style="background:var(--cy)">
+          <span id="ed-pad-label">N30</span>
+        </div>
+        <div class="editor-pad-info">
+          <div class="editor-pad-name" id="ed-pad-name">N30</div>
+          <div class="editor-pad-dur" id="ed-pad-dur">02.2s</div>
+          <div class="color-dots">
+            <div class="color-dot active" style="background:#06B6D4" onclick="setPadColor('#06B6D4')"></div>
+            <div class="color-dot" style="background:#8B5CF6" onclick="setPadColor('#8B5CF6')"></div>
+            <div class="color-dot" style="background:#10B981" onclick="setPadColor('#10B981')"></div>
+            <div class="color-dot" style="background:#F59E0B" onclick="setPadColor('#F59E0B')"></div>
+            <div class="color-dot" style="background:#F43F5E" onclick="setPadColor('#F43F5E')"></div>
+            <div class="color-dot" style="background:#EC4899" onclick="setPadColor('#EC4899')"></div>
+            <div class="color-dot" style="background:#14B8A6" onclick="setPadColor('#14B8A6')"></div>
+          </div>
+        </div>
+      </div>
+      <div class="editor-fields">
+        <div class="ef-group"><div class="ef-label">Pad Label</div><div class="ef-value" id="ed-label">N30</div></div>
+        <div class="ef-group"><div class="ef-label">Audio File</div><div class="ef-value" id="ed-file">KISS_Main_Ident.mp3</div></div>
+        <div class="ef-group"><div class="ef-label">Duration</div><div class="ef-value" id="ed-dur">02.2s (auto)</div></div>
+        <div class="ef-group"><div class="ef-label">Output</div><div class="ef-value">Output 3 — Soundcard B</div></div>
+        <div class="ef-group"><div class="ef-label">Volume</div><div class="ef-value">100%</div></div>
+        <div class="ef-group"><div class="ef-label">Behaviour</div><div class="ef-value">Play once (default)</div></div>
+      </div>
+      <div class="editor-actions">
+        <button class="ea-btn ea-assign">■ Assign Audio File</button>
+        <button class="ea-btn ea-clear">× Clear Pad</button>
+      </div>
+      <button class="ea-test">▶ Test / Preview Pad</button>
+      <div class="ai-note">
+        <div><span class="ai-dot" style="background:var(--p1)"></span><span class="ai-title">✦ AI: This pad used 24x in last 7 days</span></div>
+        <div class="ai-desc">Suggest restocking with similar energy jingles when this library runs low</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ═══ STATUS BAR ═══ -->
+<div class="status-bar">
+  <div class="status-indicator"><span class="status-dot" style="background:var(--p1);box-shadow:0 0 4px var(--p1)"></span>AUTO MODE</div>
+  <div class="status-indicator"><span class="status-dot" style="background:var(--gn);box-shadow:0 0 4px var(--gn)"></span>LIVE READY</div>
+  <div class="status-indicator"><span class="status-dot" style="background:var(--cy);box-shadow:0 0 4px var(--cy)"></span><b>9 Instant Jingles</b></div>
+  <div class="status-spacer"></div>
+  <div class="status-info">RadioAI Studio v1.0</div>
+  <button class="open-studio-btn" style="margin-left:8px;padding:6px 14px;font-size:11px">▶ Open Studio</button>
+</div>
+
+<!-- ═══ JS ═══ -->
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script src="js/bridge_helper.js"></script>
+<script>
+let selectedPad = 0;
+
+const PAD_COLORS = ['#06B6D4','#8B5CF6','#10B981','#F59E0B','#F43F5E','#14B8A6','#EC4899','#6D28D9'];
+
+const PADS = [];
+for(let i=30; i>=1; i--){
+  const hasFile = i > 2 && i !== 6 && i !== 11;
+  PADS.push({
+    id: i,
+    label: i===4 ? 'NEW\nENTRY' : 'N'+i,
+    color: i===4 ? 'var(--cy)' : PAD_COLORS[(i*3)%PAD_COLORS.length],
+    duration: hasFile ? (Math.random()*3+0.5).toFixed(1)+'s' : '',
+    hasFile: hasFile,
+    isNew: i===4,
+    file: hasFile ? 'KISS_Main_Ident.mp3' : '',
+  });
+}
+
+function renderGrid(){
+  const grid = document.getElementById('pad-grid');
+  grid.innerHTML = '';
+  PADS.forEach((p,idx) => {
+    const div = document.createElement('div');
+    if(p.isNew){
+      div.className = 'pad pad-new';
+      div.innerHTML = `<div class="pad-new-label">NEW<br>ENTRY</div><div class="pad-new-sub">Empty slot</div>`;
+    } else {
+      div.className = 'pad';
+      div.style.background = p.color;
+      div.innerHTML = `<div class="pad-label">${p.label}</div><div class="pad-dur">${p.duration||''}</div>`;
+    }
+    if(idx === selectedPad) div.style.borderColor = '#fff';
+    div.onclick = () => selectPadItem(idx);
+    grid.appendChild(div);
+  });
+}
+
+function selectPadItem(idx){
+  selectedPad = idx;
+  const p = PADS[idx];
+  document.getElementById('ed-title').textContent = 'PAD EDITOR — ' + p.label.replace('\n',' ');
+  document.getElementById('ed-pad-label').textContent = p.label.replace('\n',' ');
+  document.getElementById('ed-pad-name').textContent = p.label.replace('\n',' ');
+  document.getElementById('ed-pad-dur').textContent = p.duration || '—';
+  document.getElementById('ed-pad-color').style.background = p.isNew ? 'var(--card2)' : p.color;
+  document.getElementById('ed-label').textContent = p.label.replace('\n',' ');
+  document.getElementById('ed-file').textContent = p.file || 'No file assigned';
+  document.getElementById('ed-dur').textContent = p.duration ? p.duration+' (auto)' : '—';
+  renderGrid();
+}
+
+function setPadColor(c){
+  PADS[selectedPad].color = c;
+  document.querySelectorAll('.color-dot').forEach(d => d.classList.remove('active'));
+  event.target.classList.add('active');
+  renderGrid();
+}
+
+function selectPallet(idx){
+  document.querySelectorAll('.pallet-item').forEach((el,i) => {
+    el.classList.toggle('active', i===idx);
+  });
+}
+function selectPalletTab(idx,el){
+  document.querySelectorAll('.pallet-tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+}
+
+function goBack(){ window.location.href='control_panel.html'; }
+
+function updateClock(){
+  const now=new Date();
+  document.getElementById('clock-time').textContent=
+    String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':'+String(now.getSeconds()).padStart(2,'0');
+  const days=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const months=['January','February','March','April','May','June','July','August','September','October','November','December'];
+  document.getElementById('clock-date').textContent=
+    days[now.getDay()]+', '+now.getDate()+' '+months[now.getMonth()]+' '+now.getFullYear();
+}
+
+// Init
+renderGrid();
+updateClock();
+setInterval(updateClock, 1000);
+// Bridge auto-connected by js/bridge_helper.js
+</script>
+</body>
+</html>

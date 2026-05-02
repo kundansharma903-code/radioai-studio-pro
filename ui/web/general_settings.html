@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>General Settings — RadioAI Studio Pro</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+/* ── General Settings overrides ──────────────── */
+.breadcrumb .active{color:var(--am);font-weight:600}
+
+/* Two-column layout */
+.col-left{flex:1;min-width:0;overflow-y:auto;padding:24px 28px;border-right:1px solid var(--b1)}
+.col-left::-webkit-scrollbar{width:6px}
+.col-left::-webkit-scrollbar-thumb{background:var(--b2);border-radius:3px}
+.col-right{flex:1;min-width:0;overflow-y:auto;padding:24px 28px}
+.col-right::-webkit-scrollbar{width:6px}
+.col-right::-webkit-scrollbar-thumb{background:var(--b2);border-radius:3px}
+
+/* Config sections */
+.config-section{margin-bottom:24px;padding-left:14px;border-left:3px solid var(--am)}
+.config-section.green{border-left-color:var(--gn)}
+.config-section.purple{border-left-color:var(--p1)}
+.config-section-title{font-size:11px;font-weight:700;color:var(--am);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:14px}
+.config-section.green .config-section-title{color:var(--gn)}
+.config-section.purple .config-section-title{color:var(--p1)}
+
+/* Form rows */
+.form-row{margin-bottom:14px}
+.form-label{font-size:10px;font-weight:600;color:var(--t3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:5px}
+.form-input-row{display:flex;gap:8px;align-items:center}
+.form-input{flex:1;padding:8px 12px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);color:var(--t1);font-size:13px;font-family:'Inter',sans-serif}
+.form-input:focus{outline:none;border-color:var(--am)}
+.config-section.green .form-input:focus{border-color:var(--gn)}
+.config-section.purple .form-input:focus{border-color:var(--p1)}
+
+.form-select{flex:1;padding:8px 12px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);color:var(--t1);font-size:13px;font-family:'Inter',sans-serif;appearance:none;cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%238891B8' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center}
+.form-select:focus{outline:none;border-color:var(--am)}
+.form-select option{background:var(--card);color:var(--t1)}
+
+.browse-btn{padding:7px 14px;background:var(--b2);color:var(--t1);border:1px solid var(--b1);border-radius:var(--radius);font-family:'Inter',sans-serif;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap}
+.browse-btn:hover{background:var(--b1);border-color:var(--t3)}
+
+/* Save buttons */
+.save-btn{width:100%;padding:12px;background:var(--gn);color:#fff;border:none;border-radius:var(--radius);font-family:'Inter',sans-serif;font-size:14px;font-weight:700;cursor:pointer;margin-top:8px;letter-spacing:0.3px}
+.save-btn:hover{opacity:0.85}
+
+/* Toggle switch */
+.toggle-row{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--b1)}
+.toggle-row:last-child{border-bottom:none}
+.toggle-label{font-size:13px;color:var(--t1);font-weight:500}
+.toggle-switch{position:relative;width:44px;height:24px;flex-shrink:0}
+.toggle-switch input{opacity:0;width:0;height:0}
+.toggle-slider{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:var(--b2);border-radius:12px;transition:background 0.25s}
+.toggle-slider::before{content:'';position:absolute;height:18px;width:18px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:transform 0.25s}
+.toggle-switch input:checked+.toggle-slider{background:var(--gn)}
+.toggle-switch input:checked+.toggle-slider::before{transform:translateX(20px)}
+.toggle-switch.purple input:checked+.toggle-slider{background:var(--p1)}
+
+/* Backup buttons row */
+.backup-btns{display:flex;gap:10px;margin-top:6px}
+.btn-backup{padding:8px 18px;background:var(--gn);color:#fff;border:none;border-radius:var(--radius);font-family:'Inter',sans-serif;font-size:12px;font-weight:600;cursor:pointer}
+.btn-backup:hover{opacity:0.85}
+.btn-restore{padding:8px 18px;background:transparent;color:var(--t2);border:1px solid var(--b2);border-radius:var(--radius);font-family:'Inter',sans-serif;font-size:12px;font-weight:600;cursor:pointer}
+.btn-restore:hover{background:var(--b1);color:var(--t1)}
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="header">
+  <div class="logo" onclick="goBack()">
+    <div class="logo-icon">((●))</div>
+    <div class="logo-text"><div class="logo-title">RadioAI</div><div class="logo-sub">STUDIO PRO</div></div>
+  </div>
+  <div class="breadcrumb">
+    <a onclick="goBack()">Control Panel</a><span class="bc-sep">></span>
+    <a onclick="goToSettings()">Settings</a><span class="bc-sep">></span>
+    <span class="active">General Settings</span>
+  </div>
+  <div class="page-title-area">
+    <div class="page-title">General Settings</div>
+    <div class="page-subtitle">Station identity, library paths, startup &amp; backup preferences</div>
+  </div>
+  <div class="header-spacer"></div>
+  <div style="display:flex;flex-direction:column;align-items:center;gap:1px">
+    <div class="clock-time" id="clock-time">00:00:00</div>
+    <div class="clock-date" id="clock-date"></div>
+  </div>
+  <div class="station-box">
+    <div class="station-label">ACTIVE STATION</div>
+    <div class="station-name" id="station-name">KISS FM 91.5</div>
+    <div class="station-loc" id="station-loc">Jaipur, Rajasthan</div>
+  </div>
+  <button class="open-studio-btn" onclick="openStudio()">&#9654; Open Studio</button>
+</div>
+
+<!-- MAIN 2-COLUMN LAYOUT -->
+<div class="main">
+
+  <!-- LEFT COLUMN -->
+  <div class="col-left">
+
+    <!-- STATION IDENTITY -->
+    <div class="config-section">
+      <div class="config-section-title">Station Identity</div>
+
+      <div class="form-row">
+        <div class="form-label">Station Name</div>
+        <div class="form-input-row">
+          <input class="form-input" type="text" id="station-name-input" value="KISS FM 91.5">
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">Station City</div>
+        <div class="form-input-row">
+          <input class="form-input" type="text" id="station-city" value="Jaipur">
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">Station Region</div>
+        <div class="form-input-row">
+          <input class="form-input" type="text" id="station-region" value="Rajasthan, India">
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">Broadcast Frequency</div>
+        <div class="form-input-row">
+          <input class="form-input" type="text" id="station-freq" value="91.5 MHz">
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">Station Slogan</div>
+        <div class="form-input-row">
+          <input class="form-input" type="text" id="station-slogan" value="Jaipur's #1 Hit Music Station">
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">Contact Email</div>
+        <div class="form-input-row">
+          <input class="form-input" type="email" id="station-email" value="kavish@kissfm.in">
+        </div>
+      </div>
+    </div>
+
+    <!-- FILE PATHS -->
+    <div class="config-section green">
+      <div class="config-section-title">File Paths</div>
+
+      <div class="form-row">
+        <div class="form-label">Music Library Root</div>
+        <div class="form-input-row">
+          <input class="form-input" type="text" id="path-music" value="C:\RadioAI\Music\">
+          <button class="browse-btn" onclick="browsePath('path-music')">Browse</button>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">Recordings Folder</div>
+        <div class="form-input-row">
+          <input class="form-input" type="text" id="path-recordings" value="C:\RadioAI\Recordings\">
+          <button class="browse-btn" onclick="browsePath('path-recordings')">Browse</button>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">Log Files Folder</div>
+        <div class="form-input-row">
+          <input class="form-input" type="text" id="path-logs" value="C:\RadioAI\Logs\">
+          <button class="browse-btn" onclick="browsePath('path-logs')">Browse</button>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">Exports Folder</div>
+        <div class="form-input-row">
+          <input class="form-input" type="text" id="path-exports" value="C:\RadioAI\Exports\">
+          <button class="browse-btn" onclick="browsePath('path-exports')">Browse</button>
+        </div>
+      </div>
+    </div>
+
+    <button class="save-btn" onclick="saveStation()">Save Station Settings</button>
+  </div>
+
+  <!-- RIGHT COLUMN -->
+  <div class="col-right">
+
+    <!-- STARTUP & BEHAVIOUR -->
+    <div class="config-section purple">
+      <div class="config-section-title">Startup &amp; Behaviour</div>
+
+      <div class="toggle-row">
+        <span class="toggle-label">Start RadioAI on Windows startup</span>
+        <label class="toggle-switch">
+          <input type="checkbox" id="toggle-startup" class="toggle-setting" data-key="start_on_windows_startup" checked>
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+
+      <div class="toggle-row">
+        <span class="toggle-label">Auto-load last session on open</span>
+        <label class="toggle-switch">
+          <input type="checkbox" id="toggle-session" class="toggle-setting" data-key="auto_load_last_session" checked>
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+
+      <div class="toggle-row">
+        <span class="toggle-label">Start in AUTO MODE automatically</span>
+        <label class="toggle-switch purple">
+          <input type="checkbox" id="toggle-automode" class="toggle-setting" data-key="start_in_auto_mode" checked>
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+
+      <div class="toggle-row">
+        <span class="toggle-label">Show splash screen on launch</span>
+        <label class="toggle-switch">
+          <input type="checkbox" id="toggle-splash" class="toggle-setting" data-key="show_splash_screen">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+
+      <div class="toggle-row">
+        <span class="toggle-label">Minimize to system tray on close</span>
+        <label class="toggle-switch">
+          <input type="checkbox" id="toggle-tray" class="toggle-setting" data-key="minimize_to_tray" checked>
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+
+      <div class="toggle-row">
+        <span class="toggle-label">Check for updates automatically</span>
+        <label class="toggle-switch">
+          <input type="checkbox" id="toggle-updates" class="toggle-setting" data-key="check_updates" checked>
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+
+      <div class="toggle-row">
+        <span class="toggle-label">Send anonymous usage statistics</span>
+        <label class="toggle-switch">
+          <input type="checkbox" id="toggle-stats" class="toggle-setting" data-key="send_usage_stats">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+    </div>
+
+    <!-- DATE & TIME FORMAT -->
+    <div class="config-section">
+      <div class="config-section-title">Date &amp; Time Format</div>
+
+      <div class="form-row">
+        <div class="form-label">Date Format</div>
+        <div class="form-input-row">
+          <select class="form-select setting-select" id="date-format" data-key="date_format">
+            <option value="DD/MM/YYYY" selected>DD/MM/YYYY</option>
+            <option value="MM/DD/YYYY">MM/DD/YYYY</option>
+            <option value="YYYY-MM-DD">YYYY-MM-DD</option>
+            <option value="DD-MMM-YYYY">DD-MMM-YYYY</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">Time Format</div>
+        <div class="form-input-row">
+          <select class="form-select setting-select" id="time-format" data-key="time_format">
+            <option value="24h" selected>24-hour (HH:MM:SS)</option>
+            <option value="12h">12-hour (hh:mm:ss AM/PM)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">Timezone</div>
+        <div class="form-input-row">
+          <select class="form-select" id="timezone" disabled>
+            <option value="Asia/Kolkata" selected>IST &mdash; Asia/Kolkata (UTC+5:30)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">Language</div>
+        <div class="form-input-row">
+          <select class="form-select" id="language">
+            <option value="en-IN" selected>English (India)</option>
+            <option value="en-US">English (US)</option>
+            <option value="en-GB">English (UK)</option>
+            <option value="hi-IN">Hindi</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- BACKUP -->
+    <div class="config-section">
+      <div class="config-section-title">Backup</div>
+
+      <div class="form-row">
+        <div class="form-label">Auto-Backup Interval</div>
+        <div class="form-input-row">
+          <select class="form-select" id="backup-interval">
+            <option value="6">Every 6 hours</option>
+            <option value="12">Every 12 hours</option>
+            <option value="24" selected>Every 24 hours</option>
+            <option value="48">Every 48 hours</option>
+            <option value="168">Every 7 days</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-label">Backup Destination</div>
+        <div class="form-input-row">
+          <input class="form-input" type="text" id="path-backup" value="C:\RadioAI\Backups\">
+          <button class="browse-btn" onclick="browsePath('path-backup')">Browse</button>
+        </div>
+      </div>
+
+      <div class="backup-btns">
+        <button class="btn-backup" onclick="backupNow()">Backup Now</button>
+        <button class="btn-restore" onclick="restoreBackup()">Restore Backup</button>
+      </div>
+    </div>
+
+    <button class="save-btn" onclick="saveAll()">Save All Preferences</button>
+  </div>
+
+</div>
+
+<!-- STATUS BAR -->
+<div class="status-bar">
+  <span class="status-indicator"><span class="status-dot" style="background:var(--p1)"></span> AUTO MODE</span>
+  <span class="status-indicator"><span class="status-dot" style="background:var(--am)"></span> Settings</span>
+  <span class="status-indicator"><span class="status-dot" style="background:var(--gn)"></span> All OK</span>
+  <span class="status-spacer"></span>
+  <span class="status-info">RadioAI Studio Pro v1.0</span>
+</div>
+
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script src="js/bridge_helper.js"></script>
+<script>
+// Uses callBridgeAsync and bridge from js/bridge_helper.js
+
+// ── Settings key -> input ID mapping ──────────────
+var FIELD_MAP = {
+  'station_name':'station-name-input', 'station_city':'station-city',
+  'station_region':'station-region', 'station_frequency':'station-freq',
+  'station_slogan':'station-slogan', 'station_email':'station-email',
+  'path_music':'path-music', 'path_recordings':'path-recordings',
+  'path_logs':'path-logs', 'path_exports':'path-exports', 'path_backup':'path-backup',
+};
+
+// ── Load all settings from DB on page open ────────
+onBridgeReady(function() {
+  callBridgeAsync('get_all_settings', [], function(data) {
+    if (!data) return;
+    for (var key in FIELD_MAP) {
+      if (data[key] !== undefined) {
+        var el = document.getElementById(FIELD_MAP[key]);
+        if (el) el.value = data[key];
+      }
+    }
+    // Restore toggle states from DB
+    var toggles = document.querySelectorAll('.toggle-setting');
+    for (var i = 0; i < toggles.length; i++) {
+      var key = toggles[i].getAttribute('data-key');
+      if (data[key] !== undefined) {
+        toggles[i].checked = (data[key] === 'true');
+      }
+    }
+    // Restore dropdown selections from DB
+    var selects = document.querySelectorAll('.setting-select');
+    for (var i = 0; i < selects.length; i++) {
+      var key = selects[i].getAttribute('data-key');
+      if (data[key] !== undefined) {
+        selects[i].value = data[key];
+      }
+    }
+    showToast('Settings loaded from database', true);
+  });
+});
+
+// ── Auto-save toggles on change ──────────────────
+document.querySelectorAll('.toggle-setting').forEach(function(toggle) {
+  toggle.addEventListener('change', function() {
+    var key = this.getAttribute('data-key');
+    var value = this.checked ? 'true' : 'false';
+    callBridgeAsync('save_setting', [key, value], function(data) {
+      if (data) showToast('Toggle saved: ' + key, true);
+    });
+  });
+});
+
+// ── Auto-save dropdowns on change ────────────────
+document.querySelectorAll('.setting-select').forEach(function(sel) {
+  sel.addEventListener('change', function() {
+    var key = this.getAttribute('data-key');
+    var value = this.value;
+    callBridgeAsync('save_setting', [key, value], function(data) {
+      if (data) showToast('Format saved: ' + value + '. Restart to apply everywhere.', true);
+    });
+  });
+});
+
+// ── Save Station Settings ────────────────────────
+function saveStation() {
+  var settings = {};
+  for (var key in FIELD_MAP) {
+    var el = document.getElementById(FIELD_MAP[key]);
+    if (el) settings[key] = el.value;
+  }
+  // Also save station_location for header display
+  settings['station_location'] = (document.getElementById('station-city').value || '') + ', ' + (document.getElementById('station-region').value || '');
+  // Include toggle states
+  var toggles = document.querySelectorAll('.toggle-setting');
+  for (var i = 0; i < toggles.length; i++) {
+    settings[toggles[i].getAttribute('data-key')] = toggles[i].checked ? 'true' : 'false';
+  }
+
+  callBridgeAsync('save_all_settings', [JSON.stringify(settings)], function(data) {
+    if (data) {
+      showToast('Settings saved. Restart app to apply changes everywhere.', true);
+    } else {
+      showToast('Error saving settings', false);
+    }
+  });
+}
+
+// ── Save All Preferences ─────────────────────────
+function saveAll() {
+  saveStation();
+}
+
+// ── Open Studio ──────────────────────────────────
+function openStudio() {
+  navigateTo('studio_screen');
+}
+
+// ── Browse Folder ────────────────────────────────
+function browsePath(inputId) {
+  callBridgeAsync('browse_folder', [], function(data) {
+    if (data) {
+      document.getElementById(inputId).value = data;
+      showToast('Path: ' + data, true);
+    }
+  });
+}
+
+// ── Backup ───────────────────────────────────────
+function backupNow() {
+  callBridgeAsync('backup_database', [], function(data) {
+    if (data) showToast('Backup saved! (' + data.size_mb + ' MB)', true);
+    else showToast('Backup failed', false);
+  });
+}
+
+function restoreBackup() {
+  if (!confirm('This will replace all current data. Are you sure?')) return;
+  callBridgeAsync('browse_file', [], function(data) {
+    if (data) showToast('Restore from: ' + data + ' — restart needed', true);
+  });
+}
+
+// ── Toast Notification ───────────────────────────
+function showToast(msg, success) {
+  var t = document.getElementById('toast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = 'toast';
+    t.style.cssText = 'position:fixed;bottom:60px;left:50%;transform:translateX(-50%);padding:10px 24px;border-radius:8px;font-size:12px;font-weight:600;z-index:999;transition:opacity 0.3s;pointer-events:none;max-width:80%;text-align:center;';
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.style.background = success ? '#10B981' : '#F43F5E';
+  t.style.color = '#fff';
+  t.style.opacity = '1';
+  clearTimeout(t._timer);
+  t._timer = setTimeout(function(){ t.style.opacity = '0'; }, 4000);
+}
+
+// goBack, goToSettings, updateClock all provided by js/bridge_helper.js
+// Bridge auto-connects via js/bridge_helper.js
+</script>
+</body>
+</html>

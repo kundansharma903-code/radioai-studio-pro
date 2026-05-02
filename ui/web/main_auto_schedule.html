@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Main Auto Schedule | RadioAI Studio Pro</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+html,body{width:100%;height:100%;overflow:hidden}
+body{display:flex;flex-direction:column}
+
+.mas-main{display:flex;flex:1;overflow:hidden}
+
+/* Left Panel */
+.mas-left{width:200px;min-width:200px;display:flex;flex-direction:column;padding:10px;border-right:1px solid var(--b1);background:var(--surf);overflow-y:auto}
+.mas-left-title{font-size:9px;font-weight:700;color:var(--t3);letter-spacing:1.5px;margin-bottom:8px}
+.mas-new-btn{width:100%;padding:8px;background:var(--cy);color:#fff;border:none;border-radius:6px;font-family:'Inter',sans-serif;font-size:11px;font-weight:700;cursor:pointer;margin-bottom:10px}
+.mas-new-btn:hover{background:#0ea5c2}
+.clock-item{padding:8px 10px;background:var(--card);border:1px solid var(--b1);border-radius:6px;margin-bottom:4px;cursor:pointer;position:relative}
+.clock-item:hover{background:var(--card2)}
+.clock-item.selected{background:var(--p4);border-color:var(--p1)}
+.clock-item-name{font-size:11px;font-weight:600;color:var(--t1)}
+.clock-item-range{font-size:9px;color:var(--t3);margin-top:1px}
+.clock-item-slots{position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:9px;color:var(--t3);font-family:'Roboto Mono',monospace}
+.mas-set-btn{width:100%;padding:12px;background:#F43F5E;color:#fff;border:none;border-radius:8px;font-family:'Inter',sans-serif;font-size:14px;font-weight:700;cursor:pointer;margin-top:auto;margin-bottom:8px;letter-spacing:1px}
+.mas-set-btn:hover{background:#e11d48}
+.mas-bottom-btns{display:flex;flex-direction:column;gap:4px}
+.mas-bottom-btn{padding:6px;background:var(--card);border:1px solid var(--b1);border-radius:5px;color:var(--t2);font-size:9px;font-weight:600;cursor:pointer;font-family:'Inter',sans-serif;text-align:left}
+.mas-bottom-btn:hover{background:var(--card2)}
+.mas-bottom-btn.red{color:var(--rs);border-color:rgba(244,63,94,0.3)}
+
+/* Center */
+.mas-center{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.mas-header{padding:12px 16px 8px;background:var(--bg)}
+.mas-title{font-size:18px;font-weight:700;color:var(--t1)}
+.mas-sub{font-size:10px;color:var(--t3);margin-top:2px}
+.mas-toolbar{display:flex;align-items:center;gap:8px;padding:6px 16px;background:var(--bg)}
+.mas-tab{padding:6px 16px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;border:none;font-family:'Inter',sans-serif}
+.mas-tab.active{background:var(--cy);color:#fff}
+.mas-tab:not(.active){background:var(--card);color:var(--t2)}
+.mas-clear{margin-left:auto;background:transparent;border:1px solid var(--rs);color:var(--rs);padding:5px 12px;border-radius:5px;font-size:10px;font-weight:600;cursor:pointer;font-family:'Inter',sans-serif}
+
+/* Grid */
+.mas-grid-wrap{flex:1;overflow:auto;padding:0 16px 10px}
+.mas-grid{width:100%;border-collapse:collapse;table-layout:fixed}
+.mas-grid th{padding:6px 4px;font-size:10px;font-weight:700;text-align:center;background:var(--surf);border:1px solid var(--b1);color:var(--t2);position:sticky;top:0;z-index:1}
+.mas-grid th.today{color:var(--cy);background:rgba(6,182,212,0.08)}
+.mas-grid th.hour-col{width:56px;text-align:left;padding-left:8px}
+.mas-grid td{padding:4px 4px;font-size:9px;border:1px solid var(--b1);text-align:center;height:22px;cursor:pointer;user-select:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mas-grid td:hover{background:rgba(139,92,246,0.1)}
+.mas-grid td.selected{background:rgba(139,92,246,0.2)!important;border-color:var(--p1)}
+.mas-grid td.hour-cell{background:var(--surf);color:var(--t3);font-family:'Roboto Mono',monospace;font-size:10px;cursor:default;text-align:left;padding-left:8px;font-weight:600}
+.mas-grid td.today{background:rgba(6,182,212,0.04)}
+.mas-grid td.filled{font-weight:600}
+
+/* Clock colors by time zone */
+.clr-night{color:#454D6D}
+.clr-morning{color:var(--cy)}
+.clr-daytime{color:var(--p2)}
+.clr-afternoon{color:var(--am)}
+.clr-evening{color:var(--gn)}
+.clr-latenight{color:var(--rs)}
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="page-header" style="display:flex;align-items:center;height:50px;padding:0 16px;background:var(--surf);border-bottom:1px solid var(--b1);gap:12px">
+  <div class="logo" onclick="goBack()"><div class="logo-icon">((●))</div></div>
+  <div class="breadcrumb">
+    <a onclick="goBack()">Control Panel</a><span class="bc-sep">›</span>
+    <a onclick="navigateTo('scheduling_screen')">Scheduling</a><span class="bc-sep">›</span>
+    <span class="active" style="color:var(--am)">Main Auto Schedule</span>
+  </div>
+  <div style="flex:1"></div>
+  <div style="text-align:center">
+    <div id="clock" style="font-family:'Roboto Mono',monospace;font-size:22px;font-weight:700;letter-spacing:1px">00:00:00</div>
+    <div id="clock-date" style="font-size:8px;color:var(--t3)">Loading...</div>
+  </div>
+  <div class="hdr-station" style="margin-left:12px;text-align:right">
+    <div style="font-size:7px;color:var(--t3);letter-spacing:1px">ACTIVE STATION</div>
+    <div class="station-name" style="font-size:12px;font-weight:700">KISS FM 91.5</div>
+  </div>
+  <button class="open-studio-btn" onclick="navigateTo('studio_screen')">▶ Open Studio</button>
+</div>
+
+<div class="mas-main">
+
+  <!-- LEFT PANEL -->
+  <div class="mas-left">
+    <div class="mas-left-title">AVAILABLE CLOCKS</div>
+    <button class="mas-new-btn" onclick="newClock()">+ New Clock</button>
+    <div id="clock-list"></div>
+    <button class="mas-set-btn" onclick="assignSelected()">SET ▶▶</button>
+    <div class="mas-bottom-btns">
+      <button class="mas-bottom-btn" onclick="duplicateClock()">📋 Duplicate Clock</button>
+      <button class="mas-bottom-btn" onclick="navigateTo('scheduling_screen')">⚙ Auto Program Settings</button>
+      <button class="mas-bottom-btn red" onclick="deleteClock()">✕ Delete Clock</button>
+    </div>
+  </div>
+
+  <!-- CENTER -->
+  <div class="mas-center">
+    <div class="mas-header">
+      <div class="mas-title">Clocks Schedule</div>
+      <div class="mas-sub">Assign clocks to specific hours — each cell = 1 hour of broadcast</div>
+    </div>
+    <div class="mas-toolbar">
+      <button class="mas-tab active">Weekdays</button>
+      <button class="mas-tab">Specific Days</button>
+      <button class="mas-clear" onclick="clearAll()">Clear All</button>
+    </div>
+    <div class="mas-grid-wrap">
+      <table class="mas-grid">
+        <thead><tr>
+          <th class="hour-col">HOUR</th>
+          <th id="gh-0">MONDAY</th>
+          <th id="gh-1">TUESDAY</th>
+          <th id="gh-2">WEDNESDAY</th>
+          <th id="gh-3">THURSDAY</th>
+          <th id="gh-4">FRIDAY</th>
+          <th id="gh-5">SATURDAY</th>
+          <th id="gh-6">SUNDAY</th>
+        </tr></thead>
+        <tbody id="grid-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<!-- Status Bar -->
+<div class="status-bar" style="display:flex;align-items:center;height:30px;background:var(--surf);border-top:1px solid var(--b1);padding:0 16px;gap:14px;flex-shrink:0">
+  <div style="display:flex;align-items:center;gap:4px;font-size:10px;font-weight:600"><span style="width:6px;height:6px;border-radius:50%;background:var(--p1);box-shadow:0 0 4px var(--p1)"></span>AUTO MODE</div>
+  <div style="display:flex;align-items:center;gap:4px;font-size:10px;font-weight:600"><span style="width:6px;height:6px;border-radius:50%;background:var(--gn);box-shadow:0 0 4px var(--gn)"></span>AI Active</div>
+  <div style="display:flex;align-items:center;gap:4px;font-size:10px;font-weight:600"><span style="width:6px;height:6px;border-radius:50%;background:var(--gn)"></span>Log Ready</div>
+  <div style="display:flex;align-items:center;gap:4px;font-size:10px;font-weight:600"><span style="width:6px;height:6px;border-radius:50%;background:var(--am)"></span><span id="status-clocks">0 Clocks</span></div>
+  <div style="flex:1"></div>
+  <div style="font-size:9px;color:var(--t3)">Clock Editor: Weekday + Main Auto Schedule</div>
+  <button class="open-studio-btn" style="padding:4px 12px;font-size:10px;margin-left:8px" onclick="navigateTo('studio_screen')">▶ Open Studio</button>
+</div>
+
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script src="js/bridge_helper.js"></script>
+<script>
+
+var selectedClockId = null;
+var selectedCells = {};  // "day_hour" → true
+var gridData = [];
+var clockList = [];
+
+var DAYS = ['MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY','SUNDAY'];
+
+function clockColor(h) {
+  if (h < 6) return 'clr-night';
+  if (h < 10) return 'clr-morning';
+  if (h < 14) return 'clr-daytime';
+  if (h < 18) return 'clr-afternoon';
+  if (h < 22) return 'clr-evening';
+  return 'clr-latenight';
+}
+
+onBridgeReady(function() {
+  loadClocks();
+  loadGrid();
+  highlightToday();
+});
+
+function loadClocks() {
+  callBridgeAsync('get_clocks_list', [], function(data) {
+    clockList = data || [];
+    var el = document.getElementById('clock-list');
+    if (!el) return;
+    el.innerHTML = '';
+    if (clockList.length === 0) {
+      el.innerHTML = '<div style="color:var(--t3);font-size:10px;padding:8px;text-align:center">No clocks yet.<br>Click + New Clock to create one.</div>';
+    }
+    clockList.forEach(function(c) {
+      var div = document.createElement('div');
+      div.className = 'clock-item' + (c.id === selectedClockId ? ' selected' : '');
+      div.innerHTML = '<div class="clock-item-name">' + esc(c.name) + '</div>' +
+        '<div class="clock-item-range">' + esc((c.time_start || '') + (c.time_end ? '-' + c.time_end : '')) + '</div>' +
+        '<div class="clock-item-slots">' + (c.slot_count || 0) + '</div>';
+      div.onclick = function() { selectClock(c.id); };
+      div.ondblclick = function() { editClock(c.id); };
+      el.appendChild(div);
+    });
+    var sc = document.getElementById('status-clocks');
+    if (sc) sc.textContent = clockList.length + ' Clocks';
+  });
+}
+
+function selectClock(id) {
+  selectedClockId = id;
+  document.querySelectorAll('.clock-item').forEach(function(el) { el.classList.remove('selected'); });
+  var idx = clockList.findIndex(function(c) { return c.id === id; });
+  var items = document.querySelectorAll('.clock-item');
+  if (items[idx]) items[idx].classList.add('selected');
+}
+
+function loadGrid() {
+  callBridgeAsync('get_schedule_grid', [], function(data) {
+    gridData = data || [];
+    renderGrid();
+  });
+}
+
+function renderGrid() {
+  var tbody = document.getElementById('grid-tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  var today = new Date().getDay();
+  var todayIdx = today === 0 ? 6 : today - 1;
+
+  for (var h = 0; h < 24; h++) {
+    var tr = document.createElement('tr');
+    var thHour = document.createElement('td');
+    thHour.className = 'hour-cell';
+    thHour.textContent = String(h).padStart(2, '0') + ':00';
+    tr.appendChild(thHour);
+
+    for (var d = 0; d < 7; d++) {
+      var td = document.createElement('td');
+      var cell = gridData.find(function(c) { return c.day === d && c.hour === h; });
+      var key = d + '_' + h;
+
+      if (d === todayIdx) td.classList.add('today');
+      if (selectedCells[key]) td.classList.add('selected');
+
+      if (cell && cell.clock_name) {
+        td.textContent = cell.clock_name;
+        td.classList.add('filled');
+        td.classList.add(clockColor(h));
+      } else {
+        td.textContent = '';
+      }
+
+      td.dataset.day = d;
+      td.dataset.hour = h;
+      td.addEventListener('click', function(e) { toggleCell(e.target); });
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+}
+
+function toggleCell(td) {
+  var key = td.dataset.day + '_' + td.dataset.hour;
+  if (selectedCells[key]) {
+    delete selectedCells[key];
+    td.classList.remove('selected');
+  } else {
+    selectedCells[key] = true;
+    td.classList.add('selected');
+  }
+}
+
+function assignSelected() {
+  if (!selectedClockId) { alert('Select a clock from the left panel first'); return; }
+  var cells = Object.keys(selectedCells).map(function(k) {
+    var p = k.split('_');
+    return { day: parseInt(p[0]), hour: parseInt(p[1]) };
+  });
+  if (cells.length === 0) { alert('Click on grid cells to select them first, then click SET'); return; }
+  callBridgeAsync('assign_clock_to_cells', [JSON.stringify(cells), selectedClockId], function(ok) {
+    if (ok) {
+      selectedCells = {};
+      loadGrid();
+    }
+  });
+}
+
+function clearAll() {
+  if (!confirm('Clear the entire schedule grid?')) return;
+  callBridgeAsync('clear_schedule_grid', [], function(ok) {
+    if (ok) loadGrid();
+  });
+}
+
+function newClock() {
+  navigateTo('clock_editor');
+}
+
+function editClock(id) {
+  sessionStorage.setItem('edit_clock_id', String(id));
+  navigateTo('clock_editor');
+}
+
+function duplicateClock() {
+  if (!selectedClockId) { alert('Select a clock first'); return; }
+  alert('Duplicate — coming soon');
+}
+
+function deleteClock() {
+  if (!selectedClockId) { alert('Select a clock first'); return; }
+  if (!confirm('Delete this clock and all its slots?')) return;
+  callBridgeAsync('delete_clock', [selectedClockId], function(ok) {
+    if (ok) { selectedClockId = null; loadClocks(); loadGrid(); }
+  });
+}
+
+function highlightToday() {
+  var today = new Date().getDay();
+  var todayIdx = today === 0 ? 6 : today - 1;
+  var th = document.getElementById('gh-' + todayIdx);
+  if (th) { th.classList.add('today'); th.style.color = 'var(--cy)'; }
+}
+
+function esc(s) {
+  return (s == null ? '' : String(s)).replace(/[&<>"']/g, function(c) {
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+  });
+}
+</script>
+</body>
+</html>

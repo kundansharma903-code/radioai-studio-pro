@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Add New Song — RadioAI Studio Pro</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+body{overflow:hidden}
+body::before,body::after{display:none!important}
+.page-wrap{display:flex;flex-direction:column;height:100vh;position:relative;z-index:1}
+.page-header{display:flex;align-items:center;gap:12px;padding:12px 24px;background:var(--surf);border-bottom:1px solid var(--b1)}
+.page-icon{font-size:18px;color:var(--p1)}
+.page-title{font-size:18px;font-weight:700}
+.page-subtitle{font-size:10px;color:var(--t3)}
+.auto-code{margin-left:auto;text-align:right}
+.auto-code-label{font-size:9px;color:var(--t3);letter-spacing:1px}
+.auto-code-val{font-family:'Roboto Mono',monospace;font-size:18px;font-weight:700;color:var(--gn)}
+.close-btn{width:30px;height:30px;border-radius:50%;background:var(--card);border:1px solid var(--b1);display:flex;align-items:center;justify-content:center;color:var(--t2);font-size:14px;cursor:pointer;margin-left:12px}
+.close-btn:hover{background:var(--b1);color:var(--t1)}
+
+.page-body{flex:1;display:flex;overflow:hidden}
+.col-left{flex:1;padding:16px 24px;overflow-y:auto}
+.col-left::-webkit-scrollbar{width:6px}
+.col-left::-webkit-scrollbar-thumb{background:var(--b2);border-radius:3px}
+.col-right{width:320px;min-width:280px;border-left:1px solid var(--b1);padding:16px 20px;overflow-y:auto}
+.col-right::-webkit-scrollbar{width:6px}
+.col-right::-webkit-scrollbar-thumb{background:var(--b2);border-radius:3px}
+
+.form-row{display:flex;gap:12px;margin-bottom:12px}
+.form-row .form-group{flex:1}
+.form-group{margin-bottom:12px}
+.form-label{font-size:10px;color:var(--t3);margin-bottom:3px;text-transform:uppercase;letter-spacing:0.5px}
+.form-label .req{color:var(--rs)}
+.form-input{width:100%;padding:8px 12px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);color:var(--t1);font-size:13px;font-family:'Inter',sans-serif}
+.form-input:focus{outline:none;border-color:var(--p1)}
+.form-input::placeholder{color:var(--t4)}
+.form-select{width:100%;padding:8px 12px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);color:var(--t2);font-size:12px;font-family:'Inter',sans-serif;appearance:none;cursor:pointer}
+.form-textarea{width:100%;padding:8px 12px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);color:var(--t1);font-size:12px;font-family:'Inter',sans-serif;resize:vertical;min-height:40px}
+.btn-row{display:flex;gap:6px}
+.btn-find{padding:6px 14px;background:var(--card);border:1px solid var(--p1);color:var(--p1);border-radius:var(--radius);font-family:'Inter',sans-serif;font-size:11px;font-weight:600;cursor:pointer}
+.btn-find:hover{background:var(--p4)}
+.btn-new{padding:6px 14px;background:var(--gn);border:none;color:#fff;border-radius:var(--radius);font-family:'Inter',sans-serif;font-size:11px;font-weight:600;cursor:pointer}
+.btn-new:hover{opacity:0.85}
+
+/* Section headers */
+.section-title{font-size:10px;font-weight:600;color:var(--am);letter-spacing:1.5px;text-transform:uppercase;padding:8px 0 6px;border-bottom:1px solid var(--b1);margin-bottom:10px}
+.section-title.green{color:var(--gn)}
+.section-title.purple{color:var(--p1)}
+
+/* Category buttons */
+.cat-buttons{display:flex;flex-wrap:wrap;gap:8px;padding:8px 0;max-height:120px;overflow-y:auto}
+.cat-btn{flex-shrink:0;padding:6px 14px;border-radius:var(--radius);font-size:11px;font-weight:500;cursor:pointer;border:1px solid;background:transparent;color:var(--t2);transition:all 0.2s;white-space:nowrap;font-family:'Inter',sans-serif}
+.cat-btn:hover{opacity:0.8}
+.cat-btn.active{color:#fff!important}
+
+/* Track properties row */
+.track-row{display:flex;gap:10px}
+.track-row .form-group{flex:1}
+
+/* Audio file */
+.file-row{display:flex;gap:6px;align-items:center}
+.file-input{flex:1}
+.file-btn{padding:8px 14px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);color:var(--t2);font-size:12px;cursor:pointer;font-family:'Inter',sans-serif}
+.file-btn:hover{background:var(--b1)}
+.preview-bar{display:flex;align-items:center;gap:8px;padding:8px 0;color:var(--p1);font-size:12px}
+.preview-wave{font-family:'Roboto Mono',monospace;letter-spacing:-1px;opacity:0.6}
+
+/* Right side sections */
+.right-section{background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);padding:12px;margin-bottom:12px}
+.right-section-title{font-size:10px;font-weight:600;color:var(--t3);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px}
+.avail-row{display:flex;align-items:center;gap:8px;padding:4px 0}
+.avail-check{width:18px;height:18px;border-radius:4px;border:2px solid var(--b2);background:var(--card);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--gn)}
+.avail-check.checked{background:var(--gnD);border-color:var(--gn)}
+.avail-label{font-size:12px}
+.avail-desc{font-size:9px;color:var(--t3)}
+.ai-btn{display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--card);border:1px solid var(--p1);border-radius:var(--radius);color:var(--p1);font-size:12px;font-weight:600;cursor:pointer;width:100%;font-family:'Inter',sans-serif}
+.ai-btn:hover{background:var(--p4)}
+.ai-dot{width:10px;height:10px;border-radius:50%;background:var(--p1)}
+
+/* Footer */
+.page-footer{display:flex;align-items:center;padding:10px 24px;background:var(--surf);border-top:1px solid var(--b1);gap:12px}
+.footer-note{font-size:10px;color:var(--t3);flex:1}
+.footer-note .req{color:var(--rs)}
+.btn-cancel{padding:8px 24px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);color:var(--t2);font-size:13px;font-weight:600;cursor:pointer;font-family:'Inter',sans-serif}
+.btn-cancel:hover{background:var(--b1);color:var(--t1)}
+.btn-save{padding:8px 24px;background:var(--gn);border:none;border-radius:var(--radius);color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:'Inter',sans-serif;display:flex;align-items:center;gap:6px}
+.btn-save:hover{opacity:0.85}
+</style>
+</head>
+<body>
+<div class="page-wrap">
+
+  <!-- Header -->
+  <div class="page-header">
+    <div class="page-icon">♫</div>
+    <div>
+      <div class="page-title">NEW SONG</div>
+      <div class="page-subtitle">Add a new track to your music library</div>
+    </div>
+    <div class="auto-code">
+      <div class="auto-code-label">AUTO CODE</div>
+      <div class="auto-code-val" id="auto-code">------</div>
+    </div>
+    <div class="close-btn" onclick="cancelSong()">✕</div>
+  </div>
+
+  <div class="page-body">
+
+    <!-- LEFT SIDE -->
+    <div class="col-left">
+
+      <div class="form-group">
+        <div class="form-label">Artist <span class="req">*</span></div>
+        <div style="display:flex;gap:6px;position:relative">
+          <div style="flex:1;position:relative">
+            <input class="form-input" type="text" id="song-artist" placeholder="Type artist name..." autocomplete="off" oninput="onArtistInput()" onblur="setTimeout(hideArtistDropdown, 200)">
+            <div id="artist-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;background:#131626;border:1px solid #1C1F38;border-radius:6px;margin-top:2px;max-height:240px;overflow-y:auto;z-index:100;box-shadow:0 4px 12px rgba(0,0,0,0.4)"></div>
+          </div>
+          <button class="btn-find" onclick="openFindArtist()">Find Artist</button>
+          <button class="btn-new" onclick="openNewArtistPopup()">+ New</button>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <div class="form-label">Song Title <span class="req">*</span></div>
+        <input class="form-input" type="text" id="song-title" placeholder="Enter full song title...">
+      </div>
+
+      <div class="form-row">
+        <div class="form-group"><div class="form-label">Album</div><input class="form-input" type="text" id="song-album" placeholder="Album name"></div>
+        <div class="form-group"><div class="form-label">Playlister Code</div><input class="form-input" type="text" id="song-playlister" placeholder="e.g. S0015"></div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group"><div class="form-label">Label</div><input class="form-input" type="text" id="song-label" placeholder="Record label"></div>
+        <div class="form-group"><div class="form-label">CD Key</div><input class="form-input" type="text" id="song-cdkey" placeholder="CD key"></div>
+        <div class="form-group"><div class="form-label">Barcode</div><input class="form-input" type="text" id="song-barcode" placeholder="Barcode number"></div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group"><div class="form-label">Songwriter</div><input class="form-input" type="text" id="song-songwriter" placeholder="Songwriter"></div>
+        <div class="form-group"><div class="form-label">Comments</div><input class="form-input" type="text" id="song-comments" placeholder="Comments"></div>
+      </div>
+
+      <div class="form-group"><div class="form-label">Composer</div><input class="form-input" type="text" id="song-composer" placeholder="Composer name"></div>
+
+      <!-- Category -->
+      <div class="section-title">CATEGORY</div>
+      <div class="cat-buttons" id="cat-buttons">Loading categories...</div>
+
+      <!-- Track Properties -->
+      <div class="section-title">TRACK PROPERTIES</div>
+      <div class="track-row">
+        <div class="form-group"><div class="form-label">ERA</div>
+          <select class="form-select" id="song-era"><option value="">Select...</option><option>60s</option><option>70s</option><option>80s</option><option>90s</option><option>00s</option><option>10s</option><option>20s</option><option>Current</option></select></div>
+        <div class="form-group"><div class="form-label">Vocal</div>
+          <select class="form-select" id="song-vocal"><option value="">Select...</option><option>Male</option><option>Female</option><option>Mixed</option><option>Instrumental</option></select></div>
+        <div class="form-group"><div class="form-label">Priority</div>
+          <select class="form-select" id="song-priority"><option value="1" selected>1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select></div>
+        <div class="form-group"><div class="form-label">Year</div>
+          <input class="form-input" type="number" id="song-year" placeholder="2026" value="2026" min="1900" max="2030"></div>
+        <div class="form-group"><div class="form-label">BPM</div>
+          <input class="form-input" type="number" id="song-bpm" placeholder="120" min="40" max="250"></div>
+      </div>
+
+      <!-- Audio File -->
+      <div class="section-title">AUDIO FILE</div>
+      <div class="form-group">
+        <div class="form-label">Filename</div>
+        <div class="file-row">
+          <input class="form-input file-input" type="text" id="song-filepath" placeholder="C:\Audio\Songs\select file..." readonly>
+          <button class="file-btn" onclick="browseAudio()">...</button>
+          <button class="file-btn" onclick="editAudio()">Edit</button>
+        </div>
+      </div>
+      <div class="preview-bar">
+        <button onclick="previewAudio()" style="background:var(--card);border:1px solid var(--p1);color:var(--p1);border-radius:var(--radius);padding:5px 12px;cursor:pointer;font-family:'Inter',sans-serif;font-size:11px;font-weight:600">▶ Preview</button>
+        <span id="preview-status" style="font-size:11px;color:var(--t3)">Audio preview available after file is selected</span>
+      </div>
+
+    </div>
+
+    <!-- RIGHT SIDE -->
+    <div class="col-right">
+
+      <div class="form-group">
+        <div class="form-label">Entry Date</div>
+        <input class="form-input" type="text" id="entry-date" value="Now  (Auto)" readonly style="color:var(--t3)">
+      </div>
+
+      <div class="right-section">
+        <div class="right-section-title">AVAILABILITY</div>
+        <div class="avail-row">
+          <div class="avail-check checked" id="check-enabled" onclick="toggleCheck(this)">✓</div>
+          <div><div class="avail-label" style="color:var(--gn);font-weight:600">Enabled</div>
+          <div class="avail-desc">Song will appear in auto scheduling</div></div>
+        </div>
+        <div class="avail-row">
+          <div class="avail-check" id="check-frozen" onclick="toggleCheck(this)"></div>
+          <div><div class="avail-label">Frozen (Not Selected in Auto)</div></div>
+        </div>
+      </div>
+
+      <div class="right-section">
+        <div class="right-section-title">LINKED SONGS</div>
+        <div style="color:var(--t3);font-size:11px;padding:8px 0">No linked songs</div>
+      </div>
+
+      <div class="right-section">
+        <div class="right-section-title">SONG PROPERTIES</div>
+        <div style="color:var(--t3);font-size:11px;padding:8px 0">No properties assigned</div>
+      </div>
+
+      <div class="right-section">
+        <div class="right-section-title">SONG SEPARATION</div>
+        <div class="form-label" style="margin-top:4px">Override global separation time</div>
+        <select class="form-select" id="song-separation">
+          <option value="0">Use global settings</option>
+          <option value="60">60 minutes</option>
+          <option value="120" selected>120 minutes</option>
+          <option value="180">180 minutes</option>
+          <option value="240">240 minutes</option>
+        </select>
+      </div>
+
+      <button class="ai-btn" onclick="autoFillMetadata()">
+        <div class="ai-dot"></div>
+        ✦ AI Auto-fill Metadata
+      </button>
+
+    </div>
+
+  </div>
+
+  <!-- Footer -->
+  <div class="page-footer">
+    <div class="footer-note"><span class="req">*</span> Required fields</div>
+    <button class="btn-cancel" onclick="cancelSong()">Cancel</button>
+    <button class="btn-save" onclick="saveSong()">✓ Save</button>
+  </div>
+
+</div>
+
+<!-- New Artist Popup -->
+<div id="new-artist-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:500;align-items:center;justify-content:center">
+  <div style="width:400px;background:#0E1020;border:1px solid #8B5CF6;border-radius:12px;padding:0;box-shadow:0 10px 40px rgba(139,92,246,0.3)">
+    <div style="display:flex;align-items:center;gap:10px;padding:16px 20px;border-bottom:1px solid #1C1F38">
+      <div style="font-size:18px;color:#8B5CF6">♪</div>
+      <div style="font-size:14px;font-weight:700;letter-spacing:1px">ADD NEW ARTIST</div>
+      <div style="margin-left:auto;width:28px;height:28px;border-radius:50%;background:#131626;display:flex;align-items:center;justify-content:center;color:#8891B8;font-size:13px;cursor:pointer" onclick="closeNewArtistPopup()">✕</div>
+    </div>
+    <div style="padding:20px">
+      <div class="form-group">
+        <div class="form-label">Artist Name <span class="req">*</span></div>
+        <input class="form-input" type="text" id="new-artist-name" placeholder="Type artist name...">
+      </div>
+      <div class="form-group">
+        <div class="form-label">Country (optional)</div>
+        <input class="form-input" type="text" id="new-artist-country" placeholder="e.g. India">
+      </div>
+      <div class="form-group">
+        <div class="form-label">Genre (optional)</div>
+        <input class="form-input" type="text" id="new-artist-genre" placeholder="e.g. Bollywood">
+      </div>
+      <div style="display:flex;gap:10px;margin-top:16px">
+        <button class="btn-cancel" style="flex:1" onclick="closeNewArtistPopup()">Cancel</button>
+        <button class="btn-save" style="flex:1;background:#8B5CF6" onclick="confirmNewArtist()">✓ Add Artist</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script src="js/bridge_helper.js"></script>
+<script>
+var selectedCategoryId = null;
+var categories = [];
+var editSongId = null;
+
+onBridgeReady(function(){
+  loadCategories();
+  // Generate auto code display
+  callBridgeAsync('get_stats', [], function(data){
+    if(data) document.getElementById('auto-code').textContent = String(300000 + (data.songs || 0) + 1);
+  });
+  // Check if editing existing song
+  var editId = sessionStorage.getItem('edit_song_id');
+  if(editId){
+    sessionStorage.removeItem('edit_song_id');
+    editSongId = parseInt(editId);
+    setTimeout(function(){ loadSongForEdit(editSongId); }, 300);
+  }
+});
+
+function loadSongForEdit(songId){
+  callBridgeAsync('get_song_details', [songId], function(data){
+    if(!data) return;
+    // Change page title
+    document.querySelector('.page-title').textContent = 'EDIT SONG';
+    document.querySelector('.page-subtitle').textContent = 'Edit existing track details';
+    document.getElementById('auto-code').textContent = data.auto_code || '------';
+    // Fill form fields
+    document.getElementById('song-artist').value = data.artist || '';
+    document.getElementById('song-title').value = data.title || '';
+    document.getElementById('song-album').value = data.album || '';
+    document.getElementById('song-playlister').value = data.playlister_code || '';
+    document.getElementById('song-label').value = data.label || '';
+    document.getElementById('song-cdkey').value = data.cd_key || '';
+    document.getElementById('song-barcode').value = data.barcode || '';
+    document.getElementById('song-songwriter').value = data.songwriter || '';
+    document.getElementById('song-composer').value = data.composer || '';
+    document.getElementById('song-comments').value = data.comments || '';
+    if(data.era) document.getElementById('song-era').value = data.era;
+    if(data.vocal) document.getElementById('song-vocal').value = data.vocal;
+    document.getElementById('song-priority').value = String(data.priority || 1);
+    document.getElementById('song-year').value = data.year || 2026;
+    document.getElementById('song-bpm').value = data.bpm || '';
+    document.getElementById('song-filepath').value = data.file_path || '';
+    // Enabled/frozen checkboxes
+    var enCheck = document.getElementById('check-enabled');
+    if(data.is_enabled){ enCheck.classList.add('checked'); enCheck.innerHTML='✓'; }
+    else { enCheck.classList.remove('checked'); enCheck.innerHTML=''; }
+    var frCheck = document.getElementById('check-frozen');
+    if(data.is_frozen){ frCheck.classList.add('checked'); frCheck.innerHTML='✓'; }
+    else { frCheck.classList.remove('checked'); frCheck.innerHTML=''; }
+    // Select category
+    if(data.category_id){
+      selectedCategoryId = data.category_id;
+      document.querySelectorAll('.cat-btn').forEach(function(btn){
+        if(parseInt(btn.getAttribute('data-id')) === data.category_id){ btn.click(); }
+      });
+    }
+    // Change Save button to Update
+    var saveBtn = document.querySelector('.btn-save');
+    saveBtn.textContent = '✓ Update Song';
+    saveBtn.setAttribute('onclick', 'updateSong()');
+  });
+}
+
+function updateSong(){
+  var artist = document.getElementById('song-artist').value.trim();
+  var title = document.getElementById('song-title').value.trim();
+  if(!artist){ alert('Artist is required!'); return; }
+  if(!title){ alert('Song title is required!'); return; }
+
+  var song = {
+    id: editSongId,
+    artist: artist, title: title,
+    album: document.getElementById('song-album').value,
+    playlister_code: document.getElementById('song-playlister').value,
+    label: document.getElementById('song-label').value,
+    cd_key: document.getElementById('song-cdkey').value,
+    barcode: document.getElementById('song-barcode').value,
+    songwriter: document.getElementById('song-songwriter').value,
+    composer: document.getElementById('song-composer').value,
+    comments: document.getElementById('song-comments').value,
+    category_id: selectedCategoryId,
+    era: document.getElementById('song-era').value || null,
+    vocal: document.getElementById('song-vocal').value || null,
+    priority: parseInt(document.getElementById('song-priority').value) || 1,
+    year: parseInt(document.getElementById('song-year').value) || null,
+    bpm: parseInt(document.getElementById('song-bpm').value) || null,
+    file_path: document.getElementById('song-filepath').value,
+    is_enabled: document.getElementById('check-enabled').classList.contains('checked'),
+    is_frozen: document.getElementById('check-frozen').classList.contains('checked'),
+  };
+
+  callBridgeAsync('update_song', [JSON.stringify(song)], function(data){
+    if(data){
+      alert('Song updated!\n\n"' + artist + ' — ' + title + '"');
+      window.location.href = 'songs_library.html';
+    } else {
+      alert('Failed to update song.');
+    }
+  });
+}
+
+function loadCategories(){
+  callBridgeAsync('get_categories_full', [], function(data){
+    if(!data) return;
+    categories = data;
+    var container = document.getElementById('cat-buttons');
+    container.innerHTML = '';
+    data.forEach(function(c){
+      var btn = document.createElement('div');
+      btn.className = 'cat-btn';
+      btn.textContent = c.name;
+      btn.setAttribute('data-id', c.id);
+      btn.style.borderColor = c.color;
+      btn.onclick = function(){
+        document.querySelectorAll('.cat-btn').forEach(function(b){ b.classList.remove('active'); b.style.background=''; });
+        btn.classList.add('active');
+        btn.style.background = c.color;
+        selectedCategoryId = c.id;
+      };
+      container.appendChild(btn);
+    });
+    // Auto-select first
+    if(data.length > 0){
+      var first = container.querySelector('.cat-btn');
+      if(first){ first.click(); }
+    }
+  });
+}
+
+function toggleCheck(el){
+  el.classList.toggle('checked');
+  el.innerHTML = el.classList.contains('checked') ? '✓' : '';
+}
+
+function browseAudio(){
+  callBridgeAsync('browse_audio_file', [], function(data){
+    if(data) document.getElementById('song-filepath').value = data;
+  });
+}
+
+function editAudio(){ alert('Audio Cue Editor — coming soon'); }
+
+function previewAudio(){
+  var filePath = document.getElementById('song-filepath').value;
+  var status = document.getElementById('preview-status');
+  if(!filePath){ status.textContent = '⚠ Select an audio file first'; status.style.color='var(--am)'; return; }
+  status.textContent = '⚠ Audio playback coming in next update'; status.style.color='var(--am)';
+}
+
+function autoFillMetadata(){
+  var filePath = document.getElementById('song-filepath').value;
+  if(!filePath){ alert('Select an audio file first'); return; }
+  alert('AI Auto-fill will analyze:\n' + filePath + '\n\nThis feature requires librosa.\nComing in next update.');
+}
+
+function saveSong(){
+  var artist = document.getElementById('song-artist').value.trim();
+  var title = document.getElementById('song-title').value.trim();
+  if(!artist){ alert('Artist is required!'); document.getElementById('song-artist').focus(); return; }
+  if(!title){ alert('Song title is required!'); document.getElementById('song-title').focus(); return; }
+
+  var song = {
+    artist: artist,
+    title: title,
+    album: document.getElementById('song-album').value,
+    playlister_code: document.getElementById('song-playlister').value,
+    label: document.getElementById('song-label').value,
+    cd_key: document.getElementById('song-cdkey').value,
+    barcode: document.getElementById('song-barcode').value,
+    songwriter: document.getElementById('song-songwriter').value,
+    composer: document.getElementById('song-composer').value,
+    comments: document.getElementById('song-comments').value,
+    category_id: selectedCategoryId,
+    era: document.getElementById('song-era').value || null,
+    vocal: document.getElementById('song-vocal').value || null,
+    priority: parseInt(document.getElementById('song-priority').value) || 1,
+    year: parseInt(document.getElementById('song-year').value) || null,
+    bpm: parseInt(document.getElementById('song-bpm').value) || null,
+    file_path: document.getElementById('song-filepath').value,
+    is_enabled: document.getElementById('check-enabled').classList.contains('checked'),
+    is_frozen: document.getElementById('check-frozen').classList.contains('checked'),
+    separation_minutes: parseInt(document.getElementById('song-separation').value) || 120,
+  };
+
+  callBridgeAsync('add_song', [JSON.stringify(song)], function(data){
+    if(data){
+      alert('Song saved!\nAuto Code: ' + (data.auto_code || '') + '\n\n"' + artist + ' — ' + title + '" added to library.');
+      window.location.href = 'songs_library.html';
+    } else {
+      alert('Failed to save song. Check required fields.');
+    }
+  });
+}
+
+function cancelSong(){
+  window.location.href = 'songs_library.html';
+}
+
+// ── Artist Autocomplete ─────────────────────────
+var _artistTimer = null;
+function onArtistInput(){
+  var val = document.getElementById('song-artist').value.trim();
+  if(val.length < 2){ hideArtistDropdown(); return; }
+  clearTimeout(_artistTimer);
+  _artistTimer = setTimeout(function(){
+    callBridgeAsync('search_artists', [val], function(data){
+      if(!data || data.length === 0){ hideArtistDropdown(); return; }
+      var dd = document.getElementById('artist-dropdown');
+      dd.innerHTML = '';
+      data.forEach(function(name){
+        var item = document.createElement('div');
+        item.textContent = name;
+        item.style.cssText = 'padding:8px 12px;color:#F1F5FF;font-size:12px;cursor:pointer;border-bottom:1px solid #1C1F38';
+        item.onmouseenter = function(){ item.style.background = '#1E1535'; };
+        item.onmouseleave = function(){ item.style.background = ''; };
+        item.onmousedown = function(e){
+          e.preventDefault();
+          document.getElementById('song-artist').value = name;
+          hideArtistDropdown();
+        };
+        dd.appendChild(item);
+      });
+      dd.style.display = 'block';
+    });
+  }, 200);
+}
+
+function hideArtistDropdown(){
+  document.getElementById('artist-dropdown').style.display = 'none';
+}
+
+// ── Find Artist Picker ──────────────────────────
+function openFindArtist(){
+  var query = document.getElementById('song-artist').value.trim() || '%';
+  callBridgeAsync('search_artists', [query], function(data){
+    // If nothing matches current query, get all
+    if(!data || data.length === 0){
+      callBridgeAsync('search_artists', ['%'], function(all){
+        if(!all || all.length === 0){
+          showArtistToast('No artists in library yet', false);
+          return;
+        }
+        showArtistPicker(all);
+      });
+      return;
+    }
+    showArtistPicker(data);
+  });
+}
+
+function showArtistPicker(artists){
+  var existing = document.getElementById('artist-picker-modal');
+  if(existing) existing.remove();
+
+  var modal = document.createElement('div');
+  modal.id = 'artist-picker-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:600;display:flex;align-items:center;justify-content:center';
+
+  var card = document.createElement('div');
+  card.style.cssText = 'background:#0E1020;border:1px solid #8B5CF6;border-radius:12px;width:400px;max-height:500px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 10px 40px rgba(139,92,246,0.3)';
+
+  card.innerHTML =
+    '<div style="padding:16px 20px;border-bottom:1px solid #1C1F38;display:flex;justify-content:space-between;align-items:center">'
+    + '<div><div style="color:#F1F5FF;font-weight:700;font-size:14px;letter-spacing:1px">SELECT ARTIST</div>'
+    + '<div style="color:#454D6D;font-size:10px;margin-top:2px">' + artists.length + ' artists in library</div></div>'
+    + '<button id="artist-picker-close" style="background:#1C1F38;border:none;color:#8891B8;width:28px;height:28px;border-radius:6px;cursor:pointer;font-size:14px">✕</button>'
+    + '</div>'
+    + '<div style="padding:12px 16px;border-bottom:1px solid #1C1F38">'
+    + '<input id="artist-search-input" placeholder="Search artists..." style="width:100%;background:#131626;border:1px solid #1C1F38;border-radius:6px;padding:8px 12px;color:#F1F5FF;font-size:12px;outline:none;box-sizing:border-box;font-family:Inter,sans-serif">'
+    + '</div>'
+    + '<div id="artist-list" style="overflow-y:auto;max-height:300px;padding:8px 0"></div>';
+
+  modal.appendChild(card);
+  document.body.appendChild(modal);
+
+  function renderList(list){
+    var container = document.getElementById('artist-list');
+    container.innerHTML = '';
+    if(list.length === 0){
+      container.innerHTML = '<div style="padding:20px;text-align:center;color:#454D6D;font-size:12px">No artists found</div>';
+      return;
+    }
+    list.forEach(function(artist){
+      var item = document.createElement('div');
+      item.style.cssText = 'padding:10px 16px;cursor:pointer;color:#F1F5FF;font-size:13px;border-bottom:1px solid #0E1020;display:flex;align-items:center;gap:10px';
+      item.innerHTML = '<span style="color:#8B5CF6;font-size:16px">♪</span>' + artist;
+      item.onmouseenter = function(){ item.style.background = '#1E1535'; };
+      item.onmouseleave = function(){ item.style.background = ''; };
+      item.onclick = function(){
+        document.getElementById('song-artist').value = artist;
+        modal.remove();
+        showArtistToast('Artist selected: ' + artist, true);
+      };
+      container.appendChild(item);
+    });
+  }
+
+  renderList(artists);
+
+  document.getElementById('artist-search-input').addEventListener('input', function(e){
+    var q = e.target.value.toLowerCase();
+    renderList(artists.filter(function(a){ return a.toLowerCase().indexOf(q) !== -1; }));
+  });
+
+  document.getElementById('artist-picker-close').onclick = function(){ modal.remove(); };
+  modal.addEventListener('click', function(e){ if(e.target === modal) modal.remove(); });
+
+  setTimeout(function(){ document.getElementById('artist-search-input').focus(); }, 50);
+}
+
+// ── New Artist Popup ────────────────────────────
+function openNewArtistPopup(){
+  document.getElementById('new-artist-name').value = '';
+  document.getElementById('new-artist-country').value = '';
+  document.getElementById('new-artist-genre').value = '';
+  document.getElementById('new-artist-overlay').style.display = 'flex';
+  setTimeout(function(){ document.getElementById('new-artist-name').focus(); }, 50);
+}
+
+function closeNewArtistPopup(){
+  document.getElementById('new-artist-overlay').style.display = 'none';
+}
+
+function confirmNewArtist(){
+  var name = document.getElementById('new-artist-name').value.trim();
+  if(!name){ alert('Artist name is required!'); return; }
+  callBridgeAsync('search_artists', [name], function(existing){
+    if(existing && existing.length > 0){
+      // Check for exact match
+      var exact = existing.find(function(a){ return a.toLowerCase() === name.toLowerCase(); });
+      if(exact){
+        document.getElementById('song-artist').value = exact;
+        closeNewArtistPopup();
+        showArtistToast('Artist already exists! Using existing "' + exact + '"', false);
+        return;
+      }
+    }
+    // New artist
+    document.getElementById('song-artist').value = name;
+    closeNewArtistPopup();
+    showArtistToast('Artist "' + name + '" added!', true);
+  });
+}
+
+function showArtistToast(msg, success){
+  var t = document.getElementById('artist-toast');
+  if(!t){ t=document.createElement('div'); t.id='artist-toast';
+    t.style.cssText='position:fixed;bottom:60px;left:50%;transform:translateX(-50%);padding:10px 24px;border-radius:8px;font-size:12px;font-weight:600;z-index:999;transition:opacity 0.3s;pointer-events:none;color:#fff';
+    document.body.appendChild(t); }
+  t.textContent=msg; t.style.background=success?'#10B981':'#F59E0B'; t.style.opacity='1';
+  clearTimeout(t._timer); t._timer=setTimeout(function(){t.style.opacity='0';},3000);
+}
+
+// Ensure page starts at top with Artist field visible
+document.querySelector('.col-left').scrollTop = 0;
+document.getElementById('song-artist').focus();
+</script>
+</body>
+</html>

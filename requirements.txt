@@ -1,0 +1,20 @@
+# RadioAI Studio Pro — Python dependencies
+# Python 3.11+ on Windows 10/11
+
+# UI
+PyQt6>=6.6.0
+PyQt6-WebEngine>=6.6.0
+
+# Audio playback (VLC bindings — needs VLC runtime on PATH)
+python-vlc>=3.0.18
+
+# AI
+anthropic>=0.40.0
+
+# Audio metadata + analysis
+mutagen>=1.47.0
+librosa>=0.10.1
+pydub>=0.25.1
+
+# Packaging
+pyinstaller>=6.3.0

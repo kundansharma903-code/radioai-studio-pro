@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Force Clocks — RadioAI Studio Pro</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+/* ── Left Panel Override List ────────────────────── */
+.lp-top-bar{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;background:var(--panel);border-bottom:1px solid var(--b1)}
+.override-count{background:var(--amD);color:var(--am);font-size:10px;font-weight:600;padding:3px 10px;border-radius:6px;border-left:2px solid var(--am)}
+.add-new-btn{background:var(--gnD);color:var(--gn);font-size:10px;font-weight:600;padding:3px 10px;border-radius:6px;border:none;cursor:pointer;font-family:'Inter',sans-serif}
+.add-new-btn:hover{opacity:0.85}
+
+/* Override Items */
+.override-list{padding:8px;display:flex;flex-direction:column;gap:2px}
+.override-item{position:relative;background:var(--card);border-radius:7px;padding:10px 12px 10px 14px;cursor:pointer;transition:background 0.15s}
+.override-item:hover{background:var(--card2)}
+.override-item.selected{background:rgba(245,158,11,0.06);border-left:3px solid var(--am)}
+.override-item.selected .ov-name{color:var(--t1)}
+.override-item .ov-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:4px;flex-shrink:0}
+.override-item .ov-dot.amber{background:var(--am);box-shadow:0 0 4px var(--am)}
+.override-item .ov-dot.gray{background:var(--t3)}
+.ov-name{font-size:12px;font-weight:400;color:var(--t2)}
+.ov-meta{font-size:8px;color:var(--t3);margin-top:4px}
+.ov-clock{font-size:8px;color:var(--t4);margin-top:2px}
+.ov-recur-badge{position:absolute;right:10px;top:8px;background:var(--b2);color:var(--t3);font-size:7px;padding:1px 6px;border-radius:4px}
+.override-sep{height:1px;background:rgba(28,31,56,0.3);margin:0}
+
+/* Override Action Buttons */
+.override-actions{padding:8px;display:flex;flex-direction:column;gap:4px}
+.ov-action{display:block;width:100%;padding:7px 12px;border-radius:6px;font-family:'Inter',sans-serif;font-size:10px;font-weight:600;cursor:pointer;text-align:left;border:none}
+.ov-action-amber{background:var(--amD);color:var(--am);border-left:2px solid var(--am)}
+.ov-action-amber:hover{opacity:0.85}
+.ov-action-cyan{background:var(--cyD);color:var(--cy);border-left:2px solid var(--cy)}
+.ov-action-cyan:hover{opacity:0.85}
+.ov-action-rose{background:var(--rsD);color:var(--rs);border-left:2px solid var(--rs)}
+.ov-action-rose:hover{opacity:0.85}
+
+/* ── Center Panel — Calendar ─────────────────────── */
+.cal-header{display:flex;align-items:center;height:40px;background:var(--card);border-bottom:1px solid var(--b2);padding:0 10px;border-left:3px solid var(--am)}
+.cal-title{font-size:11px;font-weight:700;color:var(--am);flex:1}
+.cal-nav{display:flex;gap:4px}
+.cal-nav-btn{background:var(--b1);border:none;border-radius:6px;color:var(--t2);font-size:10px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;font-family:'Inter',sans-serif}
+.cal-nav-btn:hover{background:var(--b2);color:var(--t1)}
+.cal-nav-prev{width:28px;height:28px}
+.cal-nav-next{width:42px;height:28px}
+
+/* Calendar Day Headers */
+.cal-day-headers{display:grid;grid-template-columns:repeat(7,1fr);background:var(--surf);height:20px;align-items:center;padding:0 8px}
+.cal-day-header{font-size:8px;font-weight:600;color:var(--t2);text-align:center}
+
+/* Calendar Grid */
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;padding:8px;flex:1}
+.cal-cell{background:var(--card);border-radius:4px;height:54px;padding:4px 6px;position:relative;cursor:pointer;transition:background 0.15s}
+.cal-cell:hover{background:var(--card2)}
+.cal-cell.empty{background:rgba(7,8,18,0.3);cursor:default}
+.cal-cell.empty:hover{background:rgba(7,8,18,0.3)}
+.cal-cell.today{background:var(--amD);border-top:3px solid var(--am)}
+.cal-cell.today .cal-date{color:var(--am);font-weight:600}
+.cal-date{font-size:11px;color:var(--t2)}
+.cal-override-tag{position:absolute;bottom:4px;left:4px;right:4px;background:rgba(45,26,0,0.8);border-left:2px solid var(--am);border-radius:4px;padding:3px 4px;font-size:7px;font-weight:500;color:var(--am)}
+
+/* ── Timeline ────────────────────────────────────── */
+.timeline-header{display:flex;align-items:center;height:22px;background:var(--card);border-bottom:1px solid var(--b1);padding:0 10px;border-left:3px solid var(--am)}
+.timeline-title{font-size:9px;font-weight:700;color:var(--am)}
+.timeline-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:2px;padding:8px}
+.tl-block{background:var(--surf);border-radius:4px;height:36px;padding:4px 6px;display:flex;flex-direction:column;justify-content:center}
+.tl-block.active{background:rgba(245,158,11,0.08);border-left:none}
+.tl-block.active .tl-time{color:var(--am)}
+.tl-block.active .tl-label{color:var(--am);font-weight:500}
+.tl-time{font-family:'Roboto Mono',monospace;font-size:8px;color:var(--t3)}
+.tl-label{font-size:7px;color:var(--t4);margin-top:2px}
+
+/* ── Right Panel — Editor ────────────────────────── */
+.rp-editor-header{display:flex;flex-direction:column;padding:10px;background:var(--panel);border-bottom:1px solid var(--b1);border-left:3px solid var(--am)}
+.rp-editor-title{font-size:11px;font-weight:700;color:var(--am)}
+.rp-editor-sub{font-size:9px;color:var(--t3);margin-top:2px}
+
+.rp-editor-body{flex:1;overflow-y:auto;padding:10px}
+.rp-editor-body::-webkit-scrollbar{width:6px}
+.rp-editor-body::-webkit-scrollbar-thumb{background:var(--b2);border-radius:3px}
+
+.editor-field{margin-bottom:6px}
+.editor-label{font-size:9px;font-weight:500;color:var(--t3);margin-bottom:2px}
+.editor-input{width:100%;padding:5px 8px;background:rgba(28,31,56,0.5);border:none;border-radius:5px;color:var(--t1);font-size:10px;font-family:'Inter',sans-serif}
+.editor-input:focus{outline:none;box-shadow:0 0 0 1px var(--am)}
+
+/* What Happens Section */
+.wh-header{display:flex;align-items:center;height:22px;background:var(--card);border-bottom:1px solid var(--b1);border-left:3px solid var(--gn);padding:0 10px;margin-top:4px}
+.wh-title{font-size:9px;font-weight:700;color:var(--gn)}
+.wh-list{padding:8px 10px;display:flex;flex-direction:column;gap:8px}
+.wh-item{display:flex;align-items:center;gap:8px;font-size:9px}
+.wh-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.wh-dot.amber{background:var(--am)}
+.wh-dot.green{background:var(--gn)}
+.wh-dot.cyan{background:var(--cy)}
+.wh-dot.gray{background:var(--t3)}
+
+/* Editor Buttons */
+.editor-actions{padding:8px 10px;display:flex;flex-direction:column;gap:8px;margin-top:4px}
+.save-btn{width:100%;padding:8px;background:var(--am);color:#fff;border:none;border-radius:8px;font-family:'Inter',sans-serif;font-size:11px;font-weight:600;cursor:pointer;text-align:center}
+.save-btn:hover{opacity:0.9}
+.delete-btn{width:100%;padding:8px;background:var(--rsD);color:var(--rs);border:none;border-left:2px solid var(--rs);border-radius:8px;font-family:'Inter',sans-serif;font-size:11px;font-weight:600;cursor:pointer;text-align:center}
+.delete-btn:hover{opacity:0.85}
+
+/* ── Amber breadcrumb active ─────────────────────── */
+.breadcrumb .active-am{color:var(--am);font-weight:600}
+.header-am-accent{position:absolute;top:0;left:0;right:0;height:2px;background:rgba(245,158,11,0.4)}
+
+/* ── Logo amber bars ─────────────────────────────── */
+.logo-bars{display:flex;align-items:flex-end;gap:3px;margin-right:4px}
+.logo-bar{width:5px;border-radius:2px;background:var(--am)}
+.logo-bar:nth-child(1){height:6px}
+.logo-bar:nth-child(2){height:13px}
+.logo-bar:nth-child(3){height:20px}
+.logo-bar:nth-child(4){height:13px}
+.logo-bar:nth-child(5){height:6px}
+
+/* ── Open Studio Header Button ───────────────────── */
+.open-studio-hdr{background:var(--card);border:none;border-left:2px solid var(--am);border-radius:8px;padding:8px 12px;font-family:'Inter',sans-serif;cursor:pointer;display:flex;flex-direction:column;align-items:flex-start;margin-left:12px}
+.open-studio-hdr .os-label{font-size:11px;font-weight:600;color:var(--am)}
+.open-studio-hdr .os-sub{font-size:8px;color:var(--t3)}
+.open-studio-hdr:hover{background:var(--card2)}
+
+/* Breadcrumb amber highlight box */
+.bc-active-box{background:var(--amD);border-left:2px solid var(--am);border-radius:6px;padding:6px 10px}
+</style>
+</head>
+<body>
+
+<!-- ═══ HEADER ═══════════════════════════════════════ -->
+<header class="header" style="height:72px;min-height:72px">
+  <div class="header-am-accent"></div>
+  <div class="logo" onclick="goBack()">
+    <div style="background:var(--amD);border-radius:9px;width:48px;height:48px;display:flex;align-items:center;justify-content:center">
+      <div class="logo-bars">
+        <div class="logo-bar"></div><div class="logo-bar"></div><div class="logo-bar"></div><div class="logo-bar"></div><div class="logo-bar"></div>
+      </div>
+    </div>
+    <div class="logo-text">
+      <span class="logo-title">RadioAI</span>
+      <span class="logo-sub" style="color:var(--am)">STUDIO PRO</span>
+    </div>
+  </div>
+
+  <div style="width:1px;height:16px;background:var(--b2);margin:0 4px"></div>
+  <nav class="breadcrumb">
+    <a onclick="goBack()">Control Panel</a>
+    <span class="bc-sep" style="width:1px;height:16px;background:var(--b2);display:inline-block"></span>
+    <a onclick="goToScheduling()">Scheduling</a>
+    <span class="bc-sep" style="width:1px;height:16px;background:var(--b2);display:inline-block"></span>
+    <span class="bc-active-box"><span class="active-am">Force Clocks</span></span>
+  </nav>
+
+  <div style="width:1px;height:40px;background:var(--b2);margin:0 4px"></div>
+  <div class="page-title-area">
+    <span class="page-title">Force Clocks</span>
+    <span class="page-subtitle">RadioAI Studio  &bull;  <span class="station-name">KISS FM 91.5</span>  &bull;  <span class="station-loc">Jaipur</span></span>
+  </div>
+
+  <div class="header-spacer"></div>
+
+  <div style="display:flex;flex-direction:column;align-items:flex-end">
+    <span class="clock-time" id="headerClock">21:56:15</span>
+    <span class="clock-date station-name">KISS FM 91.5</span>
+  </div>
+
+  <button class="open-studio-hdr" onclick="goBack()">
+    <span class="os-label">&#9654; Open Studio</span>
+    <span class="os-sub">Billie Eilish</span>
+  </button>
+</header>
+
+<!-- ═══ MAIN 3-COLUMN ════════════════════════════════ -->
+<div class="main">
+
+  <!-- ── Left Panel: Override List ──────────────────── -->
+  <aside class="left-panel" style="width:280px;min-width:280px">
+    <div class="lp-top-bar">
+      <span class="override-count">4 Overrides</span>
+      <button class="add-new-btn">+ Add New</button>
+    </div>
+
+    <div class="override-list" id="overrideList">
+      <!-- items rendered by JS -->
+    </div>
+
+    <div class="override-actions" style="margin-top:auto;border-top:1px solid var(--b1);padding-top:8px">
+      <button class="ov-action ov-action-amber">&#9998; Edit Override</button>
+      <button class="ov-action ov-action-cyan">&#8853; Duplicate</button>
+      <button class="ov-action ov-action-rose">&#10005; Delete</button>
+    </div>
+  </aside>
+
+  <!-- ── Center Panel: Calendar + Timeline ──────────── -->
+  <section class="center-panel" style="background:var(--panel)">
+    <!-- Calendar Header -->
+    <div class="cal-header">
+      <span class="cal-title" id="calTitle">FORCE CLOCK OVERRIDES &mdash; APRIL 2026</span>
+      <div class="cal-nav">
+        <button class="cal-nav-btn cal-nav-prev" id="calPrev" title="Previous Month">&#9664;</button>
+        <button class="cal-nav-btn cal-nav-next" id="calNext" title="Next Month">&#9654; &#9654;</button>
+      </div>
+    </div>
+
+    <!-- Day Headers -->
+    <div class="cal-day-headers">
+      <div class="cal-day-header">Sun</div>
+      <div class="cal-day-header">Mon</div>
+      <div class="cal-day-header">Tue</div>
+      <div class="cal-day-header">Wed</div>
+      <div class="cal-day-header">Thu</div>
+      <div class="cal-day-header">Fri</div>
+      <div class="cal-day-header">Sat</div>
+    </div>
+
+    <!-- Calendar Grid -->
+    <div class="cal-grid" id="calGrid">
+      <!-- rendered by JS -->
+    </div>
+
+    <!-- Timeline -->
+    <div class="timeline-header">
+      <span class="timeline-title" id="timelineTitle">TODAY'S TIMELINE &mdash; 08 April 2026</span>
+    </div>
+    <div class="timeline-grid" id="timelineGrid">
+      <!-- rendered by JS -->
+    </div>
+  </section>
+
+  <!-- ── Right Panel: Edit Override ─────────────────── -->
+  <aside class="right-panel" style="width:436px;min-width:436px">
+    <div class="rp-editor-header">
+      <span class="rp-editor-title">EDIT OVERRIDE</span>
+      <span class="rp-editor-sub" id="editorOverrideName">Eid Special</span>
+    </div>
+
+    <div class="rp-editor-body">
+      <div class="editor-field">
+        <div class="editor-label">Override Name</div>
+        <input class="editor-input" id="fieldName" value="Eid Special">
+      </div>
+      <div class="editor-field">
+        <div class="editor-label">Target Clock</div>
+        <input class="editor-input" id="fieldClock" value="Eid Music Clock">
+      </div>
+      <div class="editor-field">
+        <div class="editor-label">Date Type</div>
+        <input class="editor-input" id="fieldDateType" value="Single Date">
+      </div>
+      <div class="editor-field">
+        <div class="editor-label">Date</div>
+        <input class="editor-input" id="fieldDate" value="31 March 2026">
+      </div>
+      <div class="editor-field">
+        <div class="editor-label">Time Range</div>
+        <input class="editor-input" id="fieldTime" value="All Day (00:00\u201323:59)">
+      </div>
+      <div class="editor-field">
+        <div class="editor-label">Recurring?</div>
+        <input class="editor-input" id="fieldRecurring" value="No \u2014 One Time Only">
+      </div>
+      <div class="editor-field">
+        <div class="editor-label">Priority</div>
+        <input class="editor-input" id="fieldPriority" value="Highest \u2014 overrides everything">
+      </div>
+
+      <!-- What Happens -->
+      <div class="wh-header">
+        <span class="wh-title">WHAT HAPPENS</span>
+      </div>
+      <div class="wh-list" id="whList">
+        <div class="wh-item"><span class="wh-dot amber"></span><span style="color:var(--am)">All regular clocks suspended for this day</span></div>
+        <div class="wh-item"><span class="wh-dot green"></span><span style="color:var(--gn)">Eid Music Clock plays from 00:00 to 23:59</span></div>
+        <div class="wh-item"><span class="wh-dot cyan"></span><span style="color:var(--cy)">Spots &amp; Commercials still play at break times</span></div>
+        <div class="wh-item"><span class="wh-dot gray"></span><span style="color:var(--t2)">Jingles and stitcher run normally</span></div>
+      </div>
+
+      <!-- Action Buttons -->
+      <div class="editor-actions">
+        <button class="save-btn">&#10003;  Save Override</button>
+        <button class="delete-btn">&#10005;  Delete Override</button>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<!-- ═══ STATUS BAR ═══════════════════════════════════ -->
+<footer class="status-bar" style="height:50px;min-height:50px">
+  <span style="background:var(--p4);color:var(--p1);font-size:9px;font-weight:600;padding:4px 12px;border-radius:6px">&#11044; AUTO MODE</span>
+  <span style="background:var(--amD);color:var(--am);font-size:9px;font-weight:600;padding:4px 12px;border-radius:6px">&#11044; 4 Overrides</span>
+  <span style="background:var(--gnD);color:var(--gn);font-size:9px;font-weight:600;padding:4px 12px;border-radius:6px">&#11044; 1 Active Today</span>
+  <div class="status-spacer"></div>
+  <span class="status-info" style="color:var(--t4)">Force Clocks  &bull;  RadioAI Studio v1.0.0</span>
+  <button style="background:var(--p4);border:none;border-left:2px solid var(--p1);border-radius:8px;padding:6px 14px;color:var(--p2);font-size:11px;font-weight:600;font-family:'Inter',sans-serif;cursor:pointer">&#9654; Open Studio</button>
+</footer>
+
+<!-- ═══ JAVASCRIPT ═══════════════════════════════════ -->
+<script>
+/* ── Navigation ──────────────────────────────────── */
+function goBack(){ window.location.href='control_panel.html'; }
+function goToScheduling(){ window.location.href='control_panel.html#scheduling'; }
+
+/* ── Clock ───────────────────────────────────────── */
+function updateClock(){
+  var n=new Date();
+  var h=String(n.getHours()).padStart(2,'0');
+  var m=String(n.getMinutes()).padStart(2,'0');
+  var s=String(n.getSeconds()).padStart(2,'0');
+  document.getElementById('headerClock').textContent=h+':'+m+':'+s;
+}
+setInterval(updateClock,1000);
+updateClock();
+
+/* ── Override Data ───────────────────────────────── */
+var overrides=[
+  {id:1,name:'Eid Special',date:'31 Mar 2026',schedule:'All Day',clock:'Eid Music Clock',recurring:false,active:false,
+   fields:{name:'Eid Special',clock:'Eid Music Clock',dateType:'Single Date',date:'31 March 2026',time:'All Day (00:00\u201323:59)',recurring:'No \u2014 One Time Only',priority:'Highest \u2014 overrides everything'},
+   whatHappens:[
+     {color:'amber',textColor:'var(--am)',text:'All regular clocks suspended for this day'},
+     {color:'green',textColor:'var(--gn)',text:'Eid Music Clock plays from 00:00 to 23:59'},
+     {color:'cyan',textColor:'var(--cy)',text:'Spots & Commercials still play at break times'},
+     {color:'gray',textColor:'var(--t2)',text:'Jingles and stitcher run normally'}
+   ]},
+  {id:2,name:'Diwali Special',date:'05 Nov 2026',schedule:'All Day',clock:'Festive Clock',recurring:false,active:false,
+   fields:{name:'Diwali Special',clock:'Festive Clock',dateType:'Single Date',date:'05 November 2026',time:'All Day (00:00\u201323:59)',recurring:'No \u2014 One Time Only',priority:'High'},
+   whatHappens:[
+     {color:'amber',textColor:'var(--am)',text:'All regular clocks suspended for this day'},
+     {color:'green',textColor:'var(--gn)',text:'Festive Clock plays from 00:00 to 23:59'},
+     {color:'cyan',textColor:'var(--cy)',text:'Spots & Commercials still play at break times'},
+     {color:'gray',textColor:'var(--t2)',text:'Jingles and stitcher run normally'}
+   ]},
+  {id:3,name:'Morning News Override',date:'Mon\u2013Fri',schedule:'06:00\u201306:30',clock:'News Intro Clock',recurring:true,active:true,
+   fields:{name:'Morning News Override',clock:'News Intro Clock',dateType:'Recurring Days',date:'Mon\u2013Fri',time:'06:00\u201306:30',recurring:'Yes \u2014 Every Weekday',priority:'Normal'},
+   whatHappens:[
+     {color:'amber',textColor:'var(--am)',text:'Regular clock suspended from 06:00 to 06:30'},
+     {color:'green',textColor:'var(--gn)',text:'News Intro Clock plays for 30 minutes'},
+     {color:'cyan',textColor:'var(--cy)',text:'Spots & Commercials still play at break times'},
+     {color:'gray',textColor:'var(--t2)',text:'Returns to regular clock after 06:30'}
+   ]},
+  {id:4,name:'Christmas Day',date:'25 Dec 2026',schedule:'All Day',clock:'Christmas Clock',recurring:true,active:true,
+   fields:{name:'Christmas Day',clock:'Christmas Clock',dateType:'Single Date',date:'25 December 2026',time:'All Day (00:00\u201323:59)',recurring:'Yes \u2014 Every Year',priority:'High'},
+   whatHappens:[
+     {color:'amber',textColor:'var(--am)',text:'All regular clocks suspended for this day'},
+     {color:'green',textColor:'var(--gn)',text:'Christmas Clock plays from 00:00 to 23:59'},
+     {color:'cyan',textColor:'var(--cy)',text:'Spots & Commercials still play at break times'},
+     {color:'gray',textColor:'var(--t2)',text:'Jingles and stitcher run normally'}
+   ]}
+];
+
+var selectedOverrideId=1;
+
+/* ── Render Override List ────────────────────────── */
+function renderOverrideList(){
+  var list=document.getElementById('overrideList');
+  list.innerHTML='';
+  overrides.forEach(function(ov,i){
+    var sel=ov.id===selectedOverrideId;
+    var div=document.createElement('div');
+    div.className='override-item'+(sel?' selected':'');
+    div.onclick=function(){selectOverride(ov.id)};
+
+    var dotClass=sel?'amber':'gray';
+    var nameWeight=sel?'font-weight:600':'';
+    var html='<div style="display:flex;align-items:center"><span class="ov-dot '+dotClass+'"></span><span class="ov-name" style="'+nameWeight+'">'+ov.name+'</span></div>';
+    html+='<div class="ov-meta">'+ov.date+'  &bull;  '+ov.schedule+'</div>';
+    html+='<div class="ov-clock">'+ov.clock+'</div>';
+    if(ov.recurring) html+='<span class="ov-recur-badge">Recur</span>';
+    div.innerHTML=html;
+    list.appendChild(div);
+
+    if(i<overrides.length-1){
+      var sep=document.createElement('div');
+      sep.className='override-sep';
+      list.appendChild(sep);
+    }
+  });
+}
+
+function selectOverride(id){
+  selectedOverrideId=id;
+  renderOverrideList();
+  updateEditor();
+}
+
+/* ── Update Editor Panel ─────────────────────────── */
+function updateEditor(){
+  var ov=overrides.find(function(o){return o.id===selectedOverrideId});
+  if(!ov) return;
+  document.getElementById('editorOverrideName').textContent=ov.name;
+  document.getElementById('fieldName').value=ov.fields.name;
+  document.getElementById('fieldClock').value=ov.fields.clock;
+  document.getElementById('fieldDateType').value=ov.fields.dateType;
+  document.getElementById('fieldDate').value=ov.fields.date;
+  document.getElementById('fieldTime').value=ov.fields.time;
+  document.getElementById('fieldRecurring').value=ov.fields.recurring;
+  document.getElementById('fieldPriority').value=ov.fields.priority;
+
+  var whList=document.getElementById('whList');
+  whList.innerHTML='';
+  ov.whatHappens.forEach(function(wh){
+    var div=document.createElement('div');
+    div.className='wh-item';
+    div.innerHTML='<span class="wh-dot '+wh.color+'"></span><span style="color:'+wh.textColor+'">'+wh.text+'</span>';
+    whList.appendChild(div);
+  });
+}
+
+/* ── Calendar ────────────────────────────────────── */
+var calYear=2026;
+var calMonth=3; // April (0-indexed)
+
+var MONTH_NAMES=['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+function renderCalendar(){
+  var title='FORCE CLOCK OVERRIDES \u2014 '+MONTH_NAMES[calMonth].toUpperCase()+' '+calYear;
+  document.getElementById('calTitle').textContent=title;
+
+  var firstDay=new Date(calYear,calMonth,1).getDay(); // 0=Sun
+  var daysInMonth=new Date(calYear,calMonth+1,0).getDate();
+  var grid=document.getElementById('calGrid');
+  grid.innerHTML='';
+
+  var today=new Date();
+  var todayDate=today.getDate();
+  var todayMonth=today.getMonth();
+  var todayYear=today.getFullYear();
+
+  // Empty cells before first day
+  for(var e=0;e<firstDay;e++){
+    var empty=document.createElement('div');
+    empty.className='cal-cell empty';
+    grid.appendChild(empty);
+  }
+
+  // Day cells
+  for(var d=1;d<=daysInMonth;d++){
+    var cell=document.createElement('div');
+    var isToday=(d===todayDate && calMonth===todayMonth && calYear===todayYear);
+    cell.className='cal-cell'+(isToday?' today':'');
+
+    var dateSpan='<span class="cal-date">'+d+'</span>';
+    var override=getOverrideForDate(calYear,calMonth,d);
+    var tagHtml='';
+    if(override){
+      tagHtml='<div class="cal-override-tag">'+override.name+'</div>';
+    }
+    cell.innerHTML=dateSpan+tagHtml;
+    grid.appendChild(cell);
+  }
+
+  // Trailing empty cells
+  var totalCells=firstDay+daysInMonth;
+  var remaining=totalCells%7===0?0:7-(totalCells%7);
+  for(var r=0;r<remaining;r++){
+    var emptyEnd=document.createElement('div');
+    emptyEnd.className='cal-cell empty';
+    grid.appendChild(emptyEnd);
+  }
+
+  renderTimeline();
+}
+
+function getOverrideForDate(y,m,d){
+  // Check if the selected override or any override falls on this date
+  // For demo: Eid Special on March 31 (show on April 8 as "today" per design)
+  var today=new Date();
+  if(d===today.getDate() && m===today.getMonth() && y===today.getFullYear()){
+    var sel=overrides.find(function(o){return o.id===selectedOverrideId});
+    if(sel) return sel;
+  }
+  return null;
+}
+
+function renderTimeline(){
+  var today=new Date();
+  var day=String(today.getDate()).padStart(2,'0');
+  var monthName=MONTH_NAMES[today.getMonth()];
+  document.getElementById('timelineTitle').textContent="TODAY'S TIMELINE \u2014 "+day+' '+monthName+' '+today.getFullYear();
+
+  var grid=document.getElementById('timelineGrid');
+  var blocks=[
+    {time:'00:00',label:'Regular Clock',active:false},
+    {time:'04:00',label:'Regular Clock',active:false},
+    {time:'08:00',label:'All Day Override',active:true},
+    {time:'12:00',label:'Regular Clock',active:false},
+    {time:'16:00',label:'Regular Clock',active:false},
+    {time:'20:00',label:'Regular Clock',active:false}
+  ];
+
+  grid.innerHTML='';
+  blocks.forEach(function(b){
+    var div=document.createElement('div');
+    div.className='tl-block'+(b.active?' active':'');
+    div.innerHTML='<span class="tl-time">'+b.time+'</span><span class="tl-label">'+b.label+'</span>';
+    grid.appendChild(div);
+  });
+}
+
+document.getElementById('calPrev').addEventListener('click',function(){
+  calMonth--;
+  if(calMonth<0){calMonth=11;calYear--}
+  renderCalendar();
+});
+
+document.getElementById('calNext').addEventListener('click',function(){
+  calMonth++;
+  if(calMonth>11){calMonth=0;calYear++}
+  renderCalendar();
+});
+
+/* ── Initialize ──────────────────────────────────── */
+// Set initial month to current month
+(function(){
+  var now=new Date();
+  calYear=now.getFullYear();
+  calMonth=now.getMonth();
+  renderOverrideList();
+  renderCalendar();
+  updateEditor();
+})();
+</script>
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script src="js/bridge_helper.js"></script>
+</body>
+</html>

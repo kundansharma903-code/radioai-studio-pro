@@ -1,0 +1,734 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Songs Library — RadioAI Studio Pro</title>
+<style>
+/* ── Local Font Faces ───────────────────────────── */
+@font-face{font-family:'Inter';font-weight:400;font-style:normal;font-display:swap;src:url('../../assets/fonts/Inter_18pt-Regular.ttf') format('truetype')}
+@font-face{font-family:'Inter';font-weight:500;font-style:normal;font-display:swap;src:url('../../assets/fonts/Inter_18pt-Medium.ttf') format('truetype')}
+@font-face{font-family:'Inter';font-weight:600;font-style:normal;font-display:swap;src:url('../../assets/fonts/Inter_18pt-SemiBold.ttf') format('truetype')}
+@font-face{font-family:'Inter';font-weight:700;font-style:normal;font-display:swap;src:url('../../assets/fonts/Inter_18pt-Bold.ttf') format('truetype')}
+@font-face{font-family:'Roboto Mono';font-weight:400;font-style:normal;font-display:swap;src:url('../../assets/fonts/RobotoMono-Regular.ttf') format('truetype')}
+@font-face{font-family:'Roboto Mono';font-weight:700;font-style:normal;font-display:swap;src:url('../../assets/fonts/RobotoMono-Bold.ttf') format('truetype')}
+
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+:root{
+  --bg:#070812;--surf:#0A0C18;--panel:#0E1020;--card:#131626;--card2:#181B2E;
+  --b1:#1C1F38;--b2:#252848;
+  --p1:#8B5CF6;--p2:#A78BFA;--p3:#6D28D9;--p4:#1E1535;
+  --gn:#10B981;--gnD:#052E16;--am:#F59E0B;--amD:#2D1A00;
+  --rs:#F43F5E;--rsD:#1F0A12;--cy:#06B6D4;--cyD:#083344;
+  --tl:#14B8A6;--tlD:#042F2A;
+  --t1:#F1F5FF;--t2:#8891B8;--t3:#454D6D;--t4:#252840;
+  --radius:6px;--radius-lg:10px;
+}
+html,body{width:100%;height:100%;overflow:hidden;font-family:'Inter',sans-serif;font-size:13px;color:var(--t1);background:var(--bg);background-image:radial-gradient(circle,rgba(74,82,128,0.15) 1px,transparent 1px);background-size:44px 44px}
+body{display:flex;flex-direction:column}
+body::before{content:'';position:fixed;top:-200px;left:-200px;width:700px;height:600px;background:radial-gradient(ellipse,rgba(139,92,246,0.10) 0%,transparent 70%);pointer-events:none;z-index:0}
+body::after{content:'';position:fixed;bottom:-200px;right:-200px;width:600px;height:500px;background:radial-gradient(ellipse,rgba(6,182,212,0.06) 0%,transparent 70%);pointer-events:none;z-index:0}
+
+/* ── Header ───────────────────────────────────────── */
+.header{position:relative;z-index:2;display:flex;align-items:center;height:56px;min-height:56px;background:var(--surf);border-bottom:1px solid var(--b1);padding:0 16px;gap:12px}
+.logo{display:flex;align-items:center;gap:8px;cursor:pointer}
+.logo-icon{font-size:18px;color:var(--p1);font-weight:700}
+.logo-text{display:flex;flex-direction:column}
+.logo-title{font-size:14px;font-weight:700}
+.logo-sub{font-size:7px;font-weight:600;color:var(--p2);letter-spacing:2px}
+.breadcrumb{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--t3)}
+.breadcrumb a{color:var(--t3);text-decoration:none;cursor:pointer}
+.breadcrumb a:hover{color:var(--t2)}
+.breadcrumb .active{color:var(--p1);font-weight:600}
+.bc-sep{color:var(--t4)}
+.page-title-area{display:flex;flex-direction:column;gap:1px;margin-left:8px}
+.page-title{font-size:18px;font-weight:700}
+.page-subtitle{font-size:10px;color:var(--t3)}
+.header-spacer{flex:1}
+.clock-time{font-family:'Roboto Mono',monospace;font-size:18px;font-weight:700;letter-spacing:1px}
+.clock-date{font-size:9px;color:var(--t3)}
+.station-info{display:flex;flex-direction:column;align-items:flex-start;gap:1px;margin-left:16px;padding-left:16px;border-left:1px solid var(--b1)}
+.station-label{font-size:7px;color:var(--t3);letter-spacing:1px;text-transform:uppercase}
+.station-name{font-size:12px;font-weight:700}
+.station-loc{font-size:9px;color:var(--t3)}
+
+/* ── Main Layout ──────────────────────────────────── */
+.main{position:relative;z-index:1;flex:1;display:flex;overflow:hidden}
+
+/* Left Panel */
+.left-panel{width:220px;min-width:220px;background:var(--surf);border-right:1px solid var(--b1);display:flex;flex-direction:column;overflow-y:auto;overflow-x:hidden}
+.left-panel::-webkit-scrollbar{width:6px}
+.left-panel::-webkit-scrollbar-thumb{background:var(--b2);border-radius:3px}
+.lp-header{padding:12px 14px 8px;border-bottom:1px solid var(--b1)}
+.lp-count{font-size:12px;color:var(--t2);margin-bottom:8px}
+.lp-count b{color:var(--t1)}
+.lp-btn{display:block;width:100%;padding:7px 12px;border:none;border-radius:var(--radius);font-family:'Inter',sans-serif;font-size:12px;font-weight:600;cursor:pointer;margin-bottom:6px;text-align:left}
+.lp-btn-primary{background:var(--p1);color:#fff}
+.lp-btn-primary:hover{background:var(--p2)}
+.lp-btn-green{background:var(--gn);color:#fff}
+.lp-btn-green:hover{opacity:0.85}
+.lp-btn-danger{background:transparent;color:var(--rs);border:1px solid transparent}
+.lp-btn-danger:hover{background:var(--rsD)}
+
+.lp-section{padding:8px 14px}
+.lp-section-title{font-size:9px;font-weight:600;color:var(--t3);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:6px}
+.lp-input{width:100%;padding:6px 10px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);color:var(--t1);font-size:12px;font-family:'Inter',sans-serif;margin-bottom:6px}
+.lp-input:focus{outline:none;border-color:var(--p1)}
+.lp-select{width:100%;padding:5px 8px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);color:var(--t2);font-size:11px;font-family:'Inter',sans-serif;margin-bottom:5px;appearance:none;-webkit-appearance:none;cursor:pointer}
+.lp-select:focus{outline:none;border-color:var(--p1)}
+.lp-row{display:flex;gap:6px}
+.lp-row .lp-input{flex:1}
+.lp-check{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--t2);margin-bottom:5px;cursor:pointer}
+.lp-check input{accent-color:var(--p1)}
+
+.lp-actions{padding:10px 14px;margin-top:auto;border-top:1px solid var(--b1);display:flex;flex-direction:column;gap:5px}
+.lp-action-btn{display:block;width:100%;padding:6px 10px;border-radius:var(--radius);font-family:'Inter',sans-serif;font-size:11px;font-weight:600;cursor:pointer;text-align:left}
+.lp-action-purple{background:transparent;border:1px solid var(--p1);color:var(--p1)}
+.lp-action-purple:hover{background:var(--p4)}
+.lp-action-teal{background:var(--tl);border:none;color:#fff}
+.lp-action-teal:hover{opacity:0.85}
+.lp-action-rose{background:transparent;border:1px solid var(--rs);color:var(--rs)}
+.lp-action-rose:hover{background:var(--rsD)}
+.lp-action-amber{background:transparent;border:1px solid var(--am);color:var(--am)}
+.lp-action-amber:hover{background:var(--amD)}
+
+/* Center - Song Table */
+.center-panel{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.song-table-wrap{flex:1;overflow-y:auto}
+.song-table-wrap::-webkit-scrollbar{width:6px}
+.song-table-wrap::-webkit-scrollbar-thumb{background:var(--b2);border-radius:3px}
+table{width:100%;border-collapse:collapse}
+thead{position:sticky;top:0;z-index:1}
+th{background:var(--surf);text-align:left;padding:8px 12px;font-size:10px;font-weight:600;color:var(--t3);text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid var(--b1);cursor:pointer;user-select:none;white-space:nowrap}
+th:hover{color:var(--t2)}
+th .sort-arrow{color:var(--p1);margin-left:4px}
+td{padding:8px 12px;font-size:12px;border-bottom:1px solid var(--b1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+tr{cursor:pointer;transition:background 0.1s}
+tr:nth-child(even){background:rgba(19,22,38,0.5)}
+tr:nth-child(odd){background:rgba(24,27,46,0.3)}
+tr:hover{background:var(--b1) !important}
+tr.selected{background:var(--p4) !important;border-left:3px solid var(--p1)}
+.col-playing{width:30px;text-align:center}
+.playing-dot{width:8px;height:8px;border-radius:50%;background:var(--p1);display:inline-block;box-shadow:0 0 6px var(--p1)}
+.col-artist{min-width:160px;max-width:220px}
+.col-title{min-width:140px;max-width:220px}
+.col-duration{width:70px;font-family:'Roboto Mono',monospace;font-size:11px;color:var(--t2);text-align:right}
+.col-category{width:110px}
+.cat-badge{display:inline-block;padding:2px 10px;border-radius:8px;font-size:10px;font-weight:600;white-space:nowrap}
+.col-star{width:30px;text-align:center;color:var(--am);font-size:14px;cursor:pointer}
+.col-star:hover{color:var(--p1)}
+
+/* Right Panel */
+.right-panel{width:340px;min-width:340px;background:var(--surf);border-left:1px solid var(--b1);display:flex;flex-direction:column;overflow:hidden}
+.rp-tabs{display:flex;border-bottom:1px solid var(--b1);min-height:36px}
+.rp-tab{padding:8px 14px;font-size:11px;font-weight:500;color:var(--t3);cursor:pointer;border-bottom:2px solid transparent;transition:color 0.15s,border-color 0.15s;white-space:nowrap}
+.rp-tab:hover{color:var(--t2)}
+.rp-tab.active{color:var(--p1);border-bottom-color:var(--p1)}
+.rp-content{flex:1;overflow-y:auto;padding:12px 14px}
+.rp-content::-webkit-scrollbar{width:6px}
+.rp-content::-webkit-scrollbar-thumb{background:var(--b2);border-radius:3px}
+
+/* Song Detail Card */
+.song-detail-card{background:var(--card);border:1px solid var(--b1);border-radius:var(--radius-lg);padding:14px;margin-bottom:12px;display:flex;gap:12px}
+.song-art{width:50px;height:50px;border-radius:var(--radius);background:var(--p4);display:flex;align-items:center;justify-content:center;font-size:22px;color:var(--p1);flex-shrink:0}
+.song-info{flex:1;display:flex;flex-direction:column;gap:3px}
+.song-info-artist{font-size:14px;font-weight:700}
+.song-info-title{font-size:12px;color:var(--t2)}
+.song-info-meta{font-size:10px;color:var(--t3);display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.song-info-badges{display:flex;gap:6px;margin-top:2px}
+.detail-badge{font-size:9px;font-weight:600;padding:2px 8px;border-radius:6px}
+
+.rp-section-title{font-size:9px;font-weight:600;color:var(--t3);letter-spacing:1.5px;text-transform:uppercase;margin:12px 0 8px}
+.rp-filter-row{display:flex;gap:8px;margin-bottom:10px;align-items:center}
+.rp-filter-select{padding:4px 8px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);color:var(--t2);font-size:10px;font-family:'Inter',sans-serif}
+.rp-filter-btn{padding:4px 12px;background:transparent;border:1px solid var(--p1);border-radius:var(--radius);color:var(--p1);font-size:10px;font-weight:600;cursor:pointer;font-family:'Inter',sans-serif}
+.rp-filter-btn:hover{background:var(--p4)}
+
+/* Broadcast History Chart */
+.chart-area{background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);padding:10px;margin-bottom:12px;height:100px;display:flex;align-items:flex-end;gap:3px}
+.chart-bar{flex:1;background:var(--p1);border-radius:2px 2px 0 0;min-height:4px;transition:height 0.3s}
+.chart-bar:hover{background:var(--p2)}
+
+/* Play Statistics */
+.stats-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px}
+.stat-box{background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);padding:8px 10px;display:flex;flex-direction:column;gap:2px}
+.stat-label{font-size:9px;color:var(--t3);text-transform:uppercase;letter-spacing:1px}
+.stat-value{font-family:'Roboto Mono',monospace;font-size:18px;font-weight:700}
+.stat-value.purple{color:var(--p1)}
+.stat-value.cyan{color:var(--cy)}
+.stat-value.green{color:var(--gn)}
+.stat-value.amber{color:var(--am)}
+
+/* AI Insights */
+.ai-insights-header{display:flex;align-items:center;gap:6px}
+.ai-insights-header .powered{margin-left:auto;font-size:9px;color:var(--t3)}
+.insight-item{background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);padding:8px 12px;margin-bottom:6px}
+.insight-title{font-size:11px;font-weight:600;margin-bottom:2px}
+.insight-desc{font-size:10px;color:var(--t3)}
+.insight-amber .insight-title{color:var(--am)}
+.insight-green .insight-title{color:var(--gn)}
+.insight-purple .insight-title{color:var(--p1)}
+.insight-teal .insight-title{color:var(--tl)}
+
+/* Separation Settings */
+.sep-row{display:flex;gap:16px;align-items:center;font-size:11px;color:var(--t2)}
+.sep-row .sep-val{font-family:'Roboto Mono',monospace;font-weight:600;color:var(--t1)}
+.sep-edit{margin-left:auto;color:var(--p1);font-size:11px;cursor:pointer;font-weight:500}
+.sep-edit:hover{color:var(--p2)}
+
+/* Bottom Action Bar */
+.bottom-bar{display:flex;align-items:center;gap:8px;padding:8px 12px;border-top:1px solid var(--b1);background:var(--surf)}
+.bottom-btn{padding:5px 12px;border-radius:var(--radius);font-family:'Inter',sans-serif;font-size:11px;font-weight:600;cursor:pointer;border:1px solid var(--b1);background:var(--card);color:var(--t2);white-space:nowrap}
+.bottom-btn:hover{background:var(--b1);color:var(--t1)}
+.bottom-btn-red{border-color:var(--rs);color:var(--rs)}
+.bottom-btn-red:hover{background:var(--rsD)}
+
+/* Status Bar */
+.status-bar{position:relative;z-index:2;display:flex;align-items:center;height:40px;min-height:40px;background:var(--surf);border-top:1px solid var(--b1);padding:0 16px;gap:16px}
+.status-indicator{display:flex;align-items:center;gap:5px;font-size:10px;font-weight:500;color:var(--t2)}
+.status-dot{width:6px;height:6px;border-radius:50%;display:inline-block}
+.status-spacer{flex:1}
+.status-info{font-size:10px;color:var(--t3)}
+</style>
+</head>
+<body>
+
+<!-- ═══ HEADER ═══ -->
+<div class="header">
+  <div class="logo" onclick="goBack()">
+    <div class="logo-icon">((●))</div>
+    <div class="logo-text"><div class="logo-title">RadioAI</div><div class="logo-sub">STUDIO PRO</div></div>
+  </div>
+  <div class="breadcrumb">
+    <a onclick="goBack()">Control Panel</a><span class="bc-sep">›</span>
+    <a onclick="goBack()">Libraries</a><span class="bc-sep">›</span>
+    <span class="active">Songs</span>
+  </div>
+  <div class="page-title-area">
+    <div class="page-title">Songs Library</div>
+    <div class="page-subtitle">Manage your music collection</div>
+  </div>
+  <div class="header-spacer"></div>
+  <div style="display:flex;flex-direction:column;align-items:center;gap:1px">
+    <div class="clock-time" id="clock-time">00:00:00</div>
+    <div class="clock-date" id="clock-date"></div>
+  </div>
+  <div class="station-info">
+    <div class="station-label">ACTIVE STATION</div>
+    <div class="station-name" id="station-name">KISS FM 91.5</div>
+    <div class="station-loc" id="station-loc">Jaipur, Rajasthan</div>
+  </div>
+</div>
+
+<!-- ═══ MAIN 3-COLUMN LAYOUT ═══ -->
+<div class="main">
+
+  <!-- LEFT PANEL -->
+  <div class="left-panel">
+    <div class="lp-header">
+      <div class="lp-count"><b id="song-count-shown">25</b> / <b id="song-count-total">25</b>&nbsp; songs loaded</div>
+      <button class="lp-btn lp-btn-primary" onclick="navigateTo('add_song')">+ Add New</button>
+      <button class="lp-btn lp-btn-green" onclick="navigateTo('mass_import')">■ Mass Import</button>
+      <button class="lp-btn lp-btn-danger">× Delete</button>
+      <button class="lp-btn" style="background:transparent;color:var(--cy);border:1px solid var(--cy);margin-top:2px" onclick="navigateTo('song_categories')">⚙ Edit Categories</button>
+    </div>
+    <div class="lp-section">
+      <div class="lp-section-title">Search</div>
+      <input class="lp-input" type="text" placeholder="Search songs..." id="search-input" oninput="onSearchChanged()">
+    </div>
+    <div class="lp-section">
+      <div class="lp-section-title">Filters</div>
+      <select class="lp-select" id="filter-category" onchange="renderTable()"><option value="">All Categories</option></select>
+      <select class="lp-select" id="filter-energy" onchange="renderTable()">
+        <option value="">Energy (All)</option>
+        <option value="High">High</option>
+        <option value="Medium">Medium</option>
+        <option value="Low">Low</option>
+      </select>
+      <select class="lp-select" id="filter-vocal" onchange="renderTable()">
+        <option value="">Vocal (All)</option>
+        <option value="Male">Male</option>
+        <option value="Female">Female</option>
+        <option value="Instrumental">Instrumental</option>
+      </select>
+      <select class="lp-select" id="filter-era" onchange="renderTable()">
+        <option value="">Era (All)</option>
+        <option value="60s">60s</option><option value="70s">70s</option>
+        <option value="80s">80s</option><option value="90s">90s</option>
+        <option value="2000s">2000s</option><option value="2010s">2010s</option>
+        <option value="2020s">2020s</option>
+      </select>
+      <label class="lp-check"><input type="checkbox" id="filter-enabled" checked onchange="renderTable()"> Only Enabled</label>
+      <div class="lp-row">
+        <input class="lp-input" id="filter-bpm-min" placeholder="BPM Min" type="number" onchange="renderTable()">
+        <input class="lp-input" id="filter-bpm-max" placeholder="BPM Max" type="number" onchange="renderTable()">
+      </div>
+      <div class="lp-row">
+        <input class="lp-input" id="filter-year-min" placeholder="Year Min" type="number" onchange="renderTable()">
+        <input class="lp-input" id="filter-year-max" placeholder="Year Max" type="number" onchange="renderTable()">
+      </div>
+    </div>
+    <div class="lp-actions">
+      <button class="lp-action-btn lp-action-purple">◆ Mass Change Fields</button>
+      <button class="lp-action-btn lp-action-teal">↑ Export to Playlister</button>
+      <button class="lp-action-btn lp-action-rose">■ Print Song Report</button>
+      <button class="lp-action-btn lp-action-amber">◎ Check File Availability</button>
+    </div>
+  </div>
+
+  <!-- CENTER - SONG TABLE -->
+  <div class="center-panel">
+    <div class="song-table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:30px;text-align:center">#</th>
+            <th class="col-playing"></th>
+            <th onclick="sortBy('artist')">Artist <span class="sort-arrow" id="sort-artist">↑</span></th>
+            <th onclick="sortBy('title')">Title</th>
+            <th onclick="sortBy('duration_ms')" style="text-align:right">Duration</th>
+            <th onclick="sortBy('category_name')">Category</th>
+            <th class="col-star"></th>
+          </tr>
+        </thead>
+        <tbody id="song-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- RIGHT PANEL -->
+  <div class="right-panel">
+    <div class="rp-tabs">
+      <div class="rp-tab active" onclick="switchRpTab(0,this)">Broadcast Analytics</div>
+      <div class="rp-tab" onclick="switchRpTab(1,this)">AI Insights ✦</div>
+      <div class="rp-tab" onclick="switchRpTab(2,this)">Song Details</div>
+    </div>
+    <div class="rp-content" id="rp-content">
+      <div class="rp-filter-row">
+        <select class="rp-filter-select"><option>All Days Recorded</option></select>
+        <button class="rp-filter-btn">Filtered Plays</button>
+      </div>
+
+      <!-- Song Detail Card -->
+      <div class="song-detail-card" id="detail-card">
+        <div class="song-art" id="detail-art">♫</div>
+        <div class="song-info">
+          <div class="song-info-artist" id="detail-artist">Select a song</div>
+          <div class="song-info-title" id="detail-title">Click a row in the table</div>
+          <div class="song-info-meta" id="detail-meta"></div>
+          <div class="song-info-badges" id="detail-badges"></div>
+        </div>
+      </div>
+
+      <!-- Broadcast History -->
+      <div class="rp-section-title">BROADCAST HISTORY</div>
+      <div class="chart-area" id="chart-area"></div>
+
+      <!-- Play Statistics -->
+      <div class="rp-section-title">PLAY STATISTICS</div>
+      <div class="stats-grid">
+        <div class="stat-box"><div class="stat-label">Total Plays</div><div class="stat-value purple" id="stat-total">--</div></div>
+        <div class="stat-box"><div class="stat-label">This Month</div><div class="stat-value cyan" id="stat-month">--</div></div>
+        <div class="stat-box"><div class="stat-label">Last Played</div><div class="stat-value green" id="stat-last">--</div></div>
+        <div class="stat-box"><div class="stat-label">Avg per Day</div><div class="stat-value amber" id="stat-avg">--</div></div>
+      </div>
+
+      <!-- AI Insights -->
+      <div class="ai-insights-header">
+        <div class="rp-section-title" style="margin:0">AI INSIGHTS</div>
+        <div class="powered">✦ Powered by RadioAI</div>
+      </div>
+      <div style="margin-top:8px">
+        <div class="insight-item insight-amber"><div class="insight-title">⚠ Overplay Alert</div><div class="insight-desc">Played 4x this week — consider rest period</div></div>
+        <div class="insight-item insight-green"><div class="insight-title">✓ Good Energy Match</div><div class="insight-desc">High energy fits 08:00-13:00 morning slot</div></div>
+        <div class="insight-item insight-purple"><div class="insight-title">✦ Similar Songs</div><div class="insight-desc">5 songs match this energy profile</div></div>
+        <div class="insight-item insight-teal"><div class="insight-title">✦ Rotation Health</div><div class="insight-desc">Category rotation score: 87% (Good)</div></div>
+      </div>
+
+      <!-- Separation Settings -->
+      <div class="rp-section-title">SONG SEPARATION SETTINGS</div>
+      <div class="sep-row">
+        <div>Song separation<br><span class="sep-val" id="sep-song">Min 2h between plays</span></div>
+        <div>Artist separation<br><span class="sep-val" id="sep-artist">Min 30min between plays</span></div>
+        <span class="sep-edit">Edit →</span>
+      </div>
+    </div>
+
+    <!-- Bottom Action Bar -->
+    <div class="bottom-bar">
+      <button class="bottom-btn" onclick="editSong()">✎ Edit Song</button>
+      <button class="bottom-btn" style="background:#2d1a00;border:1px solid rgba(245,158,11,0.4);color:#f59e0b" onclick="openCueEditor()">⚙ Cues</button>
+      <button class="bottom-btn">◆ Mass Change</button>
+      <button class="bottom-btn">↑ Export</button>
+      <button class="bottom-btn bottom-btn-red" onclick="deleteSongConfirm()">× Delete</button>
+      <button class="bottom-btn">♫ Normalize</button>
+    </div>
+  </div>
+
+</div>
+
+<!-- ═══ STATUS BAR ═══ -->
+<div class="status-bar">
+  <div class="status-indicator"><span class="status-dot" style="background:var(--p1);box-shadow:0 0 4px var(--p1)"></span>AUTO MODE</div>
+  <div class="status-indicator"><span class="status-dot" style="background:var(--gn);box-shadow:0 0 4px var(--gn)"></span>AI Active</div>
+  <div class="status-indicator"><span class="status-dot" style="background:var(--gn);box-shadow:0 0 4px var(--gn)"></span>Sync: OK</div>
+  <div class="status-indicator"><span class="status-dot" style="background:var(--gn);box-shadow:0 0 4px var(--gn)"></span><b id="status-songs">25 Songs Loaded</b></div>
+  <div class="status-spacer"></div>
+  <div class="status-info">▶ Open Studio</div>
+</div>
+
+<!-- ═══ JAVASCRIPT ═══ -->
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script src="js/bridge_helper.js"></script>
+<script>
+let allSongs = [];
+let allCategories = [];
+let selectedSongId = null;
+let sortField = 'artist';
+let sortAsc = true;
+
+const CATEGORY_COLORS = {
+  'Hot Currents': {bg:'rgba(139,92,246,0.2)',color:'#A78BFA'},
+  'Currents': {bg:'rgba(167,139,250,0.2)',color:'#A78BFA'},
+  'Recurrents': {bg:'rgba(109,40,217,0.2)',color:'#A78BFA'},
+  'Gold': {bg:'rgba(6,182,212,0.2)',color:'#06B6D4'},
+  'Power Gold': {bg:'rgba(244,63,94,0.2)',color:'#F43F5E'},
+  'Specialty': {bg:'rgba(20,184,166,0.2)',color:'#14B8A6'},
+  'Classics': {bg:'rgba(6,182,212,0.2)',color:'#06B6D4'},
+  'Oldies': {bg:'rgba(20,184,166,0.2)',color:'#14B8A6'},
+  'Pop': {bg:'rgba(236,72,153,0.2)',color:'#EC4899'},
+};
+
+function getCatStyle(name){
+  return CATEGORY_COLORS[name] || {bg:'rgba(69,77,109,0.3)',color:'#8891B8'};
+}
+
+// ── Seed Data (always available) ─────────────────
+const SEED_SONGS = [
+  {id:1,artist:'Amy Winehouse',title:'You Know Im No Good',album:'Back to Black',duration_ms:225000,category_name:'Hot Currents',is_frozen:0,is_enabled:1,bpm:125,energy:'High',year:2007,separation_minutes:120,artist_sep_minutes:30},
+  {id:2,artist:'Bangles',title:'Walk Like An Egyptian',album:'Different Light',duration_ms:238000,category_name:'Gold',is_frozen:0,is_enabled:1,bpm:104,energy:'Medium',year:1986,separation_minutes:120,artist_sep_minutes:30},
+  {id:3,artist:'Billie Eilish',title:'Bury a Friend',album:'When We All Fall Asleep',duration_ms:206000,category_name:'Hot Currents',is_frozen:0,is_enabled:1,bpm:120,energy:'High',year:2019,separation_minutes:120,artist_sep_minutes:30},
+  {id:4,artist:'Britney Spears',title:'You Drive Me Crazy',album:'Baby One More Time',duration_ms:194000,category_name:'Power Gold',is_frozen:0,is_enabled:1,bpm:112,energy:'High',year:1999,separation_minutes:120,artist_sep_minutes:30},
+  {id:5,artist:'Camila Cabello ft. Young T...',title:'Havana',album:'Camila',duration_ms:217000,category_name:'Hot Currents',is_frozen:0,is_enabled:1,bpm:105,energy:'Medium',year:2018,separation_minutes:120,artist_sep_minutes:30},
+  {id:6,artist:'Coldplay',title:'Clocks',album:'A Rush of Blood to the Head',duration_ms:307000,category_name:'Gold',is_frozen:1,is_enabled:1,bpm:132,energy:'Medium',year:2002,separation_minutes:120,artist_sep_minutes:30},
+  {id:7,artist:'Drake',title:"God's Plan",album:'Scorpion',duration_ms:198000,category_name:'Hot Currents',is_frozen:0,is_enabled:1,bpm:77,energy:'High',year:2018,separation_minutes:120,artist_sep_minutes:30},
+  {id:8,artist:'Eagle Eye Cherry',title:'Save Tonight',album:'Desireless',duration_ms:236000,category_name:'Gold',is_frozen:0,is_enabled:1,bpm:108,energy:'Medium',year:1997,separation_minutes:120,artist_sep_minutes:30},
+  {id:9,artist:'Fairground Attraction',title:'Perfect',album:'First of a Million Kisses',duration_ms:222000,category_name:'Recurrents',is_frozen:0,is_enabled:1,bpm:96,energy:'Low',year:1988,separation_minutes:120,artist_sep_minutes:30},
+  {id:10,artist:'Harry Styles',title:'As It Was',album:"Harry's House",duration_ms:157000,category_name:'Hot Currents',is_frozen:0,is_enabled:1,bpm:174,energy:'High',year:2022,separation_minutes:120,artist_sep_minutes:30},
+  {id:11,artist:'House Of Pain',title:'Jump Around',album:'House of Pain',duration_ms:212000,category_name:'Gold',is_frozen:0,is_enabled:1,bpm:107,energy:'High',year:1992,separation_minutes:120,artist_sep_minutes:30},
+  {id:12,artist:'James Brown',title:'I Feel Good',album:'I Got You',duration_ms:166000,category_name:'Recurrents',is_frozen:0,is_enabled:1,bpm:136,energy:'High',year:1965,separation_minutes:120,artist_sep_minutes:30},
+  {id:13,artist:'Jax Jones, Bebe Rexha',title:'Harder',album:'Snacks',duration_ms:194000,category_name:'Hot Currents',is_frozen:0,is_enabled:1,bpm:122,energy:'High',year:2019,separation_minutes:120,artist_sep_minutes:30},
+  {id:14,artist:'Kylie Minogue',title:'Step Back In Time',album:'Rhythm of Love',duration_ms:226000,category_name:'Gold',is_frozen:0,is_enabled:1,bpm:118,energy:'Medium',year:1990,separation_minutes:120,artist_sep_minutes:30},
+  {id:15,artist:'Planet Funk',title:'Chase The Sun',album:'Non Zero Sumness',duration_ms:254000,category_name:'Gold',is_frozen:0,is_enabled:1,bpm:130,energy:'Medium',year:2001,separation_minutes:120,artist_sep_minutes:30},
+  {id:16,artist:'Pm Dawn',title:"Gotta Be Movin'",album:'Of the Heart',duration_ms:262000,category_name:'Recurrents',is_frozen:1,is_enabled:1,bpm:98,energy:'Low',year:1991,separation_minutes:120,artist_sep_minutes:30},
+  {id:17,artist:'Regard, Years & Years',title:'Hallucination',album:'Single',duration_ms:186000,category_name:'Hot Currents',is_frozen:0,is_enabled:1,bpm:124,energy:'High',year:2021,separation_minutes:120,artist_sep_minutes:30},
+  {id:18,artist:'REM',title:'Losing My Religion',album:'Out of Time',duration_ms:268000,category_name:'Gold',is_frozen:0,is_enabled:1,bpm:126,energy:'Medium',year:1991,separation_minutes:120,artist_sep_minutes:30},
+  {id:19,artist:'Rick Astley',title:'Never Gonna Give You Up',album:'Whenever You Need Somebody',duration_ms:213000,category_name:'Gold',is_frozen:0,is_enabled:1,bpm:113,energy:'Medium',year:1987,separation_minutes:120,artist_sep_minutes:30},
+  {id:20,artist:'Dua Lipa',title:'Levitating',album:'Future Nostalgia',duration_ms:203000,category_name:'Hot Currents',is_frozen:0,is_enabled:1,bpm:103,energy:'High',year:2020,separation_minutes:120,artist_sep_minutes:30},
+  {id:21,artist:'The Weeknd',title:'Blinding Lights',album:'After Hours',duration_ms:200000,category_name:'Hot Currents',is_frozen:0,is_enabled:1,bpm:171,energy:'High',year:2020,separation_minutes:120,artist_sep_minutes:30},
+  {id:22,artist:'Adele',title:'Rolling in the Deep',album:'21',duration_ms:228000,category_name:'Currents',is_frozen:0,is_enabled:1,bpm:105,energy:'High',year:2011,separation_minutes:120,artist_sep_minutes:30},
+  {id:23,artist:'Bruno Mars',title:'Uptown Funk',album:'Unorthodox Jukebox',duration_ms:270000,category_name:'Hot Currents',is_frozen:0,is_enabled:1,bpm:115,energy:'High',year:2014,separation_minutes:120,artist_sep_minutes:30},
+  {id:24,artist:'Ed Sheeran',title:'Shape of You',album:'Divide',duration_ms:234000,category_name:'Currents',is_frozen:0,is_enabled:1,bpm:96,energy:'Medium',year:2017,separation_minutes:120,artist_sep_minutes:30},
+  {id:25,artist:'Taylor Swift',title:'Shake It Off',album:'1989',duration_ms:219000,category_name:'Currents',is_frozen:0,is_enabled:1,bpm:160,energy:'High',year:2014,separation_minutes:120,artist_sep_minutes:30},
+];
+
+// ── Init ──────────────────────────────────────────
+function init(){
+  // Render immediately with seed data so table is never empty
+  allSongs = SEED_SONGS.slice();
+  renderTable();
+  renderChart();
+  updateClock();
+  setInterval(updateClock, 1000);
+
+  // Then try bridge for live DB data
+  // Bridge auto-connected by js/bridge_helper.js
+}
+
+// Load songs from DB — always fresh, no caching
+function loadSongs(filters){
+  if(typeof bridge === 'undefined' || !bridge) return;
+  callBridgeAsync('get_songs', [JSON.stringify(filters || {})], function(data){
+    if(data && Array.isArray(data)){
+      allSongs = data;
+      renderTable();
+    }
+  });
+}
+
+function loadFromBridge(){
+  loadSongs({});
+  callBridgeAsync('get_categories', [], function(data){
+    if(data && Array.isArray(data)) {
+      allCategories = data;
+      // Populate the category filter dropdown
+      var sel = document.getElementById('filter-category');
+      if (sel) {
+        sel.innerHTML = '<option value="">All Categories</option>';
+        data.forEach(function(c) {
+          sel.innerHTML += '<option value="' + c.id + '">' + (c.name || '') + '</option>';
+        });
+      }
+    }
+  });
+}
+
+// Re-fetch songs every time this page gets focus (covers navigation back from Add Song)
+onBridgeReady(function(){ loadFromBridge(); });
+window.addEventListener('pageshow', function(){ if(typeof bridge !== 'undefined' && bridge) loadFromBridge(); });
+
+// ── Table Rendering ──────────────────────────────
+function renderTable(){
+  const tbody=document.getElementById('song-tbody');
+  const search=(document.getElementById('search-input').value||'').toLowerCase();
+
+  // Read all filter values
+  var fCat = (document.getElementById('filter-category') || {}).value || '';
+  var fEnergy = (document.getElementById('filter-energy') || {}).value || '';
+  var fVocal = (document.getElementById('filter-vocal') || {}).value || '';
+  var fEra = (document.getElementById('filter-era') || {}).value || '';
+  var fEnabled = document.getElementById('filter-enabled') ? document.getElementById('filter-enabled').checked : true;
+  var fBpmMin = parseInt((document.getElementById('filter-bpm-min') || {}).value, 10) || 0;
+  var fBpmMax = parseInt((document.getElementById('filter-bpm-max') || {}).value, 10) || 0;
+  var fYearMin = parseInt((document.getElementById('filter-year-min') || {}).value, 10) || 0;
+  var fYearMax = parseInt((document.getElementById('filter-year-max') || {}).value, 10) || 0;
+
+  let filtered=allSongs;
+
+  // Text search
+  if(search){
+    filtered=filtered.filter(s=>
+      (s.artist||'').toLowerCase().includes(search)||
+      (s.title||'').toLowerCase().includes(search)||
+      (s.album||'').toLowerCase().includes(search)
+    );
+  }
+
+  // Category filter
+  if (fCat) {
+    var catId = parseInt(fCat, 10);
+    filtered = filtered.filter(function(s) { return s.category_id === catId; });
+  }
+
+  // Energy filter
+  if (fEnergy) {
+    filtered = filtered.filter(function(s) { return (s.energy || '').toLowerCase() === fEnergy.toLowerCase(); });
+  }
+
+  // Vocal filter
+  if (fVocal) {
+    filtered = filtered.filter(function(s) { return (s.vocal || '').toLowerCase() === fVocal.toLowerCase(); });
+  }
+
+  // Era filter
+  if (fEra) {
+    filtered = filtered.filter(function(s) { return (s.era || '') === fEra; });
+  }
+
+  // Enabled filter
+  if (fEnabled) {
+    filtered = filtered.filter(function(s) { return s.is_enabled !== 0; });
+  }
+
+  // BPM range
+  if (fBpmMin > 0) {
+    filtered = filtered.filter(function(s) { return (s.bpm || 0) >= fBpmMin; });
+  }
+  if (fBpmMax > 0) {
+    filtered = filtered.filter(function(s) { return (s.bpm || 0) <= fBpmMax; });
+  }
+
+  // Year range
+  if (fYearMin > 0) {
+    filtered = filtered.filter(function(s) { return (s.year || 0) >= fYearMin; });
+  }
+  if (fYearMax > 0) {
+    filtered = filtered.filter(function(s) { return (s.year || 0) <= fYearMax; });
+  }
+  filtered.sort((a,b)=>{
+    let va=a[sortField]||'',vb=b[sortField]||'';
+    if(typeof va==='string')va=va.toLowerCase();
+    if(typeof vb==='string')vb=vb.toLowerCase();
+    if(va<vb)return sortAsc?-1:1;
+    if(va>vb)return sortAsc?1:-1;
+    return 0;
+  });
+
+  document.getElementById('song-count-shown').textContent=filtered.length;
+  document.getElementById('song-count-total').textContent=allSongs.length;
+  document.getElementById('status-songs').textContent=allSongs.length+' Songs Loaded';
+
+  tbody.innerHTML='';
+  filtered.forEach((s, idx)=>{
+    const tr=document.createElement('tr');
+    if(s.id===selectedSongId)tr.className='selected';
+    tr.onclick=()=>selectSong(s.id);
+
+    const dur=formatDuration(s.duration_ms);
+    const cat=s.category_name||'—';
+    const cs=getCatStyle(cat);
+    const rowNum=idx+1;
+
+    tr.innerHTML=`
+      <td style="width:30px;text-align:center;color:var(--t3);font-size:11px;font-family:'Roboto Mono',monospace">${rowNum}</td>
+      <td class="col-playing">${s.id===selectedSongId?'<span class="playing-dot"></span>':'<span style="color:var(--p1);font-size:12px">♫</span>'}</td>
+      <td class="col-artist">${esc(s.artist)}</td>
+      <td class="col-title">${esc(s.title)}</td>
+      <td class="col-duration">${dur}</td>
+      <td class="col-category"><span class="cat-badge" style="background:${cs.bg};color:${cs.color}">${esc(cat)}</span></td>
+      <td class="col-star">${s.is_frozen?'★':''}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+function selectSong(id){
+  selectedSongId=id;
+  renderTable();
+  const song=allSongs.find(s=>s.id===id);
+  if(!song)return;
+
+  document.getElementById('detail-artist').textContent=song.artist;
+  document.getElementById('detail-title').textContent=song.title;
+  const cat=song.category_name||'—';
+  const cs=getCatStyle(cat);
+  const dur=formatDuration(song.duration_ms);
+  document.getElementById('detail-meta').innerHTML=`
+    <span class="cat-badge" style="background:${cs.bg};color:${cs.color};font-size:9px">${esc(cat)}</span>
+    <span>${dur}</span>
+    <span>${song.energy||''}</span>
+    <span>${song.bpm||''}bpm</span>
+    <span>${song.year||''}</span>
+  `;
+  document.getElementById('detail-badges').innerHTML=`
+    <span class="detail-badge" style="background:${song.is_enabled?'var(--gnD)':'var(--rsD)'};color:${song.is_enabled?'var(--gn)':'var(--rs)'}">${song.is_enabled?'Enabled':'Disabled'}</span>
+    ${song.is_frozen?'<span class="detail-badge" style="background:var(--amD);color:var(--am)">Bookmarked</span>':''}
+  `;
+  document.getElementById('sep-song').textContent=`Min ${Math.floor((song.separation_minutes||120)/60)}h between plays`;
+  document.getElementById('sep-artist').textContent=`Min ${song.artist_sep_minutes||30}min between plays`;
+
+  // Load play stats from bridge
+  if(typeof bridge !== 'undefined' && bridge){
+    callBridgeAsync('get_song_details', [id], function(d){
+      if(d && d.play_stats){
+        document.getElementById('stat-total').textContent=d.play_stats.total_plays;
+        document.getElementById('stat-month').textContent=d.play_stats.this_month;
+        document.getElementById('stat-last').textContent=d.play_stats.last_played||'Never';
+        document.getElementById('stat-avg').textContent=d.play_stats.avg_per_day;
+      }
+    });
+  }
+  renderChart();
+}
+
+function formatDuration(ms){
+  if(!ms)return'0:00';
+  const sec=Math.floor(ms/1000);
+  const m=Math.floor(sec/60);
+  const s=sec%60;
+  return m+':'+String(s).padStart(2,'0');
+}
+
+function esc(str){return str?str.replace(/</g,'&lt;').replace(/>/g,'&gt;'):'';}
+
+function onSearchChanged(){renderTable();}
+
+// ── Edit Song ───────────────────────────────────
+window.editSong = function(){
+  console.log('editSong called, selectedSongId=', selectedSongId);
+  if(!selectedSongId){ alert('⚠ Please select a song first!\n\nClick any row in the table.'); return; }
+  try {
+    sessionStorage.setItem('edit_song_id', String(selectedSongId));
+    window.location.href = 'add_song.html';
+  } catch(e) {
+    alert('Error: ' + e.message);
+  }
+};
+
+// ── Audio Cue Editor ────────────────────────────
+window.openCueEditor = function(){
+  if(!selectedSongId){ alert('⚠ Please select a song first!\n\nClick any row in the table.'); return; }
+  try {
+    sessionStorage.setItem('cue_editor_song_id', String(selectedSongId));
+    window.location.href = 'audio_cue_editor.html';
+  } catch(e) {
+    alert('Error: ' + e.message);
+  }
+};
+
+// ── Delete Song ─────────────────────────────────
+window.deleteSongConfirm = function(){
+  console.log('deleteSongConfirm called, selectedSongId=', selectedSongId);
+  if(!selectedSongId){ alert('⚠ Please select a song first!\n\nClick any row in the table.'); return; }
+  var song = allSongs.find(function(s){ return s.id === selectedSongId; });
+  var name = song ? (song.artist + ' — ' + song.title) : 'this song';
+  if(!confirm('Delete "' + name + '"?\n\nThis cannot be undone.')) return;
+
+  if(typeof bridge === 'undefined' || !bridge){
+    alert('Bridge not connected. Please wait and try again.');
+    return;
+  }
+
+  callBridgeAsync('delete_song', [selectedSongId], function(data){
+    console.log('delete_song response:', data);
+    if(data){
+      alert('✅ Deleted: ' + name);
+      selectedSongId = null;
+      loadFromBridge();
+      // Clear right panel
+      var detailArtist = document.getElementById('detail-artist');
+      var detailTitle = document.getElementById('detail-title');
+      if(detailArtist) detailArtist.textContent = 'Select a song';
+      if(detailTitle) detailTitle.textContent = 'Click a row in the table';
+      var meta = document.getElementById('detail-meta');
+      if(meta) meta.innerHTML = '';
+      var badges = document.getElementById('detail-badges');
+      if(badges) badges.innerHTML = '';
+    } else {
+      alert('❌ Delete failed');
+    }
+  });
+};
+
+function sortBy(field){
+  if(sortField===field){sortAsc=!sortAsc}else{sortField=field;sortAsc=true}
+  document.querySelectorAll('.sort-arrow').forEach(el=>{el.textContent='';el.id=''});
+  renderTable();
+}
+
+function switchRpTab(idx,el){
+  document.querySelectorAll('.rp-tab').forEach(t=>t.classList.remove('active'));
+  el.classList.add('active');
+}
+
+function renderChart(){
+  const area=document.getElementById('chart-area');
+  area.innerHTML='';
+  const bars=[35,50,20,65,40,80,55,30,70,45,60,25,75,50,35,65,45,80,55,40,70,30,60,50,40,55,65,35];
+  bars.forEach(h=>{
+    const bar=document.createElement('div');
+    bar.className='chart-bar';
+    bar.style.height=h+'%';
+    area.appendChild(bar);
+  });
+}
+
+// ── Navigation ───────────────────────────────────
+function goBack(){ window.location.href='control_panel.html'; }
+
+// ── Clock ────────────────────────────────────────
+function updateClock(){
+  const now=new Date();
+  const h=String(now.getHours()).padStart(2,'0');
+  const m=String(now.getMinutes()).padStart(2,'0');
+  const s=String(now.getSeconds()).padStart(2,'0');
+  document.getElementById('clock-time').textContent=`${h}:${m}:${s}`;
+  const days=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const months=['January','February','March','April','May','June','July','August','September','October','November','December'];
+  document.getElementById('clock-date').textContent=`${days[now.getDay()]}, ${now.getDate()} ${months[now.getMonth()]} ${now.getFullYear()}`;
+}
+
+init();
+</script>
+</body>
+</html>

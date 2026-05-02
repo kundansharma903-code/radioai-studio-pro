@@ -1,0 +1,938 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spots & Commercials — RadioAI Studio Pro</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+/* ── Page accent override ────────────────────────── */
+.breadcrumb .active{color:var(--gn);font-weight:600}
+.rp-tab.active{color:var(--gn);border-bottom-color:var(--gn)}
+tr.selected{background:rgba(16,185,129,0.08)!important;border-left:3px solid var(--gn)}
+
+/* ── Category badges ─────────────────────────────── */
+.cat-commercials{background:rgba(16,185,129,0.15);color:#10B981}
+.cat-station{background:rgba(6,182,212,0.15);color:#06B6D4}
+.cat-news{background:rgba(244,63,94,0.15);color:#F43F5E}
+.cat-sponsor{background:rgba(245,158,11,0.15);color:#F59E0B}
+
+/* ── Priority badges ─────────────────────────────── */
+.pri-high{background:rgba(245,158,11,0.18);color:#F59E0B}
+.pri-always{background:rgba(6,182,212,0.18);color:#06B6D4}
+.pri-medium{background:rgba(245,158,11,0.12);color:#c49225}
+.pri-low{background:rgba(69,77,109,0.3);color:var(--t2)}
+
+/* ── Spot files list ─────────────────────────────── */
+.spot-file{display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);margin-bottom:4px}
+.spot-file-icon{color:var(--gn);font-size:14px;flex-shrink:0}
+.spot-file-name{flex:1;font-size:11px;color:var(--t1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.spot-file-dur{font-family:'Roboto Mono',monospace;font-size:10px;color:var(--t3)}
+.spot-file-badge{font-size:8px;font-weight:600;padding:1px 6px;border-radius:4px;background:rgba(16,185,129,0.15);color:#10B981}
+.spot-add-file{display:block;width:100%;padding:6px 10px;border:1px dashed var(--b2);border-radius:var(--radius);background:transparent;color:var(--t3);font-size:11px;cursor:pointer;text-align:center;font-family:'Inter',sans-serif;margin-top:4px}
+.spot-add-file:hover{border-color:var(--gn);color:var(--gn)}
+
+/* ── Weekly schedule grid ────────────────────────── */
+.week-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:12px}
+.week-day{background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);padding:6px 4px;text-align:center}
+.week-day-label{font-size:8px;font-weight:600;color:var(--t3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px}
+.week-slot{font-size:9px;color:var(--gn);font-family:'Roboto Mono',monospace;margin-bottom:2px}
+.week-day.inactive{opacity:0.35}
+
+/* ── AI campaign insights ────────────────────────── */
+.campaign-insight{background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);padding:8px 12px;margin-bottom:6px}
+.campaign-insight-title{font-size:11px;font-weight:600;margin-bottom:2px}
+.campaign-insight-desc{font-size:10px;color:var(--t3)}
+.campaign-insight.on-track .campaign-insight-title{color:var(--gn)}
+.campaign-insight.conflict .campaign-insight-title{color:var(--am)}
+.campaign-insight.warning .campaign-insight-title{color:var(--rs)}
+
+/* ── Report buttons ──────────────────────────────── */
+.report-btn{display:block;width:100%;padding:6px 10px;border-radius:var(--radius);font-family:'Inter',sans-serif;font-size:11px;font-weight:600;cursor:pointer;text-align:left;margin-bottom:4px;border:1px solid}
+.report-red{background:transparent;border-color:var(--rs);color:var(--rs)}
+.report-red:hover{background:var(--rsD)}
+.report-green{background:transparent;border-color:var(--gn);color:var(--gn)}
+.report-green:hover{background:var(--gnD)}
+.report-amber{background:transparent;border-color:var(--am);color:var(--am)}
+.report-amber:hover{background:var(--amD)}
+.report-teal{background:transparent;border-color:var(--tl);color:var(--tl)}
+.report-teal:hover{background:var(--tlD)}
+
+/* ── Right panel field rows ──────────────────────── */
+.field-row{display:flex;gap:8px;margin-bottom:6px}
+.field-row .field-group{flex:1}
+
+/* ── Playback bar override (green accent) ────────── */
+.playback-bar .play-btn{background:var(--gn)}
+.playback-bar .play-btn:hover{background:#0ea573}
+.playback-bar .progress-fill{background:var(--gn)}
+.now-label{font-size:9px;font-weight:600;color:var(--gn);text-transform:uppercase;letter-spacing:1px}
+
+/* ── Right Panel as AI Monitor (no tabs) ──────────── */
+.right-panel.rp-monitor{display:flex;flex-direction:column;overflow:hidden;padding:0}
+.rp-monitor-head{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid var(--b1);flex:0 0 auto}
+.rp-monitor-title{font-size:13px;font-weight:700;color:var(--t1);letter-spacing:0.3px}
+.rp-monitor-badge{font-size:10px;font-weight:600;color:var(--gn);background:rgba(16,185,129,0.12);padding:3px 8px;border-radius:10px;border:1px solid rgba(16,185,129,0.3)}
+.rp-monitor-updated{flex:1;text-align:right;font-size:9px;color:var(--t3);margin:0 8px;letter-spacing:0.3px;transition:color 0.3s}
+.rp-monitor-updated.flash{color:var(--gn)}
+.rp-monitor-refresh{background:rgba(16,185,129,0.12);color:var(--gn);border:1px solid rgba(16,185,129,0.3);padding:4px 10px;border-radius:10px;font-family:Inter,sans-serif;font-size:10px;font-weight:700;cursor:pointer;letter-spacing:0.3px}
+.rp-monitor-refresh:hover{background:rgba(16,185,129,0.22)}
+.rp-monitor-refresh.spinning{animation:mon-spin 0.6s linear}
+@keyframes mon-spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+.rp-monitor-scroll{flex:1 1 auto;overflow-y:auto;overflow-x:hidden;padding:12px 14px 16px}
+.rp-monitor-scroll::-webkit-scrollbar{width:8px}
+.rp-monitor-scroll::-webkit-scrollbar-track{background:var(--surf)}
+.rp-monitor-scroll::-webkit-scrollbar-thumb{background:var(--b2);border-radius:4px}
+.rp-monitor-scroll::-webkit-scrollbar-thumb:hover{background:var(--p1)}
+
+/* ── AI Monitor Panel ────────────────────────────── */
+.mon-status{display:flex;gap:6px;margin-bottom:12px}
+.mon-pill{flex:1;padding:6px 8px;border-radius:var(--radius);font-size:10px;font-weight:600;text-align:center;border:1px solid var(--b1);background:var(--card);color:var(--t2)}
+.mon-pill.ok{background:rgba(16,185,129,0.12);color:var(--gn);border-color:rgba(16,185,129,0.35)}
+.mon-pill.warning{background:rgba(245,158,11,0.14);color:var(--am);border-color:rgba(245,158,11,0.4)}
+.mon-pill.exceed{background:rgba(244,63,94,0.14);color:var(--rs);border-color:rgba(244,63,94,0.4)}
+.mon-pill.muted{opacity:0.5}
+.mon-chart-wrap{display:flex;gap:10px;align-items:center;padding:10px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);margin-bottom:12px}
+.mon-pie-canvas{flex:0 0 140px;width:140px;height:140px}
+.mon-legend{flex:1;display:flex;flex-direction:column;gap:6px;font-size:11px}
+.mon-legend-row{display:flex;align-items:center;gap:6px;color:var(--t1)}
+.mon-legend-dot{width:10px;height:10px;border-radius:50%;flex:0 0 10px}
+.mon-legend-val{margin-left:auto;font-family:'Roboto Mono',monospace;font-size:10px;color:var(--t2)}
+.mon-trend-canvas{width:100%;height:80px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);margin-bottom:12px}
+.mon-client-tabs{display:flex;gap:6px;margin-bottom:8px}
+.mon-tab-btn{flex:1;padding:5px 8px;border-radius:var(--radius);background:var(--card);border:1px solid var(--b1);color:var(--t2);font-size:10px;font-weight:600;cursor:pointer}
+.mon-tab-btn.active{background:var(--p4);color:var(--p2);border-color:var(--p1)}
+.mon-client-head{display:grid;grid-template-columns:1fr 48px 54px 58px;gap:6px;padding:6px 8px;font-size:9px;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;color:var(--t3);border-bottom:1px solid var(--b1);margin-bottom:4px}
+.mon-client-head .mon-col-num,.mon-client-head .mon-col-status{text-align:right}
+.mon-client-row{display:grid;grid-template-columns:1fr 48px 54px 58px;gap:6px;align-items:center;padding:9px 8px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);margin-bottom:5px;font-size:11px}
+.mon-client-rank{font-family:'Roboto Mono',monospace;font-size:9px;color:var(--t3);font-weight:600}
+.mon-client-name{color:var(--t1);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.mon-client-meta{font-size:9px;color:var(--t3);margin-top:2px;font-weight:400;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mon-client-val{font-family:'Roboto Mono',monospace;font-size:12px;color:var(--t1);text-align:right;font-weight:600}
+.mon-col-num,.mon-col-status{text-align:right}
+.mon-tier{padding:3px 7px;border-radius:10px;font-size:9px;font-weight:700;letter-spacing:0.5px}
+.mon-tier.HIGH{background:rgba(244,63,94,0.15);color:var(--rs)}
+.mon-tier.MEDIUM{background:rgba(245,158,11,0.15);color:var(--am)}
+.mon-tier.LOW{background:rgba(16,185,129,0.15);color:var(--gn)}
+.mon-insight{margin-top:12px;padding:10px;border-radius:var(--radius);background:var(--card);border-left:3px solid var(--p1);font-size:11px;line-height:1.5;color:var(--t1)}
+.mon-insight.warning{border-left-color:var(--am);background:rgba(245,158,11,0.08)}
+.mon-insight.critical{border-left-color:var(--rs);background:rgba(244,63,94,0.08)}
+.mon-insight.info{border-left-color:var(--cy);background:rgba(6,182,212,0.08)}
+.mon-insight.ok{border-left-color:var(--gn);background:rgba(16,185,129,0.08)}
+.mon-insight-label{font-size:9px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--t3);margin-bottom:4px}
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="header">
+  <div class="logo" onclick="goBack()">
+    <div class="logo-icon">((●))</div>
+    <div class="logo-text"><div class="logo-title">RadioAI</div><div class="logo-sub">STUDIO PRO</div></div>
+  </div>
+  <div class="breadcrumb">
+    <a onclick="goBack()">Control Panel</a><span class="bc-sep">›</span>
+    <a onclick="goBack()">Libraries</a><span class="bc-sep">›</span>
+    <span class="active">Spots & Commercials</span>
+  </div>
+  <div class="page-title-area">
+    <div class="page-title">Spots & Commercials Library</div>
+    <div class="page-subtitle">Manage campaigns, break schedules & spot priorities</div>
+  </div>
+  <div class="header-spacer"></div>
+  <div style="display:flex;flex-direction:column;align-items:center;gap:1px">
+    <div class="clock-time" id="clock-time">00:00:00</div>
+    <div class="clock-date" id="clock-date"></div>
+  </div>
+  <div class="station-box">
+    <div class="station-label">ACTIVE STATION</div>
+    <div class="station-name" id="station-name">KISS FM 91.5</div>
+    <div class="station-loc" id="station-loc">Jaipur, Rajasthan</div>
+  </div>
+  <button class="open-studio-btn" onclick="openStudio()">▶ Open Studio</button>
+</div>
+
+<!-- MAIN 3-COLUMN LAYOUT -->
+<div class="main">
+
+  <!-- LEFT PANEL -->
+  <div class="left-panel">
+    <div class="lp-header">
+      <div class="lp-count"><b id="camp-count-shown">4</b> / <b id="camp-count-total">4</b>&nbsp; campaigns</div>
+      <button class="lp-btn lp-btn-green" onclick="addCampaign()">+ Add Campaign</button>
+      <button class="lp-btn lp-btn-amber" onclick="editBreaks()">Edit Breaks</button>
+      <button class="lp-btn lp-btn-amber" onclick="breakSettings()">Break Settings</button>
+      <button class="lp-btn lp-btn-danger" onclick="deleteCampaign()">× Delete Campaign</button>
+    </div>
+    <div class="lp-section">
+      <div class="lp-section-title">Filters</div>
+      <select class="lp-select" id="filter-status" onchange="applyFilters()">
+        <option value="all">All Campaigns</option>
+        <option value="active">Active Only</option>
+        <option value="expired">Expired Only</option>
+      </select>
+      <select class="lp-select" id="filter-category" onchange="applyFilters()">
+        <option value="all">Category (All)</option>
+        <option>Commercials</option>
+        <option>Station ID</option>
+        <option>News Broadcast</option>
+        <option>Sponsor</option>
+      </select>
+      <select class="lp-select" id="filter-priority" onchange="applyFilters()">
+        <option value="all">Priority (All)</option>
+        <option>High</option>
+        <option>Medium</option>
+        <option>Low</option>
+        <option>Always</option>
+      </select>
+      <select class="lp-select" id="filter-day" onchange="applyFilters()">
+        <option value="all">Day (All)</option>
+        <option>Monday</option>
+        <option>Tuesday</option>
+        <option>Wednesday</option>
+        <option>Thursday</option>
+        <option>Friday</option>
+        <option>Saturday</option>
+        <option>Sunday</option>
+      </select>
+    </div>
+    <div class="lp-section">
+      <div class="lp-section-title">Reports</div>
+      <button class="report-btn report-red">Actual Play Times</button>
+      <button class="report-btn report-green">Spot Schedule</button>
+      <button class="report-btn report-green">Daily Programming</button>
+      <button class="report-btn report-amber">Break Duration Check</button>
+      <button class="report-btn report-teal">Traffic Integration</button>
+    </div>
+  </div>
+
+  <!-- CENTER - CAMPAIGN TABLE -->
+  <div class="center-panel">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th onclick="sortBy('name')">Campaign Name <span class="sort-arrow" id="sort-name"></span></th>
+            <th onclick="sortBy('spots')">Spots</th>
+            <th onclick="sortBy('category')">Category</th>
+            <th onclick="sortBy('priority')">Priority</th>
+            <th onclick="sortBy('start_date')">Start Date</th>
+            <th onclick="sortBy('end_date')">End Date</th>
+          </tr>
+        </thead>
+        <tbody id="campaign-tbody"></tbody>
+      </table>
+    </div>
+
+    <!-- PLAYBACK BAR -->
+    <div class="playback-bar">
+      <button class="play-btn">▶</button>
+      <div class="playback-info">
+        <div class="now-label">NOW AIRING</div>
+        <div class="playback-title" id="pb-title">FreshBurst Cola — Summer</div>
+        <div class="playback-sub" id="pb-sub">Commercials — High Priority</div>
+      </div>
+      <div class="progress-bar"><div class="progress-fill" id="pb-fill" style="width:40%"></div></div>
+      <div class="playback-time"><span id="pb-elapsed">0:12</span> / <span id="pb-total">0:30</span></div>
+    </div>
+  </div>
+
+  <!-- RIGHT PANEL — AI Monitor (no tabs) -->
+  <div class="right-panel rp-monitor">
+    <div class="rp-monitor-head">
+      <span class="rp-monitor-title">Spots AI Monitor</span>
+      <span class="rp-monitor-updated" id="mon-updated">—</span>
+      <button class="rp-monitor-refresh" id="mon-refresh-btn" onclick="refreshAiMonitor(true)" title="Refresh now">↻ Live</button>
+    </div>
+    <div class="rp-monitor-scroll" id="rp-monitor-scroll">
+      <div class="rp-section-title">THIS HOUR AD USAGE</div>
+      <div class="mon-status" id="mon-status-bar">
+        <div class="mon-pill ok" id="mon-pill-used">0 min / 15 min</div>
+        <div class="mon-pill" id="mon-pill-remaining">15 min remaining</div>
+      </div>
+      <div class="mon-status" style="margin-top:-6px">
+        <div class="mon-pill muted" id="mon-pill-warning">12+ = WARN</div>
+        <div class="mon-pill muted" id="mon-pill-exceed">15+ = EXCEED</div>
+      </div>
+
+      <div class="rp-section-title">HOURLY BROADCAST BREAKDOWN</div>
+      <div style="font-size:9px;color:var(--t3);margin-top:-6px;margin-bottom:8px">Current hour — minutes per type</div>
+      <div class="mon-chart-wrap">
+        <canvas class="mon-pie-canvas" id="mon-pie" width="280" height="280"></canvas>
+        <div class="mon-legend">
+          <div class="mon-legend-row"><span class="mon-legend-dot" style="background:#8B5CF6"></span>Songs<span class="mon-legend-val" id="leg-songs">0 min</span></div>
+          <div class="mon-legend-row"><span class="mon-legend-dot" style="background:#F43F5E"></span>Ads<span class="mon-legend-val" id="leg-ads">0 min</span></div>
+          <div class="mon-legend-row"><span class="mon-legend-dot" style="background:#F59E0B"></span>Jingles<span class="mon-legend-val" id="leg-jingles">0 min</span></div>
+          <div class="mon-legend-row"><span class="mon-legend-dot" style="background:#14B8A6"></span>Sweepers<span class="mon-legend-val" id="leg-sweepers">0 min</span></div>
+        </div>
+      </div>
+
+      <div class="rp-section-title">TODAY'S HOURLY TREND</div>
+      <div style="font-size:9px;color:var(--t3);margin-top:-6px;margin-bottom:6px">Last 16 hours — dashed line = 15 min cap</div>
+      <canvas class="mon-trend-canvas" id="mon-trend" width="620" height="160"></canvas>
+
+      <div class="rp-section-title">CLIENT AD ROTATION</div>
+      <div style="font-size:9px;color:var(--t3);margin-top:-6px;margin-bottom:6px">Sorted High → Medium → Low</div>
+      <div class="mon-client-tabs">
+        <div class="mon-tab-btn active" id="mon-tab-hour" onclick="switchMonPeriod('hour',this)">This Hour</div>
+        <div class="mon-tab-btn" id="mon-tab-7days" onclick="switchMonPeriod('7days',this)">Last 7 Days</div>
+      </div>
+      <div class="mon-client-head">
+        <div>Client</div>
+        <div class="mon-col-num">Rot.</div>
+        <div class="mon-col-num">Min/Hr</div>
+        <div class="mon-col-status">Status</div>
+      </div>
+      <div id="mon-client-list">
+        <div style="font-size:11px;color:var(--t3);text-align:center;padding:20px">Loading…</div>
+      </div>
+
+      <div class="mon-insight info" id="mon-insight">
+        <div class="mon-insight-label">AI Insight ✦</div>
+        <div id="mon-insight-text">Analysing broadcast load…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Hidden legacy detail targets (kept for loadCampaignDetails to safely no-op) -->
+  <div id="rp-legacy-hidden" style="display:none">
+    <div id="detail-icon"></div><div id="detail-name"></div><div id="detail-sub"></div>
+    <div id="detail-meta"></div><div id="detail-badges"></div>
+    <div id="fld-name"></div><div id="fld-start"></div><div id="fld-end"></div>
+    <div id="fld-mode"></div><div id="fld-order"></div><div id="fld-cat"></div><div id="fld-pri"></div>
+    <div id="spot-files-list"></div><div id="week-grid"></div>
+  </div>
+
+</div>
+
+<!-- STATUS BAR -->
+<div class="status-bar">
+  <div class="status-indicator"><span class="status-dot" style="background:var(--p1);box-shadow:0 0 4px var(--p1)"></span>AUTO MODE</div>
+  <div class="status-indicator"><span class="status-dot" style="background:var(--gn);box-shadow:0 0 4px var(--gn)"></span>AI Active</div>
+  <div class="status-indicator"><span class="status-dot" style="background:var(--gn);box-shadow:0 0 4px var(--gn)"></span>Sync: OK</div>
+  <div class="status-indicator"><span class="status-dot" style="background:var(--gn);box-shadow:0 0 4px var(--gn)"></span><b id="status-campaigns">4 Campaigns Active</b></div>
+  <div class="status-spacer"></div>
+  <div class="status-info">RadioAI Studio Pro v1.0</div>
+</div>
+
+<!-- JAVASCRIPT -->
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script src="js/bridge_helper.js"></script>
+<script>
+let allCampaigns = [];
+let selectedCampaignId = null;
+let sortField = 'name';
+let sortAsc = true;
+let activeRpTab = 0;
+
+// ── Category / Priority style maps ───────────────
+const CAT_CLASSES = {
+  'Commercials': 'cat-commercials',
+  'Station ID': 'cat-station',
+  'News Broadcast': 'cat-news',
+  'Sponsor': 'cat-sponsor'
+};
+const PRI_CLASSES = {
+  'High': 'pri-high',
+  'Always': 'pri-always',
+  'Medium': 'pri-medium',
+  'Low': 'pri-low'
+};
+
+// ── Seed Data ────────────────────────────────────
+const SEED_CAMPAIGNS = [
+  {id:1,name:'FreshBurst Cola — Summer',spots:3,spot_files:['freshburst_summer_30s.mp3','freshburst_summer_15s.mp3','freshburst_jingle_10s.mp3'],spot_durs:['0:30','0:15','0:10'],category:'Commercials',priority:'High',start_date:'2026-04-01',end_date:'2026-06-30',mode:'Weekly',order:'In Rotation',contracted:3,is_active:1,schedule:{mon:['08:00','12:00','18:00'],tue:['08:00','12:00','18:00'],wed:['08:00','12:00','18:00'],thu:['08:00','12:00','18:00'],fri:['08:00','12:00','18:00'],sat:[],sun:[]}},
+  {id:2,name:'NovaTech Mobile — Launch',spots:2,spot_files:['novatech_launch_30s.mp3','novatech_launch_20s.mp3'],spot_durs:['0:30','0:20'],category:'Commercials',priority:'High',start_date:'2026-03-15',end_date:'2026-06-15',mode:'Weekly',order:'In Rotation',contracted:4,is_active:1,schedule:{mon:['07:00','10:00','14:00','20:00'],tue:['07:00','10:00','14:00','20:00'],wed:['07:00','10:00','14:00','20:00'],thu:['07:00','10:00','14:00','20:00'],fri:['07:00','10:00','14:00','20:00'],sat:['10:00','16:00'],sun:['10:00','16:00']}},
+  {id:3,name:'City FM Station ID',spots:1,spot_files:['cityfm_stationid.mp3'],spot_durs:['0:08'],category:'Station ID',priority:'Always',start_date:'2026-01-01',end_date:null,mode:'Daily',order:'Sequential',contracted:12,is_active:1,schedule:{mon:['Every hour'],tue:['Every hour'],wed:['Every hour'],thu:['Every hour'],fri:['Every hour'],sat:['Every hour'],sun:['Every hour']}},
+  {id:4,name:'Traffic Update Sting',spots:1,spot_files:['traffic_sting_5s.mp3'],spot_durs:['0:05'],category:'News Broadcast',priority:'Always',start_date:'2026-01-01',end_date:null,mode:'Daily',order:'Sequential',contracted:8,is_active:1,schedule:{mon:['07:30','08:30','12:30','17:30'],tue:['07:30','08:30','12:30','17:30'],wed:['07:30','08:30','12:30','17:30'],thu:['07:30','08:30','12:30','17:30'],fri:['07:30','08:30','12:30','17:30'],sat:['09:30','13:30'],sun:['09:30','13:30']}},
+  {id:5,name:'Bank of Stars Promo',spots:2,spot_files:['bankofstars_30s.mp3','bankofstars_15s.mp3'],spot_durs:['0:30','0:15'],category:'Commercials',priority:'Medium',start_date:'2026-01-01',end_date:null,mode:'Weekly',order:'In Rotation',contracted:2,is_active:1,schedule:{mon:['09:00','15:00'],tue:['09:00','15:00'],wed:['09:00','15:00'],thu:['09:00','15:00'],fri:['09:00','15:00'],sat:[],sun:[]}},
+  {id:6,name:'Sunrise Mall Weekend',spots:2,spot_files:['sunrisemall_weekend_30s.mp3','sunrisemall_weekend_20s.mp3'],spot_durs:['0:30','0:20'],category:'Commercials',priority:'Medium',start_date:'2026-04-11',end_date:'2026-04-13',mode:'Daily',order:'In Rotation',contracted:6,is_active:1,schedule:{mon:[],tue:[],wed:[],thu:[],fri:[],sat:['08:00','10:00','12:00','14:00','16:00','18:00'],sun:['08:00','10:00','12:00','14:00','16:00','18:00']}},
+  {id:7,name:'PureLife Water',spots:1,spot_files:['purelife_water_20s.mp3'],spot_durs:['0:20'],category:'Commercials',priority:'Low',start_date:'2026-03-01',end_date:null,mode:'Weekly',order:'In Rotation',contracted:1,is_active:1,schedule:{mon:['11:00'],tue:['11:00'],wed:['11:00'],thu:['11:00'],fri:['11:00'],sat:[],sun:[]}},
+  {id:8,name:'Weather Flash',spots:1,spot_files:['weather_flash_8s.mp3'],spot_durs:['0:08'],category:'News Broadcast',priority:'Always',start_date:'2026-01-01',end_date:null,mode:'Daily',order:'Sequential',contracted:6,is_active:1,schedule:{mon:['06:00','08:00','12:00','15:00','18:00','21:00'],tue:['06:00','08:00','12:00','15:00','18:00','21:00'],wed:['06:00','08:00','12:00','15:00','18:00','21:00'],thu:['06:00','08:00','12:00','15:00','18:00','21:00'],fri:['06:00','08:00','12:00','15:00','18:00','21:00'],sat:['08:00','12:00','18:00'],sun:['08:00','12:00','18:00']}},
+  {id:9,name:'Morning Drive Sponsorship',spots:2,spot_files:['morning_sponsor_30s.mp3','morning_sponsor_15s.mp3'],spot_durs:['0:30','0:15'],category:'Sponsor',priority:'High',start_date:'2026-01-01',end_date:'2026-04-30',mode:'Weekly',order:'In Rotation',contracted:2,is_active:1,schedule:{mon:['06:30','07:30'],tue:['06:30','07:30'],wed:['06:30','07:30'],thu:['06:30','07:30'],fri:['06:30','07:30'],sat:[],sun:[]}},
+  {id:10,name:'Evening News Intro',spots:1,spot_files:['evening_news_intro_10s.mp3'],spot_durs:['0:10'],category:'Station ID',priority:'Always',start_date:'2026-01-01',end_date:null,mode:'Daily',order:'Sequential',contracted:1,is_active:1,schedule:{mon:['19:00'],tue:['19:00'],wed:['19:00'],thu:['19:00'],fri:['19:00'],sat:['19:00'],sun:['19:00']}}
+];
+
+// ── Init ──────────────────────────────────────────
+function init(){
+  allCampaigns = SEED_CAMPAIGNS.slice();
+  renderTable();
+  selectCampaign(1);
+  updateClock();
+  setInterval(updateClock, 1000);
+  refreshAiMonitor();
+}
+
+// Load campaigns from DB when bridge connects
+onBridgeReady(function(){ loadFromBridge(); });
+window.addEventListener('pageshow', function(){ if(typeof bridge!=='undefined' && bridge) loadFromBridge(); });
+
+function loadFromBridge(){
+  if(typeof bridge === 'undefined' || !bridge) return;
+  var filters = {
+    status: document.getElementById('filter-status') ? document.getElementById('filter-status').value : 'all',
+    category: document.getElementById('filter-category') ? document.getElementById('filter-category').value : 'all',
+    priority: document.getElementById('filter-priority') ? document.getElementById('filter-priority').value : 'all',
+  };
+  callBridgeAsync('get_campaigns', [JSON.stringify(filters)], function(data){
+    if(!data || !data.campaigns) return;
+    // Map DB fields → UI fields
+    allCampaigns = data.campaigns.map(function(c){
+      return {
+        id: c.id, name: c.name,
+        spots: c.spot_count || 0,
+        spot_files: [], spot_durs: [],
+        category: c.category, priority: c.priority,
+        start_date: c.start_date, end_date: (c.end_date && c.end_date !== 'Never') ? c.end_date : null,
+        mode: c.programming_mode, order: c.playback_order,
+        contracted: 0, is_active: c.is_active ? 1 : 0,
+        schedule: {mon:[],tue:[],wed:[],thu:[],fri:[],sat:[],sun:[]}
+      };
+    });
+    renderTable();
+
+    // Auto-select recently saved campaign
+    var lastSaved = sessionStorage.getItem('last_saved_campaign_id');
+    if(lastSaved){
+      sessionStorage.removeItem('last_saved_campaign_id');
+      var savedId = parseInt(lastSaved);
+      if(allCampaigns.find(function(c){ return c.id === savedId; })){
+        selectCampaign(savedId);
+        return;
+      }
+    }
+    if(allCampaigns.length > 0 && !selectedCampaignId) selectCampaign(allCampaigns[0].id);
+    else if(selectedCampaignId) selectCampaign(selectedCampaignId);
+  });
+}
+
+// Load full details (spot files) when a campaign is selected
+function loadCampaignDetails(id){
+  if(typeof bridge === 'undefined' || !bridge) return;
+  callBridgeAsync('get_campaign_details', [id], function(d){
+    if(!d) return;
+    var c = allCampaigns.find(function(x){ return x.id === id; });
+    if(!c) return;
+    // Fill spot files from DB
+    c.spot_files = (d.spot_files || []).map(function(sf){ return sf.filename; });
+    c.spot_durs = (d.spot_files || []).map(function(sf){
+      var ms = sf.duration_ms || 0;
+      var sec = Math.floor(ms/1000);
+      return Math.floor(sec/60) + ':' + String(sec%60).padStart(2,'0');
+    });
+    c.spot_file_ids = (d.spot_files || []).map(function(sf){ return sf.id; });
+    c.contracted = d.contracted_plays_per_day || 0;
+    // Re-render detail
+    selectCampaign(id);
+  });
+}
+
+// ── Table Rendering ──────────────────────────────
+function renderTable(){
+  const tbody = document.getElementById('campaign-tbody');
+  let filtered = getFiltered();
+
+  filtered.sort((a,b)=>{
+    let va = a[sortField] || '', vb = b[sortField] || '';
+    if(typeof va === 'string') va = va.toLowerCase();
+    if(typeof vb === 'string') vb = vb.toLowerCase();
+    if(va < vb) return sortAsc ? -1 : 1;
+    if(va > vb) return sortAsc ? 1 : -1;
+    return 0;
+  });
+
+  const activeCount = allCampaigns.filter(c=>c.is_active).length;
+  document.getElementById('camp-count-shown').textContent = filtered.length;
+  document.getElementById('camp-count-total').textContent = allCampaigns.length;
+  document.getElementById('status-campaigns').textContent = activeCount + ' Campaigns Active';
+
+  tbody.innerHTML = '';
+  filtered.forEach(c => {
+    const tr = document.createElement('tr');
+    if(c.id === selectedCampaignId) tr.className = 'selected';
+    tr.onclick = () => selectCampaign(c.id);
+
+    const catClass = CAT_CLASSES[c.category] || '';
+    const priClass = PRI_CLASSES[c.priority] || 'pri-low';
+    const catDisplay = c.category.length > 9 ? c.category.substring(0,9) : c.category;
+    const endDisplay = c.end_date ? formatDate(c.end_date) : 'Never';
+
+    tr.innerHTML = `
+      <td style="font-weight:600">${esc(c.name)}</td>
+      <td style="color:var(--t2)">${c.spots} file${c.spots!==1?'s':''}</td>
+      <td><span class="cat-badge ${catClass}">${esc(catDisplay)}</span></td>
+      <td><span class="cat-badge ${priClass}">${esc(c.priority)}</span></td>
+      <td style="color:var(--t2)">${formatDate(c.start_date)}</td>
+      <td style="color:var(--t2)">${endDisplay}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+function getFiltered(){
+  let filtered = allCampaigns.slice();
+  const status = document.getElementById('filter-status').value;
+  const cat = document.getElementById('filter-category').value;
+  const pri = document.getElementById('filter-priority').value;
+
+  if(status === 'active') filtered = filtered.filter(c=>c.is_active);
+  else if(status === 'expired') filtered = filtered.filter(c=>!c.is_active || (c.end_date && new Date(c.end_date) < new Date()));
+
+  if(cat !== 'all') filtered = filtered.filter(c=>c.category === cat);
+  if(pri !== 'all') filtered = filtered.filter(c=>c.priority === pri);
+
+  return filtered;
+}
+
+function applyFilters(){
+  // If bridge connected, re-fetch from DB with filters
+  if(typeof bridge !== 'undefined' && bridge){
+    loadFromBridge();
+  } else {
+    renderTable();
+  }
+}
+
+// ── Select Campaign ──────────────────────────────
+function selectCampaign(id){
+  var wasSameId = (selectedCampaignId === id);
+  selectedCampaignId = id;
+  renderTable();
+  const c = allCampaigns.find(x=>x.id === id);
+  if(!c) return;
+  // Lazy-load full details from bridge once per campaign
+  if(!wasSameId && (!c.spot_files || c.spot_files.length === 0) && typeof bridge !== 'undefined' && bridge){
+    loadCampaignDetails(id);
+  }
+
+  // Detail card
+  const iconColors = {
+    'Commercials': {bg:'rgba(16,185,129,0.15)',color:'#10B981',icon:'$'},
+    'Station ID': {bg:'rgba(6,182,212,0.15)',color:'#06B6D4',icon:'◉'},
+    'News Broadcast': {bg:'rgba(244,63,94,0.15)',color:'#F43F5E',icon:'◆'},
+    'Sponsor': {bg:'rgba(245,158,11,0.15)',color:'#F59E0B',icon:'★'}
+  };
+  const ic = iconColors[c.category] || iconColors['Commercials'];
+  document.getElementById('detail-icon').style.background = ic.bg;
+  document.getElementById('detail-icon').style.color = ic.color;
+  document.getElementById('detail-icon').textContent = ic.icon;
+  document.getElementById('detail-name').textContent = c.name;
+  const endTxt = c.end_date ? formatDate(c.end_date) : 'Never';
+  document.getElementById('detail-sub').textContent = c.spots + ' spot file' + (c.spots!==1?'s':'') + ' | ' + formatDate(c.start_date) + ' - ' + endTxt;
+  document.getElementById('detail-meta').textContent = 'Contracted: ' + c.contracted + ' plays/day | ' + c.mode + ' programming';
+
+  const badgesEl = document.getElementById('detail-badges');
+  const catStyle = CAT_CLASSES[c.category] || '';
+  const priStyle = PRI_CLASSES[c.priority] || '';
+  badgesEl.innerHTML = `
+    <span class="detail-badge" style="background:rgba(16,185,129,0.15);color:#10B981">${c.is_active ? 'Active' : 'Inactive'}</span>
+    <span class="detail-badge ${priStyle}">${c.priority} Priority</span>
+  `;
+
+  // Fields
+  document.getElementById('fld-name').textContent = c.name;
+  document.getElementById('fld-start').textContent = formatDate(c.start_date);
+  document.getElementById('fld-end').textContent = c.end_date ? formatDate(c.end_date) : 'Never';
+  document.getElementById('fld-mode').textContent = c.mode;
+  document.getElementById('fld-order').textContent = c.order;
+  document.getElementById('fld-cat').textContent = c.category;
+  document.getElementById('fld-pri').textContent = c.priority;
+
+  // Spot files — rendered with delete buttons (only for loaded DB spots)
+  const filesEl = document.getElementById('spot-files-list');
+  filesEl.innerHTML = '';
+  if(c.spot_files && c.spot_files.length > 0){
+    c.spot_files.forEach((f,i) => {
+      const dur = c.spot_durs ? c.spot_durs[i] : '--';
+      const spotId = c.spot_file_ids ? c.spot_file_ids[i] : null;
+      var delBtn = spotId ? '<span style="cursor:pointer;color:var(--rs);margin-left:6px" onclick="deleteSpotFileById('+spotId+',\''+esc(f).replace(/'/g,"\\'")+'\')">✕</span>' : '';
+      filesEl.innerHTML += `
+        <div class="spot-file">
+          <span class="spot-file-icon">♫</span>
+          <span class="spot-file-name">${esc(f)}</span>
+          <span class="spot-file-dur">${dur}</span>
+          <span class="spot-file-badge">Active</span>
+          ${delBtn}
+        </div>
+      `;
+    });
+  } else {
+    filesEl.innerHTML = '<div style="color:var(--t3);font-size:11px;padding:8px 0">No spot files</div>';
+  }
+  // Add Spot button — injected once
+  if(!document.getElementById('add-spot-inline-btn')){
+    var addBtn = document.createElement('button');
+    addBtn.id = 'add-spot-inline-btn';
+    addBtn.textContent = '+ Add Spot File';
+    addBtn.style.cssText = 'margin-top:6px;padding:6px 12px;background:transparent;border:1px solid var(--gn);color:var(--gn);border-radius:var(--radius);font-family:Inter,sans-serif;font-size:11px;font-weight:600;cursor:pointer';
+    addBtn.onclick = addSpotFile;
+    filesEl.parentElement.appendChild(addBtn);
+  }
+
+  // Weekly schedule
+  const grid = document.getElementById('week-grid');
+  const days = ['mon','tue','wed','thu','fri','sat','sun'];
+  const dayLabels = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  grid.innerHTML = '';
+  days.forEach((d,i) => {
+    const slots = c.schedule ? (c.schedule[d] || []) : [];
+    const inactive = slots.length === 0;
+    let slotsHtml = '';
+    if(inactive){
+      slotsHtml = '<div class="week-slot">--</div>';
+    } else {
+      slots.forEach(s => { slotsHtml += `<div class="week-slot">${esc(s)}</div>`; });
+    }
+    grid.innerHTML += `
+      <div class="week-day${inactive ? ' inactive' : ''}">
+        <div class="week-day-label">${dayLabels[i]}</div>
+        ${slotsHtml}
+      </div>
+    `;
+  });
+
+  // Playback bar
+  document.getElementById('pb-title').textContent = c.name;
+  document.getElementById('pb-sub').textContent = c.category + ' — ' + c.priority + ' Priority';
+}
+
+// ── Sorting ──────────────────────────────────────
+function sortBy(field){
+  if(sortField === field) sortAsc = !sortAsc;
+  else { sortField = field; sortAsc = true; }
+  document.querySelectorAll('.sort-arrow').forEach(el=>el.textContent='');
+  const arrow = document.getElementById('sort-'+field);
+  if(arrow) arrow.textContent = sortAsc ? '↑' : '↓';
+  renderTable();
+}
+
+// ── AI Monitor Panel (always-on, no tabs) ────────
+let monPeriod = 'hour';
+let monTimer = null;
+
+function switchMonPeriod(p, el){
+  monPeriod = p;
+  document.querySelectorAll('.rp-monitor .mon-tab-btn').forEach(b=>b.classList.remove('active'));
+  el.classList.add('active');
+  loadMonClientRotation();
+}
+
+let monLastUpdate = 0;
+
+function refreshAiMonitor(manual){
+  loadMonHourlyUsage();
+  loadMonTrend();
+  loadMonClientRotation();
+  loadMonInsight();
+  monLastUpdate = Date.now();
+  updateMonTimestamp(true);
+  if(manual){
+    const btn = document.getElementById('mon-refresh-btn');
+    if(btn){ btn.classList.remove('spinning'); void btn.offsetWidth; btn.classList.add('spinning'); }
+  }
+  if(monTimer) clearInterval(monTimer);
+  monTimer = setInterval(function(){
+    loadMonHourlyUsage();
+    loadMonTrend();
+    loadMonClientRotation();
+    loadMonInsight();
+    monLastUpdate = Date.now();
+    updateMonTimestamp(true);
+  }, 30000);
+  // tick the "x sec ago" label every 5 s
+  setInterval(function(){ updateMonTimestamp(false); }, 5000);
+}
+
+function updateMonTimestamp(justRefreshed){
+  const el = document.getElementById('mon-updated');
+  if(!el || !monLastUpdate) return;
+  const secs = Math.floor((Date.now() - monLastUpdate) / 1000);
+  let label;
+  if(secs < 3) label = 'Updated just now';
+  else if(secs < 60) label = 'Updated ' + secs + ' sec ago';
+  else label = 'Updated ' + Math.floor(secs/60) + ' min ago';
+  el.textContent = label;
+  if(justRefreshed){
+    el.classList.add('flash');
+    setTimeout(function(){ el.classList.remove('flash'); }, 800);
+  }
+}
+
+function loadMonHourlyUsage(){
+  callBridgeAsync('get_spots_hourly_usage', [], function(d){
+    if(!d) return;
+    const ads = d.ads_min || 0;
+    const rem = d.remaining_min || 0;
+    const used = document.getElementById('mon-pill-used');
+    const remP = document.getElementById('mon-pill-remaining');
+    const warnP = document.getElementById('mon-pill-warning');
+    const excP = document.getElementById('mon-pill-exceed');
+    used.textContent = ads.toFixed(1) + ' min / 15 min';
+    remP.textContent = rem.toFixed(1) + ' min remaining';
+    used.className = 'mon-pill ' + (d.status || 'ok');
+    remP.className = 'mon-pill ' + (d.status === 'exceed' ? 'exceed' : 'ok');
+    warnP.className = 'mon-pill ' + (d.status === 'warning' || d.status === 'exceed' ? 'warning' : 'muted');
+    excP.className = 'mon-pill ' + (d.status === 'exceed' ? 'exceed' : 'muted');
+    // legend
+    const toMin = function(ms){ return ((ms||0)/60000).toFixed(1) + ' min'; };
+    document.getElementById('leg-songs').textContent = toMin(d.songs_ms);
+    document.getElementById('leg-ads').textContent = toMin(d.ads_ms);
+    document.getElementById('leg-jingles').textContent = toMin(d.jingles_ms);
+    document.getElementById('leg-sweepers').textContent = toMin(d.sweepers_ms);
+    drawPie(d);
+  });
+}
+
+function drawPie(d){
+  const cv = document.getElementById('mon-pie');
+  if(!cv) return;
+  const ctx = cv.getContext('2d');
+  const W = cv.width, H = cv.height;
+  ctx.clearRect(0,0,W,H);
+  const cx = W/2, cy = H/2, r = Math.min(W,H)/2 - 10, inner = r*0.6;
+  const parts = [
+    {val: d.songs_ms||0, color: '#8B5CF6'},
+    {val: d.ads_ms||0,   color: '#F43F5E'},
+    {val: d.jingles_ms||0, color: '#F59E0B'},
+    {val: d.sweepers_ms||0, color: '#14B8A6'},
+  ];
+  const total = parts.reduce(function(s,p){return s+p.val;},0);
+  let start = -Math.PI/2;
+  if(total === 0){
+    ctx.strokeStyle = '#252848';
+    ctx.lineWidth = r - inner;
+    ctx.beginPath();
+    ctx.arc(cx, cy, (r+inner)/2, 0, Math.PI*2);
+    ctx.stroke();
+  } else {
+    parts.forEach(function(p){
+      if(p.val <= 0) return;
+      const ang = (p.val/total) * Math.PI*2;
+      ctx.beginPath();
+      ctx.fillStyle = p.color;
+      ctx.moveTo(cx, cy);
+      ctx.arc(cx, cy, r, start, start + ang);
+      ctx.closePath();
+      ctx.fill();
+      start += ang;
+    });
+    // donut hole
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.beginPath();
+    ctx.arc(cx, cy, inner, 0, Math.PI*2);
+    ctx.fill();
+    ctx.globalCompositeOperation = 'source-over';
+  }
+  // center label — total minutes
+  ctx.fillStyle = '#F1F5FF';
+  ctx.font = '700 34px "Roboto Mono", monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const totalMin = Math.round(total/60000);
+  ctx.fillText(String(totalMin), cx, cy-4);
+  ctx.font = '600 11px Inter, sans-serif';
+  ctx.fillStyle = '#8891B8';
+  ctx.fillText('min', cx, cy+22);
+}
+
+function loadMonTrend(){
+  callBridgeAsync('get_spots_hourly_trend', [], function(rows){
+    if(!rows) return;
+    drawTrend(rows);
+  });
+}
+
+function drawTrend(rows){
+  const cv = document.getElementById('mon-trend');
+  if(!cv) return;
+  const ctx = cv.getContext('2d');
+  const W = cv.width, H = cv.height;
+  ctx.clearRect(0,0,W,H);
+  const pad = 22;
+  const availH = H - pad*2;
+  const max = 20; // y-axis max in minutes
+  const n = rows.length || 1;
+  const barW = (W - pad*2) / n - 4;
+  // 15-min limit line
+  const limitY = H - pad - (15/max) * availH;
+  ctx.strokeStyle = 'rgba(244,63,94,0.5)';
+  ctx.setLineDash([4,3]);
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(pad, limitY);
+  ctx.lineTo(W-pad, limitY);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = '#F43F5E';
+  ctx.font = '600 9px Inter, sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText('15 min cap', pad+2, limitY-3);
+  // bars
+  const colors = {green:'#10B981', amber:'#F59E0B', red:'#F43F5E'};
+  rows.forEach(function(r,i){
+    const x = pad + i * (barW + 4);
+    const h = Math.min(availH, (r.minutes/max) * availH);
+    const y = H - pad - h;
+    ctx.fillStyle = colors[r.color] || '#10B981';
+    ctx.fillRect(x, y, barW, h);
+    // hour label every 2 bars
+    if(i % 2 === 0){
+      ctx.fillStyle = '#454D6D';
+      ctx.font = '500 8px "Roboto Mono", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(String(r.hour).padStart(2,'0'), x + barW/2, H - 6);
+    }
+  });
+  // "now" marker on last bar
+  if(rows.length){
+    ctx.fillStyle = '#8891B8';
+    ctx.font = '600 8px Inter, sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText('now →', W-pad-2, pad-4);
+  }
+}
+
+function loadMonClientRotation(){
+  callBridgeAsync('get_spots_client_rotation', [monPeriod], function(rows){
+    const host = document.getElementById('mon-client-list');
+    if(!rows || !rows.length){
+      host.innerHTML = '<div style="font-size:11px;color:var(--t3);text-align:center;padding:20px">No plays yet — start broadcasting to see client rotation.</div>';
+      return;
+    }
+    host.innerHTML = rows.map(function(r,i){
+      const meta = (r.category || '') + (r.priority ? ' · ' + r.priority : '');
+      return '<div class="mon-client-row">' +
+        '<div>' +
+          '<div class="mon-client-name"><span class="mon-client-rank">#' + (i+1) + '</span> ' + esc(r.name) + '</div>' +
+          (meta ? '<div class="mon-client-meta">' + esc(meta) + '</div>' : '') +
+        '</div>' +
+        '<div class="mon-client-val">' + r.plays + 'x</div>' +
+        '<div class="mon-client-val">' + r.min_per_hour + '</div>' +
+        '<div style="text-align:right"><span class="mon-tier ' + r.tier + '">' + r.tier + '</span></div>' +
+      '</div>';
+    }).join('');
+  });
+}
+
+function loadMonInsight(){
+  callBridgeAsync('get_spots_ai_insight', [], function(d){
+    if(!d) return;
+    const host = document.getElementById('mon-insight');
+    const txt = document.getElementById('mon-insight-text');
+    host.className = 'mon-insight ' + (d.severity || 'info');
+    txt.textContent = d.message || '';
+  });
+}
+
+// ── Clock ────────────────────────────────────────
+function updateClock(){
+  const now = new Date();
+  const hh = String(now.getHours()).padStart(2,'0');
+  const mm = String(now.getMinutes()).padStart(2,'0');
+  const ss = String(now.getSeconds()).padStart(2,'0');
+  document.getElementById('clock-time').textContent = hh+':'+mm+':'+ss;
+  const opts = {weekday:'short',day:'2-digit',month:'short',year:'numeric'};
+  document.getElementById('clock-date').textContent = now.toLocaleDateString('en-GB',opts);
+}
+
+// ── Navigation ───────────────────────────────────
+function goBack(){ window.location.href='control_panel.html'; }
+function openStudio(){
+  if(bridge && bridge.navigate) navigateTo('studio_screen');
+}
+function addCampaign(){
+  // Navigate to full-page add_campaign form
+  sessionStorage.removeItem('edit_campaign_id');
+  window.location.href = 'add_campaign.html';
+}
+
+function editCampaign(){
+  if(!selectedCampaignId){ alert('⚠ Select a campaign first!'); return; }
+  sessionStorage.setItem('edit_campaign_id', selectedCampaignId);
+  window.location.href = 'add_campaign.html';
+}
+
+function editBreaks(){ editCampaign(); }
+function breakSettings(){ alert('Break Settings editor — coming in next phase'); }
+
+function deleteCampaign(){
+  if(!selectedCampaignId){ alert('⚠ Select a campaign first!'); return; }
+  var c = allCampaigns.find(function(x){ return x.id === selectedCampaignId; });
+  var name = c ? c.name : 'this campaign';
+  if(!confirm('Delete "' + name + '"?\n\nAll spot files and schedules will also be deleted.\nThis cannot be undone.')) return;
+  callBridgeAsync('delete_campaign', [selectedCampaignId], function(data){
+    if(data){
+      alert('✅ Deleted: ' + name);
+      selectedCampaignId = null;
+      loadFromBridge();
+    } else {
+      alert('❌ Delete failed');
+    }
+  });
+}
+
+function addSpotFile(){
+  if(!selectedCampaignId){ alert('⚠ Select a campaign first!'); return; }
+  callBridgeAsync('browse_audio_file', [], function(filePath){
+    if(!filePath) return;
+    var filename = filePath.split('\\').pop().split('/').pop();
+    var payload = JSON.stringify({
+      campaign_id: selectedCampaignId,
+      filename: filename,
+      file_path: filePath,
+      duration_ms: 30000
+    });
+    callBridgeAsync('add_spot_file', [payload], function(data){
+      if(data){
+        alert('✅ Added: ' + filename);
+        // Clear cached spot files so details reload fresh
+        var c = allCampaigns.find(function(x){ return x.id === selectedCampaignId; });
+        if(c) c.spot_files = [];
+        loadCampaignDetails(selectedCampaignId);
+      } else {
+        alert('❌ Failed to add spot');
+      }
+    });
+  });
+}
+
+function deleteSpotFileById(spotId, filename){
+  if(!confirm('Delete spot file "' + filename + '"?')) return;
+  callBridgeAsync('delete_spot_file', [spotId], function(data){
+    if(data){
+      var c = allCampaigns.find(function(x){ return x.id === selectedCampaignId; });
+      if(c) c.spot_files = [];
+      loadCampaignDetails(selectedCampaignId);
+    }
+  });
+}
+
+// ── Helpers ──────────────────────────────────────
+function formatDate(d){
+  if(!d) return '--';
+  const dt = new Date(d);
+  const day = String(dt.getDate()).padStart(2,'0');
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return day + ' ' + months[dt.getMonth()] + ' ' + dt.getFullYear();
+}
+
+function esc(s){
+  if(!s) return '';
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+// ── Boot ─────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', init);
+
+// Refresh monitor whenever the window gains focus or becomes visible
+window.addEventListener('focus', function(){ refreshAiMonitor(false); });
+document.addEventListener('visibilitychange', function(){
+  if(!document.hidden) refreshAiMonitor(false);
+});
+// Public hook so PyQt can call page.runJavaScript('loadMonitorData()')
+window.loadMonitorData = function(){ refreshAiMonitor(false); };
+</script>
+</body>
+</html>

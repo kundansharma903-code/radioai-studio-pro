@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Scheduling | RadioAI Studio Pro</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+html,body{width:100%;height:100%;overflow-y:auto;overflow-x:hidden}
+body{display:flex;flex-direction:column}
+
+/* ── Page header ─────────────────────────────────── */
+.sch-hero{padding:16px 24px 8px;background:var(--surf);border-bottom:1px solid var(--b1)}
+.sch-hero-title{font-size:28px;font-weight:700;color:var(--t1);margin-bottom:2px}
+.sch-hero-sub{font-size:11px;color:var(--t3);margin-bottom:10px}
+.sch-badges{display:flex;gap:8px;flex-wrap:wrap}
+.sch-badge{padding:5px 14px;border-radius:6px;font-size:10px;font-weight:700;border:1px solid}
+.sch-badge.cyan{background:var(--cyD);color:var(--cy);border-color:rgba(6,182,212,0.4)}
+.sch-badge.green{background:var(--gnD);color:var(--gn);border-color:rgba(16,185,129,0.4)}
+.sch-badge.purple{background:var(--p4);color:var(--p2);border-color:rgba(139,92,246,0.4)}
+.sch-live{position:absolute;top:16px;right:24px;display:flex;align-items:center;gap:8px}
+.sch-live-dot{width:8px;height:8px;border-radius:50%;background:var(--rs);box-shadow:0 0 6px var(--rs);animation:livePulse 1.5s ease-in-out infinite}
+.sch-live-text{font-family:'Roboto Mono',monospace;font-size:12px;color:var(--gn);font-weight:700}
+
+/* ── Action buttons ──────────────────────────────── */
+.sch-actions{display:flex;gap:8px;padding:10px 24px;background:var(--bg);border-bottom:1px solid var(--b1)}
+.sch-section-label{font-size:9px;color:var(--t3);font-weight:700;letter-spacing:1px;margin-right:8px;align-self:center}
+.sch-act{padding:8px 18px;border:none;border-radius:6px;font-family:'Inter',sans-serif;font-size:11px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:5px}
+.sch-act:hover{opacity:0.9}
+.sch-act.cyan{background:var(--cy);color:#fff}
+.sch-act.green{background:var(--gn);color:#fff}
+.sch-act.amber{background:var(--am);color:#000}
+.sch-act.purple{background:var(--p1);color:#fff}
+
+/* ── Week Grid ───────────────────────────────────── */
+.sch-grid-wrap{padding:6px 24px 12px;background:var(--bg)}
+.sch-grid{width:100%;border-collapse:collapse;table-layout:fixed}
+.sch-grid th{padding:8px 6px;font-size:11px;font-weight:700;text-align:left;background:var(--surf);border:1px solid var(--b1);color:var(--t2)}
+.sch-grid th.today{color:var(--cy);background:rgba(6,182,212,0.08)}
+.sch-grid td{padding:8px 8px;font-size:10px;border:1px solid var(--b1);vertical-align:top;height:56px;background:var(--card)}
+.sch-grid td.today{background:rgba(6,182,212,0.04)}
+.sch-grid td.slot-label{background:var(--surf);width:100px;font-family:'Roboto Mono',monospace;font-size:9px;color:var(--t3);vertical-align:middle;padding:4px 8px}
+.sch-grid td.slot-label .slot-name{font-family:'Inter',sans-serif;font-size:10px;font-weight:700;display:block;margin-top:2px}
+.slot-name-night{color:var(--t3)}
+.slot-name-morning{color:var(--cy)}
+.slot-name-daytime{color:var(--p2)}
+.slot-name-afternoon{color:var(--am)}
+.slot-name-evening{color:var(--gn)}
+.slot-name-latenight{color:var(--rs)}
+.cell-clock{font-weight:600;color:var(--t1);margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cell-link{font-size:9px;color:var(--cy);cursor:pointer}
+.cell-link:hover{text-decoration:underline}
+.cell-empty{color:var(--t3);font-style:italic;font-size:9px}
+.cell-highlight{background:rgba(139,92,246,0.12);border-left:2px solid var(--p1)}
+
+/* ── Module Cards ────────────────────────────────── */
+.sch-cards{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;padding:8px 24px 12px;background:var(--bg)}
+.sch-card{background:var(--card);border:1px solid var(--b1);border-radius:8px;padding:14px 12px;display:flex;flex-direction:column;position:relative;overflow:hidden}
+.sch-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;border-radius:8px 8px 0 0}
+.sch-card.c-cyan::before{background:var(--cy)}
+.sch-card.c-green::before{background:var(--gn)}
+.sch-card.c-amber::before{background:var(--am)}
+.sch-card.c-purple::before{background:var(--p1)}
+.sch-card.c-teal::before{background:var(--tl)}
+.sch-card.c-rose::before{background:var(--rs)}
+.sch-card.c-pink::before{background:var(--pk)}
+.card-icon{font-size:16px;margin-bottom:6px}
+.card-name{font-size:12px;font-weight:700;color:var(--t1);margin-bottom:3px}
+.card-desc{font-size:9px;color:var(--t3);flex:1;margin-bottom:8px;line-height:1.4}
+.card-extra{font-size:9px;color:var(--t3);margin-bottom:6px}
+.card-extra .check{color:var(--gn)}
+.card-cta{font-size:10px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:4px}
+.card-cta:hover{text-decoration:underline}
+.c-cyan .card-cta{color:var(--cy)}
+.c-green .card-cta{color:var(--gn)}
+.c-amber .card-cta{color:var(--am)}
+.c-purple .card-cta{color:var(--p2)}
+.c-teal .card-cta{color:var(--tl)}
+.c-rose .card-cta{color:var(--rs)}
+.c-pink .card-cta{color:var(--pk)}
+
+/* ── Separation Rules ────────────────────────────── */
+.sch-rules{margin:0 24px 12px;background:var(--card);border:1px solid var(--b1);border-top:3px solid var(--rs);border-radius:8px;padding:14px 18px}
+.sch-rules-title{font-size:11px;font-weight:700;color:var(--rs);letter-spacing:1px;margin-bottom:10px}
+.rules-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 40px}
+.rule-row{display:flex;align-items:center;gap:8px;font-size:11px;padding:4px 0}
+.rule-label{color:var(--t2);min-width:130px}
+.rule-val{font-family:'Roboto Mono',monospace;background:var(--bg);border:1px solid var(--b1);border-radius:4px;padding:4px 10px;color:var(--t1);font-size:11px;font-weight:600;min-width:70px;text-align:center}
+.rule-hint{color:var(--t3);font-size:9px;margin-left:4px}
+.rules-footer{display:flex;align-items:center;gap:12px;margin-top:10px;padding-top:8px;border-top:1px solid var(--b1)}
+.rules-edit-btn{background:var(--p4);border:1px solid rgba(139,92,246,0.4);border-radius:6px;padding:6px 14px;color:var(--p2);font-size:10px;font-weight:700;cursor:pointer;font-family:'Inter',sans-serif}
+.rules-edit-btn:hover{background:rgba(139,92,246,0.2)}
+.rules-ai{color:var(--p2);font-size:10px}
+
+/* ── AI Insight Bar ──────────────────────────────── */
+.sch-insight{margin:0 24px 10px;background:var(--p4);border:1px solid rgba(139,92,246,0.3);border-left:3px solid var(--p1);border-radius:8px;padding:10px 18px;display:flex;align-items:center;gap:10px}
+.sch-insight-icon{color:var(--p2);font-size:13px}
+.sch-insight-label{color:var(--p2);font-size:10px;font-weight:700;white-space:nowrap}
+.sch-insight-text{flex:1;color:var(--t2);font-size:10px}
+.sch-insight-btn{background:var(--p1);color:#fff;border:none;border-radius:5px;padding:5px 12px;font-size:10px;font-weight:700;cursor:pointer;font-family:'Inter',sans-serif;white-space:nowrap}
+
+/* ── Rules Edit Modal ────────────────────────────── */
+.rules-modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:1000;justify-content:center;align-items:center}
+.rules-modal{background:var(--panel);border:1px solid var(--p1);border-radius:12px;padding:24px;width:480px;max-width:90vw}
+.rules-modal h3{color:var(--t1);font-size:14px;margin-bottom:14px}
+.rules-modal label{display:flex;align-items:center;gap:10px;margin-bottom:10px;font-size:11px;color:var(--t2)}
+.rules-modal input,.rules-modal select{background:var(--bg);border:1px solid var(--b1);border-radius:4px;padding:6px 10px;color:var(--t1);font-size:12px;font-family:'Roboto Mono',monospace;width:80px}
+.rules-modal select{width:120px;font-family:'Inter',sans-serif}
+.rules-modal-btns{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+.rules-modal-btns button{padding:8px 18px;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Inter',sans-serif}
+.rm-cancel{background:var(--card);color:var(--t2)}
+.rm-save{background:var(--p1);color:#fff}
+</style>
+</head>
+<body>
+
+<!-- ═══ HEADER ═══ -->
+<div class="page-header" style="display:flex;align-items:center;height:56px;padding:0 20px;background:var(--surf);border-bottom:1px solid var(--b1);gap:14px;position:relative">
+  <div class="logo" onclick="goBack()"><div class="logo-icon">((●))</div></div>
+  <div class="breadcrumb">
+    <a onclick="goBack()">Control Panel</a><span class="bc-sep">›</span>
+    <span class="active">Scheduling</span>
+  </div>
+  <div class="nav-tabs" style="display:flex;gap:4px;margin-left:24px">
+    <div class="nav-tab" onclick="goBack()">Libraries</div>
+    <div class="nav-tab active">Scheduling</div>
+    <div class="nav-tab" onclick="goToSettings()">Settings</div>
+    <div class="nav-tab" onclick="navigateTo('control_panel')">AI Magic ✦</div>
+  </div>
+  <div style="flex:1"></div>
+  <div style="text-align:center">
+    <div class="hdr-clock" id="clock" style="font-family:'Roboto Mono',monospace;font-size:22px;font-weight:700;letter-spacing:1px">00:00:00</div>
+    <div id="clock-date" style="font-size:8px;color:var(--t3)">Loading...</div>
+  </div>
+  <div class="hdr-station" style="margin-left:12px;text-align:right">
+    <div style="font-size:7px;color:var(--t3);letter-spacing:1px">ACTIVE STATION</div>
+    <div class="station-name" style="font-size:12px;font-weight:700">KISS FM 91.5</div>
+    <div class="station-loc" style="font-size:8px;color:var(--t3)">Jaipur, Rajasthan</div>
+  </div>
+  <button class="open-studio-btn" onclick="navigateTo('studio_screen')">▶ Open Studio</button>
+</div>
+
+<!-- ═══ HERO ═══ -->
+<div class="sch-hero" style="position:relative">
+  <div class="sch-hero-title">Scheduling</div>
+  <div class="sch-hero-sub">Plan your broadcast week — clocks, playlists, logs and automation</div>
+  <div class="sch-badges">
+    <div class="sch-badge cyan" id="badge-clocks">0 Clocks Built</div>
+    <div class="sch-badge green" id="badge-log">Log: Not Ready</div>
+    <div class="sch-badge purple">⚡ SOHO Auto</div>
+  </div>
+  <div class="sch-live">
+    <div class="sch-live-dot"></div>
+    <span style="font-size:9px;color:var(--t3)">LIVE</span>
+    <span class="sch-live-text" id="live-clock">00:00:00</span>
+  </div>
+</div>
+
+<!-- ═══ ACTION BUTTONS ═══ -->
+<div class="sch-actions">
+  <span class="sch-section-label">THIS WEEK — CLOCK ASSIGNMENTS</span>
+  <button class="sch-act cyan" onclick="navigateTo('clock_editor')">+ New Clock</button>
+  <button class="sch-act" style="background:var(--card);color:var(--t2);border:1px solid var(--b1)" onclick="navigateTo('main_auto_schedule')">📊 Full 24×7 Grid</button>
+  <button class="sch-act green" onclick="navigateTo('final_log_creator')">▶ Generate Today's Log</button>
+  <button class="sch-act amber" onclick="navigateTo('force_clocks')">⚡ Force Clock</button>
+  <button class="sch-act purple" onclick="navigateTo('log_viewer')">📅 View Log</button>
+</div>
+
+<!-- ═══ WEEK GRID ═══ -->
+<!-- ═══ AI SCHEDULER STATUS CARD ═══ -->
+<div id="ai-sched-card" style="margin:8px 24px;padding:14px 20px;border-radius:8px;border:1px solid var(--b1);display:flex;align-items:center;gap:14px;background:var(--card)">
+  <div id="ai-sched-icon" style="font-size:22px;flex-shrink:0">⏳</div>
+  <div style="flex:1;min-width:0">
+    <div style="font-size:12px;font-weight:700;color:var(--t1);margin-bottom:2px">AI Daily Scheduler</div>
+    <div id="ai-sched-line1" style="font-size:10px;color:var(--t2)">Loading status...</div>
+    <div id="ai-sched-line2" style="font-size:9px;color:var(--t3);margin-top:1px"></div>
+    <div id="ai-sched-warnings" style="font-size:9px;color:var(--am);margin-top:2px"></div>
+  </div>
+  <button id="ai-sched-btn" onclick="triggerGenerate()" style="padding:8px 16px;background:var(--p1);color:#fff;border:none;border-radius:6px;font-size:10px;font-weight:700;cursor:pointer;font-family:'Inter',sans-serif;white-space:nowrap">Generate Now</button>
+</div>
+
+<div class="sch-grid-wrap">
+  <table class="sch-grid">
+    <thead><tr>
+      <th style="width:100px"></th>
+      <th id="th-0">Monday</th>
+      <th id="th-1">Tuesday</th>
+      <th id="th-2">Wednesday</th>
+      <th id="th-3">Thursday</th>
+      <th id="th-4">Friday</th>
+      <th id="th-5">Saturday</th>
+      <th id="th-6">Sunday</th>
+    </tr></thead>
+    <tbody id="grid-body"></tbody>
+  </table>
+</div>
+
+<!-- ═══ MODULE CARDS ═══ -->
+<div class="sch-cards">
+  <div class="sch-card c-cyan">
+    <div class="card-icon">🕐</div>
+    <div class="card-name">Clock Editor</div>
+    <div class="card-desc">Build and edit rotation clocks</div>
+    <div class="card-cta" onclick="navigateTo('clock_editor')">Open Editor →</div>
+  </div>
+  <div class="sch-card c-green">
+    <div class="card-icon">📋</div>
+    <div class="card-name">Final Log</div>
+    <div class="card-desc">Generate today's broadcast log</div>
+    <div class="card-extra"><span class="check">✓</span> Playlists <span class="check">✓</span> Force Clocks <span class="check">✓</span> Breaks <span class="check">✓</span> Rebroadcast</div>
+    <div class="card-cta" onclick="navigateTo('final_log_creator')">Generate Log →</div>
+  </div>
+  <div class="sch-card c-amber">
+    <div class="card-icon">⚡</div>
+    <div class="card-name">Force Clocks</div>
+    <div class="card-desc">Override schedule for specific dates</div>
+    <div class="card-extra" id="force-count">0 active overrides</div>
+    <div class="card-cta" onclick="navigateTo('force_clocks')">Add Override →</div>
+  </div>
+  <div class="sch-card c-purple">
+    <div class="card-icon">📝</div>
+    <div class="card-name">Playlists</div>
+    <div class="card-desc">Manual song sequence builder</div>
+    <div class="card-cta" onclick="navigateTo('playlists')">Open Playlists →</div>
+  </div>
+  <div class="sch-card c-teal">
+    <div class="card-icon">📺</div>
+    <div class="card-name">Log Viewer</div>
+    <div class="card-desc">View and edit generated logs</div>
+    <div class="card-cta" onclick="navigateTo('log_viewer')">View Logs →</div>
+  </div>
+  <div class="sch-card c-rose">
+    <div class="card-icon">🔁</div>
+    <div class="card-name">Rebroadcast</div>
+    <div class="card-desc">Replay recorded broadcasts</div>
+    <div class="card-extra" style="color:var(--rs)">🔗 Break Sync: Off</div>
+    <div class="card-cta" onclick="navigateTo('rebroadcast')">Schedule →</div>
+  </div>
+  <div class="sch-card c-pink">
+    <div class="card-icon">📡</div>
+    <div class="card-name">RDS Settings</div>
+    <div class="card-desc">Radio Data System text config</div>
+    <div class="card-cta" onclick="navigateTo('rds_settings')">Configure →</div>
+  </div>
+</div>
+
+<!-- ═══ SEPARATION RULES ═══ -->
+<div class="sch-rules">
+  <div class="sch-rules-title">SONG SEPARATION RULES</div>
+  <div class="rules-grid">
+    <div class="rule-row"><span class="rule-label">Same Artist</span><span class="rule-val" id="r-artist" style="color:var(--t3)">Off</span><span class="rule-hint">→ artist separation disabled</span></div>
+    <div class="rule-row"><span class="rule-label">Artist Title Separation</span><span class="rule-val" id="r-title-sep">1 hour</span><span class="rule-hint">→ between same title from different artists</span></div>
+    <div class="rule-row"><span class="rule-label">Same Song</span><span class="rule-val" id="r-song">7 days</span><span class="rule-hint">→ same song cannot repeat for 7 days</span></div>
+    <div class="rule-row"><span class="rule-label">Vocal Type</span><span class="rule-val" id="r-vocal">Alternate</span><span class="rule-hint">→ alternate male/female vocals when possible</span></div>
+    <div class="rule-row"><span class="rule-label">Same Category</span><span class="rule-val" id="r-category">30 mins</span><span class="rule-hint"></span></div>
+    <div class="rule-row"><span class="rule-label">Selection Randomness</span><span class="rule-val" id="r-random">0 (strict)</span><span class="rule-hint">→ strict rotation. 8 = most random</span></div>
+  </div>
+  <div class="rules-footer">
+    <button class="rules-edit-btn" onclick="openRulesEditor()">✎ Edit Rules</button>
+    <span class="rules-ai">✦ AI enforces all rules automatically during scheduling</span>
+  </div>
+</div>
+
+<!-- ═══ AI INSIGHT BAR ═══ -->
+<div class="sch-insight">
+  <span class="sch-insight-icon">✦</span>
+  <span class="sch-insight-label">AI SCHEDULING INSIGHT</span>
+  <span class="sch-insight-text" id="ai-insight-text">Loading scheduling analysis...</span>
+  <button class="sch-insight-btn">Fix Now →</button>
+</div>
+
+<!-- ═══ STATUS BAR ═══ -->
+<div class="status-bar" style="display:flex;align-items:center;height:34px;background:var(--surf);border-top:1px solid var(--b1);padding:0 20px;gap:14px;margin-top:auto;flex-shrink:0">
+  <div class="status-indicator" style="display:flex;align-items:center;gap:4px;font-size:10px;font-weight:600"><span style="width:6px;height:6px;border-radius:50%;background:var(--p1);box-shadow:0 0 4px var(--p1)"></span>AUTO MODE</div>
+  <div class="status-indicator" style="display:flex;align-items:center;gap:4px;font-size:10px;font-weight:600"><span style="width:6px;height:6px;border-radius:50%;background:var(--gn);box-shadow:0 0 4px var(--gn)"></span>AI Active</div>
+  <div class="status-indicator" style="display:flex;align-items:center;gap:4px;font-size:10px;font-weight:600"><span style="width:6px;height:6px;border-radius:50%;background:var(--gn)"></span><span id="status-log">Log Ready</span></div>
+  <div class="status-indicator" style="display:flex;align-items:center;gap:4px;font-size:10px;font-weight:600"><span style="width:6px;height:6px;border-radius:50%;background:var(--am)"></span><span id="status-clocks">0 Clocks</span></div>
+  <div style="background:var(--p4);border:1px solid rgba(139,92,246,0.3);border-radius:4px;padding:2px 10px;font-size:10px;font-weight:700;color:var(--p2)">⚡ SOHO Auto</div>
+  <div style="flex:1"></div>
+  <div style="font-size:10px;color:var(--t3);cursor:pointer" onclick="goToSettings()">⚙ Settings</div>
+</div>
+
+<!-- ═══ RULES EDIT MODAL ═══ -->
+<div class="rules-modal-bg" id="rules-modal-bg" onclick="closeRulesEditor()">
+  <div class="rules-modal" onclick="event.stopPropagation()">
+    <h3>Edit Song Separation Rules</h3>
+    <label>Same Artist (hours): <input type="number" id="edit-artist" min="0" max="48" value="2"></label>
+    <label>Same Song (days): <input type="number" id="edit-song" min="0" max="30" value="7"></label>
+    <label>Same Category (mins): <input type="number" id="edit-category" min="0" max="120" value="30"></label>
+    <label>Artist Title Sep (hours): <input type="number" id="edit-title-sep" min="0" max="24" value="1"></label>
+    <label>Vocal Type: <select id="edit-vocal"><option>Alternate</option><option>Any</option><option>Same</option></select></label>
+    <label>Selection Randomness (0-8): <input type="number" id="edit-random" min="0" max="8" value="0"></label>
+    <div class="rules-modal-btns">
+      <button class="rm-cancel" onclick="closeRulesEditor()">Cancel</button>
+      <button class="rm-save" onclick="saveRules()">✓ Save Rules</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ JS ═══ -->
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script src="js/bridge_helper.js"></script>
+<script>
+
+var SLOT_COLORS = ['slot-name-night','slot-name-morning','slot-name-daytime','slot-name-afternoon','slot-name-evening','slot-name-latenight'];
+
+onBridgeReady(function() {
+  loadStats();
+  loadGrid();
+  loadRules();
+  loadInsight();
+  loadAISchedulerStatus();
+  highlightToday();
+  updateLiveClock();
+  setInterval(updateLiveClock, 1000);
+  setInterval(loadAISchedulerStatus, 60000);
+});
+
+// ── AI Scheduler Status Card ────────────────────
+function loadAISchedulerStatus() {
+  callBridgeAsync('get_ai_scheduler_status', [], function(data) {
+    if (!data) return;
+    var card = document.getElementById('ai-sched-card');
+    var icon = document.getElementById('ai-sched-icon');
+    var line1 = document.getElementById('ai-sched-line1');
+    var line2 = document.getElementById('ai-sched-line2');
+    var warns = document.getElementById('ai-sched-warnings');
+    var btn = document.getElementById('ai-sched-btn');
+
+    if (data.status === 'done' && data.warnings_count === 0) {
+      card.style.borderColor = 'rgba(16,185,129,0.4)';
+      card.style.background = 'rgba(5,46,22,0.5)';
+      icon.textContent = '✅';
+      line1.textContent = "Today's scheduling is done";
+      line2.textContent = 'Generated: ' + (data.generated_at || '—') + '  •  ' + data.songs_scheduled + ' songs';
+      warns.textContent = '';
+      btn.textContent = 'View Schedule →';
+      btn.style.background = 'var(--gn)';
+      btn.onclick = function() { navigateTo('log_viewer'); };
+
+    } else if (data.status === 'done' && data.warnings_count > 0) {
+      card.style.borderColor = 'rgba(245,158,11,0.4)';
+      card.style.background = 'rgba(45,26,0,0.5)';
+      icon.textContent = '⚠️';
+      line1.textContent = "Today's scheduling done  •  " + data.warnings_count + ' warnings';
+      line2.textContent = data.songs_scheduled + ' songs scheduled';
+      var warnLines = (data.warnings || []).slice(0, 3).map(function(w) { return '• ' + w.message; }).join('\n');
+      warns.textContent = warnLines;
+      btn.textContent = 'View Schedule →';
+      btn.style.background = 'var(--am)';
+      btn.onclick = function() { navigateTo('log_viewer'); };
+
+    } else if (data.status === 'failed') {
+      card.style.borderColor = 'rgba(244,63,94,0.4)';
+      card.style.background = 'rgba(31,10,18,0.5)';
+      icon.textContent = '🔴';
+      line1.textContent = 'Scheduling failed';
+      line2.textContent = data.error_message || 'Unknown error';
+      warns.textContent = 'Fallback: Real-time selection active';
+      btn.textContent = 'Retry Now 🔄';
+      btn.style.background = 'var(--rs)';
+      btn.onclick = function() { triggerGenerate(); };
+
+    } else {
+      card.style.borderColor = 'rgba(245,158,11,0.4)';
+      card.style.background = 'rgba(45,26,0,0.3)';
+      icon.textContent = '⚠️';
+      line1.textContent = 'No scheduling done for today';
+      line2.textContent = 'Using real-time selection  •  Next auto run: Tonight 12:00 AM';
+      warns.textContent = '';
+      btn.textContent = 'Generate Now 🔄';
+      btn.style.background = 'var(--p1)';
+      btn.onclick = function() { triggerGenerate(); };
+    }
+  });
+}
+
+function triggerGenerate() {
+  var btn = document.getElementById('ai-sched-btn');
+  if (btn) { btn.textContent = 'Generating...'; btn.disabled = true; }
+  callBridgeAsync('generate_ai_schedule', [''], function() {
+    setTimeout(function() {
+      if (btn) btn.disabled = false;
+      loadAISchedulerStatus();
+    }, 3000);
+  });
+}
+
+// ── Stats ───────────────────────────────────────
+function loadStats() {
+  callBridgeAsync('get_scheduling_stats', [], function(data) {
+    if (!data) return;
+    var badge = document.getElementById('badge-clocks');
+    if (badge) badge.textContent = data.clock_count + ' Clocks Built';
+    var logBadge = document.getElementById('badge-log');
+    if (logBadge) logBadge.textContent = data.log_ready ? 'Log Ready: Today' : 'Log: Not Ready';
+    var fc = document.getElementById('force-count');
+    if (fc) fc.textContent = data.force_clocks_count + ' active overrides';
+    var sc = document.getElementById('status-clocks');
+    if (sc) sc.textContent = data.clock_count + ' Clocks';
+    var sl = document.getElementById('status-log');
+    if (sl) sl.textContent = data.log_ready ? 'Log Ready' : 'No Log';
+  });
+}
+
+// ── Week Grid ───────────────────────────────────
+function loadGrid() {
+  callBridgeAsync('get_week_grid', [], function(data) {
+    if (!data) return;
+    var tbody = document.getElementById('grid-body');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    var today = new Date().getDay();
+    // JS getDay: 0=Sun, but our grid is 0=Mon. Convert.
+    var todayIdx = today === 0 ? 6 : today - 1;
+
+    var grid = data.grid || [];
+    grid.forEach(function(row, si) {
+      var tr = document.createElement('tr');
+      // Slot label cell
+      var tdLabel = document.createElement('td');
+      tdLabel.className = 'slot-label';
+      tdLabel.innerHTML = '<span style="color:var(--t3)">' + (row.range || '') + '</span>' +
+        '<span class="slot-name ' + SLOT_COLORS[si] + '">' + (row.name || '') + '</span>';
+      tr.appendChild(tdLabel);
+
+      // 7 day cells
+      var days = row.days || [];
+      for (var d = 0; d < 7; d++) {
+        var td = document.createElement('td');
+        if (d === todayIdx) td.className = 'today';
+        var cell = days[d] || {};
+        if (cell.clock_name) {
+          td.innerHTML = '<div class="cell-clock">' + esc(cell.clock_name) + '</div>' +
+            '<div class="cell-link" onclick="navigateTo(\'clock_editor\')">Open →</div>';
+          // Add highlight for Tuesday column cells with content
+          if (d === todayIdx) td.classList.add('cell-highlight');
+        } else {
+          td.innerHTML = '<div class="cell-empty">—</div>';
+        }
+        tr.appendChild(td);
+      }
+      tbody.appendChild(tr);
+    });
+  });
+}
+
+function esc(s) {
+  return (s == null ? '' : String(s)).replace(/[&<>"']/g, function(c) {
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+  });
+}
+
+// ── Separation Rules ────────────────────────────
+function loadRules() {
+  callBridgeAsync('get_separation_rules', [], function(data) {
+    if (!data) return;
+    var el = function(id, val) { var e = document.getElementById(id); if (e) e.textContent = val; };
+    el('r-artist', (data.same_artist_hours || '2') + ' hours');
+    el('r-song', (data.same_song_days || '7') + ' days');
+    el('r-category', (data.same_category_mins || '30') + ' mins');
+    el('r-title-sep', (data.artist_title_sep_hours || '1') + ' hour');
+    el('r-vocal', data.vocal_type || 'Alternate');
+    el('r-random', (data.selection_randomness || '0') + ' (strict)');
+
+    // Pre-fill edit modal
+    document.getElementById('edit-artist').value = data.same_artist_hours || 2;
+    document.getElementById('edit-song').value = data.same_song_days || 7;
+    document.getElementById('edit-category').value = data.same_category_mins || 30;
+    document.getElementById('edit-title-sep').value = data.artist_title_sep_hours || 1;
+    document.getElementById('edit-vocal').value = data.vocal_type || 'Alternate';
+    document.getElementById('edit-random').value = data.selection_randomness || 0;
+  });
+}
+
+function openRulesEditor() {
+  document.getElementById('rules-modal-bg').style.display = 'flex';
+}
+
+function closeRulesEditor() {
+  document.getElementById('rules-modal-bg').style.display = 'none';
+}
+
+function saveRules() {
+  var payload = {
+    same_artist_hours: document.getElementById('edit-artist').value,
+    same_song_days: document.getElementById('edit-song').value,
+    same_category_mins: document.getElementById('edit-category').value,
+    artist_title_sep_hours: document.getElementById('edit-title-sep').value,
+    vocal_type: document.getElementById('edit-vocal').value,
+    selection_randomness: document.getElementById('edit-random').value,
+  };
+  callBridgeAsync('save_separation_rules', [JSON.stringify(payload)], function(ok) {
+    if (ok) {
+      closeRulesEditor();
+      loadRules();
+    }
+  });
+}
+
+// ── AI Insight ──────────────────────────────────
+function loadInsight() {
+  callBridgeAsync('get_ai_insights', [], function(data) {
+    var el = document.getElementById('ai-insight-text');
+    if (!el) return;
+    if (data && data.length > 0) {
+      el.textContent = data.map(function(i) { return i.message; }).join(' — ');
+    } else {
+      el.textContent = 'All scheduling rules are being enforced. System is healthy.';
+    }
+  });
+}
+
+// ── Today highlight ─────────────────────────────
+function highlightToday() {
+  var today = new Date().getDay();
+  var todayIdx = today === 0 ? 6 : today - 1;
+  var th = document.getElementById('th-' + todayIdx);
+  if (th) th.classList.add('today');
+}
+
+// ── Live clock ──────────────────────────────────
+function updateLiveClock() {
+  var now = new Date();
+  var t = String(now.getHours()).padStart(2, '0') + ':' +
+    String(now.getMinutes()).padStart(2, '0') + ':' +
+    String(now.getSeconds()).padStart(2, '0');
+  var lc = document.getElementById('live-clock');
+  if (lc) lc.textContent = t;
+}
+</script>
+</body>
+</html>

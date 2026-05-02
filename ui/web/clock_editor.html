@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Clock Editor | RadioAI Studio Pro</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+html,body{width:100%;height:100%;overflow:hidden}
+body{display:flex;flex-direction:column}
+.ce-main{display:flex;flex:1;overflow:hidden}
+
+/* Left: Library/Filter */
+.ce-left{width:220px;min-width:200px;display:flex;flex-direction:column;border-right:1px solid var(--b1);background:var(--surf);overflow-y:auto;font-size:10px}
+.ce-lib-tabs{display:flex;gap:2px;padding:6px 8px;flex-wrap:wrap}
+.ce-lib-tab{padding:4px 8px;border-radius:4px;font-size:9px;font-weight:600;cursor:pointer;background:var(--card);color:var(--t2);border:1px solid var(--b1)}
+.ce-lib-tab.active{background:var(--p4);color:var(--p2);border-color:var(--p1)}
+.ce-sub-tabs{display:flex;gap:2px;padding:0 8px 6px}
+.ce-sub-tab{padding:3px 6px;font-size:8px;color:var(--t3);cursor:pointer;border-bottom:1px solid transparent}
+.ce-sub-tab.active{color:var(--cy);border-color:var(--cy)}
+.ce-filters{padding:4px 8px;display:flex;flex-direction:column;gap:6px;flex:1}
+.ce-filter-label{font-size:8px;color:var(--t3);font-weight:600;letter-spacing:0.5px}
+.ce-filter-select{width:100%;background:var(--card);border:1px solid var(--b1);border-radius:4px;padding:4px 6px;color:var(--t1);font-size:9px}
+.ce-filter-select:focus{outline:none;border-color:var(--p1)}
+.ce-songs-found{padding:10px 8px;background:var(--card);border:1px solid var(--b1);border-radius:6px;margin:6px 8px}
+.ce-songs-count{font-size:20px;font-weight:700;color:var(--gn);font-family:'Roboto Mono',monospace}
+.ce-songs-label{font-size:8px;color:var(--t3)}
+.ce-filter-btns{display:flex;gap:4px;padding:6px 8px}
+.ce-filter-btn{flex:1;padding:6px;border:none;border-radius:5px;font-size:9px;font-weight:600;cursor:pointer;font-family:'Inter',sans-serif}
+.ce-reset-btn{background:var(--card);color:var(--t2);border:1px solid var(--b1)}
+.ce-preview-btn{background:var(--gn);color:#fff}
+
+/* Center: Slot List */
+.ce-center{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.ce-clock-header{padding:8px 14px;background:var(--bg);border-bottom:1px solid var(--b1)}
+.ce-clock-row{display:flex;gap:8px;align-items:center}
+.ce-clock-input{background:var(--bg);border:1px solid var(--b1);border-radius:4px;padding:6px 10px;color:var(--t1);font-size:14px;font-weight:700;font-family:'Inter',sans-serif;flex:1}
+.ce-clock-input:focus{outline:none;border-color:var(--p1)}
+.ce-clock-pipe{color:var(--t3);font-size:12px}
+.ce-clock-time{font-family:'Roboto Mono',monospace;font-size:12px;color:var(--t2)}
+.ce-clock-stats{display:flex;gap:12px;margin-left:auto}
+.ce-stat{text-align:center}
+.ce-stat-val{font-size:14px;font-weight:700;font-family:'Roboto Mono',monospace}
+.ce-stat-label{font-size:7px;color:var(--t3);letter-spacing:0.5px}
+.ce-comments{width:100%;background:var(--card);border:1px solid var(--b1);border-radius:4px;padding:5px 8px;color:var(--t2);font-size:10px;margin-top:4px;font-family:'Inter',sans-serif;resize:none;height:22px}
+
+/* Action buttons */
+.ce-actions{display:flex;gap:4px;padding:6px 14px;background:var(--bg);border-bottom:1px solid var(--b1);flex-wrap:wrap}
+.ce-act{padding:5px 10px;border:none;border-radius:5px;font-size:9px;font-weight:600;cursor:pointer;font-family:'Inter',sans-serif;display:flex;align-items:center;gap:3px}
+.ce-act:hover{opacity:0.9}
+.ce-act-cyan{background:var(--cy);color:#fff}
+.ce-act-red{background:var(--rs);color:#fff}
+.ce-act-green{background:var(--gn);color:#fff}
+.ce-act-amber{background:var(--am);color:#000}
+.ce-act-purple{background:var(--p1);color:#fff}
+.ce-act-default{background:var(--card);color:var(--t2);border:1px solid var(--b1)}
+
+/* Slot table */
+.ce-slots-wrap{flex:1;overflow-y:auto}
+.ce-slots-wrap::-webkit-scrollbar{width:6px}
+.ce-slots-wrap::-webkit-scrollbar-thumb{background:var(--b2);border-radius:3px}
+.ce-slots{width:100%;border-collapse:collapse}
+.ce-slots th{padding:6px 8px;font-size:9px;font-weight:600;color:var(--t3);letter-spacing:0.5px;background:var(--surf);position:sticky;top:0;text-align:left;border-bottom:1px solid var(--b1)}
+.ce-slots td{padding:6px 8px;font-size:10px;border-bottom:1px solid rgba(28,31,56,0.4);cursor:pointer}
+.ce-slots tr:hover{background:var(--card2)}
+.ce-slots tr.selected{background:var(--p4)!important;border-left:3px solid var(--p1)}
+.slot-badge{font-size:8px;font-weight:700;padding:2px 8px;border-radius:4px;display:inline-block;min-width:50px;text-align:center}
+.badge-song{background:var(--cyD);color:var(--cy)}
+.badge-jingle{background:var(--amD);color:var(--am)}
+.badge-spot{background:var(--rsD);color:var(--rs)}
+.badge-sweeper{background:var(--p4);color:var(--p2)}
+.badge-event{background:var(--gnD);color:var(--gn)}
+
+/* Right: Slot Properties */
+.ce-right{width:260px;min-width:240px;display:flex;flex-direction:column;border-left:1px solid var(--b1);background:var(--surf);overflow-y:auto;padding:10px}
+.ce-right-title{font-size:9px;font-weight:700;color:var(--t3);letter-spacing:1px;margin-bottom:8px}
+.ce-editing{font-size:11px;font-weight:700;color:var(--am);margin-bottom:10px}
+.ce-prop{margin-bottom:8px}
+.ce-prop-label{font-size:9px;color:var(--t3);margin-bottom:3px}
+.ce-prop-select{width:100%;background:var(--card);border:1px solid var(--b1);border-radius:4px;padding:5px 8px;color:var(--t1);font-size:10px}
+.ce-apply-btn{width:100%;padding:8px;background:var(--am);color:#000;border:none;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;font-family:'Inter',sans-serif;margin-top:8px}
+.ce-remove-btn{width:100%;padding:6px;background:transparent;border:1px solid var(--rs);color:var(--rs);border-radius:6px;font-size:10px;font-weight:600;cursor:pointer;font-family:'Inter',sans-serif;margin-top:4px}
+.ce-overview{margin-top:16px;padding:10px;background:var(--card);border:1px solid var(--b1);border-radius:6px}
+.ce-overview-title{font-size:8px;font-weight:700;color:var(--t3);letter-spacing:1px;margin-bottom:6px}
+.ce-overview-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:4px}
+.ce-ov-stat{text-align:center}
+.ce-ov-val{font-size:14px;font-weight:700;font-family:'Roboto Mono',monospace}
+.ce-ov-label{font-size:7px;color:var(--t3)}
+.ce-cat-bars{margin-top:10px}
+.ce-cat-bar-row{display:flex;align-items:center;gap:6px;margin-bottom:4px;font-size:9px}
+.ce-cat-bar-label{min-width:70px;color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ce-cat-bar{flex:1;height:10px;border-radius:3px;background:var(--b1)}
+.ce-cat-bar-fill{height:100%;border-radius:3px}
+.ce-cat-bar-count{color:var(--t3);font-family:'Roboto Mono',monospace;font-size:8px;min-width:40px;text-align:right}
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="page-header" style="display:flex;align-items:center;height:50px;padding:0 16px;background:var(--surf);border-bottom:1px solid var(--b1);gap:12px">
+  <div class="logo" onclick="goBack()"><div class="logo-icon">((●))</div></div>
+  <div class="breadcrumb">
+    <a onclick="goBack()">Control Panel</a><span class="bc-sep">›</span>
+    <a onclick="navigateTo('scheduling_screen')">Scheduling</a><span class="bc-sep">›</span>
+    <span class="active" style="color:var(--cy)">Clock Editor</span>
+  </div>
+  <div style="flex:1"></div>
+  <div id="clock" style="font-family:'Roboto Mono',monospace;font-size:22px;font-weight:700;letter-spacing:1px">00:00:00</div>
+  <div class="hdr-station" style="margin-left:12px;text-align:right">
+    <div style="font-size:7px;color:var(--t3);letter-spacing:1px">ACTIVE STATION</div>
+    <div class="station-name" style="font-size:12px;font-weight:700">KISS FM 91.5</div>
+  </div>
+  <button class="open-studio-btn" onclick="navigateTo('studio_screen')">▶ Open Studio</button>
+</div>
+
+<div class="ce-main">
+
+  <!-- LEFT: Library/Filter -->
+  <div class="ce-left">
+    <div class="ce-lib-tabs">
+      <div class="ce-lib-tab active" data-type="songs" onclick="switchLibType(this)">Songs</div>
+      <div class="ce-lib-tab" data-type="jingles" onclick="switchLibType(this)">Jingles</div>
+      <div class="ce-lib-tab" data-type="spots" onclick="switchLibType(this)">Spots</div>
+      <div class="ce-lib-tab" data-type="sweepers" onclick="switchLibType(this)">Sweepers</div>
+      <div class="ce-lib-tab" data-type="events" onclick="switchLibType(this)">Events</div>
+    </div>
+    <!-- Dynamic content per tab — rendered by switchLibType() -->
+    <div id="lib-panel-content" style="flex:1;display:flex;flex-direction:column;overflow-y:auto;padding:0 8px"></div>
+  </div>
+
+  <!-- CENTER: Slot List -->
+  <div class="ce-center">
+    <div class="ce-clock-header">
+      <div class="ce-clock-row">
+        <input class="ce-clock-input" id="clock-name" value="New Clock" placeholder="Clock Name">
+        <span class="ce-clock-pipe">|</span>
+        <span class="ce-clock-time" id="clock-range">00:00 → 00:00</span>
+        <div class="ce-clock-stats">
+          <div class="ce-stat"><div class="ce-stat-val" style="color:var(--cy)" id="stat-songs">0</div><div class="ce-stat-label">Songs</div></div>
+          <div class="ce-stat"><div class="ce-stat-val" style="color:var(--rs)" id="stat-breaks">0</div><div class="ce-stat-label">Breaks</div></div>
+          <div class="ce-stat"><div class="ce-stat-val" style="color:var(--am)" id="stat-jingles">0</div><div class="ce-stat-label">Jingles</div></div>
+          <div class="ce-stat"><div class="ce-stat-val" style="color:var(--p2)" id="stat-sweepers">0</div><div class="ce-stat-label">Sweepers</div></div>
+          <div class="ce-stat"><div class="ce-stat-val" style="color:var(--t1)" id="stat-total">00:00</div><div class="ce-stat-label">Total</div></div>
+        </div>
+      </div>
+      <textarea class="ce-comments" id="clock-comments" placeholder="Comments..."></textarea>
+    </div>
+
+    <div class="ce-actions">
+      <button class="ce-act ce-act-cyan" onclick="changeSlot()">✎ Change</button>
+      <button class="ce-act ce-act-red" onclick="deleteSlot()">✕ Delete</button>
+      <button class="ce-act ce-act-green" onclick="addSlot()">+ Add</button>
+      <button class="ce-act ce-act-default" onclick="insertSlot()">↵ Insert</button>
+      <button class="ce-act ce-act-default" onclick="moveSlot(-1)">↑ Move Up</button>
+      <button class="ce-act ce-act-default" onclick="moveSlot(1)">↓ Move Down</button>
+      <button class="ce-act ce-act-purple" onclick="aiOptimise()">◎ AI Optimise</button>
+      <button class="ce-act ce-act-default">▶ Preview</button>
+      <button class="ce-act ce-act-default">✓ Validate</button>
+      <button class="ce-act ce-act-amber" onclick="saveClock()">💾 Save Clock</button>
+    </div>
+
+    <div class="ce-slots-wrap">
+      <table class="ce-slots">
+        <thead><tr>
+          <th style="width:28px">#</th>
+          <th style="width:66px">TYPE</th>
+          <th style="width:150px">EST. START → END</th>
+          <th>DESCRIPTION</th>
+          <th style="width:80px">CATEGORY</th>
+          <th style="width:50px">ENERGY</th>
+          <th style="width:50px">VOCAL</th>
+        </tr></thead>
+        <tbody id="slots-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- RIGHT: Slot Properties -->
+  <div class="ce-right">
+    <div class="ce-right-title">SLOT PROPERTIES</div>
+    <div class="ce-editing" id="editing-label">No slot selected</div>
+    <div class="ce-prop"><div class="ce-prop-label">Slot Type</div><select class="ce-prop-select" id="prop-type"><option>Song</option><option>Jingle</option><option>Spot</option><option>Sweeper</option><option>Event</option></select></div>
+    <div class="ce-prop"><div class="ce-prop-label">Category</div><select class="ce-prop-select" id="prop-category"></select></div>
+    <div class="ce-prop"><div class="ce-prop-label">Energy</div><select class="ce-prop-select" id="prop-energy"><option>Any</option><option>High</option><option>Medium</option><option>Low</option></select></div>
+    <div class="ce-prop"><div class="ce-prop-label">Vocal</div><select class="ce-prop-select" id="prop-vocal"><option>Any</option><option>Male</option><option>Female</option><option>Instrumental</option></select></div>
+    <div class="ce-prop"><div class="ce-prop-label">Priority</div><select class="ce-prop-select" id="prop-priority"><option>Normal</option><option>High</option><option>Low</option></select></div>
+    <div class="ce-prop"><div class="ce-prop-label">Separation (min)</div><select class="ce-prop-select" id="prop-sep"><option value="0">Use Default</option><option value="30">30 min</option><option value="60">60 min</option><option value="120">120 min</option></select></div>
+    <button class="ce-apply-btn" onclick="applySlotChanges()">✓ Apply Changes</button>
+    <button class="ce-remove-btn" onclick="deleteSlot()">✕ Remove Slot</button>
+
+    <div class="ce-overview">
+      <div class="ce-overview-title" id="overview-title">CLOCK OVERVIEW</div>
+      <div class="ce-overview-stats">
+        <div class="ce-ov-stat"><div class="ce-ov-val" style="color:var(--cy)" id="ov-songs">0</div><div class="ce-ov-label">Songs</div></div>
+        <div class="ce-ov-stat"><div class="ce-ov-val" style="color:var(--rs)" id="ov-breaks">0</div><div class="ce-ov-label">Breaks</div></div>
+        <div class="ce-ov-stat"><div class="ce-ov-val" style="color:var(--am)" id="ov-jingles">0</div><div class="ce-ov-label">Jingles</div></div>
+        <div class="ce-ov-stat"><div class="ce-ov-val" style="color:var(--t1)" id="ov-total">00:00</div><div class="ce-ov-label">Total</div></div>
+      </div>
+      <div class="ce-cat-bars" id="cat-bars"></div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Status Bar -->
+<div class="status-bar" style="display:flex;align-items:center;height:30px;background:var(--surf);border-top:1px solid var(--b1);padding:0 16px;gap:14px;flex-shrink:0">
+  <div style="display:flex;align-items:center;gap:4px;font-size:10px;font-weight:600"><span style="width:6px;height:6px;border-radius:50%;background:var(--p1);box-shadow:0 0 4px var(--p1)"></span>AUTO MODE</div>
+  <div style="display:flex;align-items:center;gap:4px;font-size:10px;font-weight:600"><span style="width:6px;height:6px;border-radius:50%;background:var(--gn);box-shadow:0 0 4px var(--gn)"></span>AI Active</div>
+  <div style="display:flex;align-items:center;gap:4px;font-size:10px;font-weight:600"><span style="width:6px;height:6px;border-radius:50%;background:var(--am)"></span><span id="sb-clocks">0 Clocks</span></div>
+  <div style="flex:1"></div>
+  <div style="font-size:9px;color:var(--t3)">Clock Editor: Weekday + Slots</div>
+  <button class="open-studio-btn" style="padding:4px 12px;font-size:10px;margin-left:8px" onclick="navigateTo('studio_screen')">▶ Open Studio</button>
+</div>
+
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script src="js/bridge_helper.js"></script>
+<script>
+
+var clockId = null;
+var slots = [];
+var selectedSlotId = null;
+var categories = [];
+
+var BADGE_CLS = { Song: 'badge-song', Jingle: 'badge-jingle', Spot: 'badge-spot', Sweeper: 'badge-sweeper', Event: 'badge-event' };
+
+onBridgeReady(function() {
+  loadCategories();
+  renderLibPanel();  // render default Songs tab panel
+  var editId = sessionStorage.getItem('edit_clock_id');
+  if (editId) {
+    sessionStorage.removeItem('edit_clock_id');
+    clockId = parseInt(editId, 10);
+    loadClockData();
+  }
+});
+
+function loadCategories() {
+  callBridgeAsync('get_categories', [], function(data) {
+    categories = data || [];
+    var sel = document.getElementById('prop-category');
+    var f1 = document.getElementById('f-cat1');
+    if (sel) {
+      sel.innerHTML = '<option value="0">Any</option>';
+      categories.forEach(function(c) { sel.innerHTML += '<option value="' + c.id + '">' + esc(c.name) + '</option>'; });
+    }
+    if (f1) {
+      f1.innerHTML = '<option>All Categories</option>';
+      categories.forEach(function(c) { f1.innerHTML += '<option>' + esc(c.name) + '</option>'; });
+    }
+  });
+}
+
+function loadSongsCount() {
+  callBridgeAsync('get_stats', [], function(data) {
+    if (!data) return;
+    var el = document.getElementById('songs-found');
+    if (el) el.textContent = data.songs_enabled || data.songs || 0;
+  });
+}
+
+function loadClockData() {
+  if (!clockId) return;
+  callBridgeAsync('get_clocks_list', [], function(list) {
+    if (!list) return;
+    var c = list.find(function(x) { return x.id === clockId; });
+    if (c) {
+      document.getElementById('clock-name').value = c.name;
+      document.getElementById('clock-range').textContent = (c.time_start || '00:00') + ' → ' + (c.time_end || '00:00');
+      document.getElementById('clock-comments').value = c.description || '';
+      document.getElementById('overview-title').textContent = (c.name || 'CLOCK') + ' OVERVIEW';
+    }
+  });
+  loadSlots();
+}
+
+function loadSlots() {
+  if (!clockId) return;
+  callBridgeAsync('get_clock_slots', [clockId], function(data) {
+    slots = data || [];
+    renderSlots();
+    updateStats();
+  });
+}
+
+function renderSlots() {
+  var tbody = document.getElementById('slots-tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  if (slots.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--t3)">No slots yet. Click + Add to create one.</td></tr>';
+    return;
+  }
+  var cumMins = 0;
+  slots.forEach(function(s, i) {
+    var tr = document.createElement('tr');
+    if (s.id === selectedSlotId) tr.className = 'selected';
+    tr.onclick = function() { selectSlot(s.id, s); };
+    var estDur = (s.slot_type === 'Song') ? 3.5 : (s.slot_type === 'Jingle' ? 0.5 : (s.slot_type === 'Spot' ? 2 : 1));
+    var startMin = cumMins; cumMins += estDur;
+    var badge = BADGE_CLS[s.slot_type] || 'badge-song';
+    var desc = s.slot_type + ': ';
+    if (s.slot_type === 'Song') desc += (s.category_name || 'Any Category');
+    else if (s.slot_type === 'Sweeper') desc += (s.item_name || 'Sweeper') + ' @' + (s.sweeper_position || 'START_OF_SONG').replace(/_/g,' ');
+    else if (s.slot_type === 'Jingle') desc += (s.item_name || 'Jingle');
+    else if (s.slot_type === 'Spot') desc += 'Spot Break ~2 min';
+    else desc += s.slot_type;
+    tr.innerHTML =
+      '<td style="color:var(--t3);font-family:\'Roboto Mono\',monospace;font-size:10px;text-align:center">' + (i+1) + '</td>' +
+      '<td><span class="slot-badge ' + badge + '">' + esc(s.slot_type) + '</span></td>' +
+      '<td style="font-family:\'Roboto Mono\',monospace;font-size:9px;color:var(--t3)">~' + fmtMin(startMin) + ' → ~' + fmtMin(cumMins) + '</td>' +
+      '<td style="color:var(--t1)">' + esc(desc) + '</td>' +
+      '<td style="font-size:9px">' + esc(s.category_name || '') + '</td>' +
+      '<td style="font-size:9px;color:var(--t3)">' + esc(s.energy || 'Any') + '</td>' +
+      '<td style="font-size:9px;color:var(--t3)">' + esc(s.vocal || 'Any') + '</td>';
+    tbody.appendChild(tr);
+  });
+}
+
+function fmtMin(m) { var mm = Math.floor(m); var ss = Math.floor((m-mm)*60); return String(mm).padStart(2,'0')+':'+String(ss).padStart(2,'0'); }
+
+function selectSlot(id, s) {
+  selectedSlotId = id;
+  renderSlots();
+  document.getElementById('editing-label').textContent = 'EDITING: Slot ' + (slots.findIndex(function(x){return x.id===id;})+1) + ' — ' + s.slot_type;
+  document.getElementById('prop-type').value = s.slot_type || 'Song';
+  document.getElementById('prop-category').value = s.category_id || 0;
+  document.getElementById('prop-energy').value = s.energy || 'Any';
+  document.getElementById('prop-vocal').value = s.vocal || 'Any';
+  document.getElementById('prop-priority').value = s.priority || 'Normal';
+  document.getElementById('prop-sep').value = s.separation || 0;
+}
+
+function updateStats() {
+  var songs = slots.filter(function(s){return s.slot_type==='Song';}).length;
+  var breaks = slots.filter(function(s){return s.is_break;}).length;
+  var jingles = slots.filter(function(s){return s.slot_type==='Jingle';}).length;
+  var sweepers = slots.filter(function(s){return s.slot_type==='Sweeper';}).length;
+  document.getElementById('stat-songs').textContent = songs;
+  document.getElementById('stat-breaks').textContent = breaks;
+  document.getElementById('stat-jingles').textContent = jingles;
+  document.getElementById('stat-sweepers').textContent = sweepers;
+  document.getElementById('ov-songs').textContent = songs;
+  document.getElementById('ov-breaks').textContent = breaks;
+  document.getElementById('ov-jingles').textContent = jingles;
+  var totalMin = songs*3.5 + jingles*0.5 + breaks*2 + sweepers*1;
+  document.getElementById('stat-total').textContent = fmtMin(totalMin);
+  document.getElementById('ov-total').textContent = fmtMin(totalMin);
+  var catCounts = {};
+  slots.forEach(function(s){if(s.category_name)catCounts[s.category_name]=(catCounts[s.category_name]||0)+1;});
+  var bars = document.getElementById('cat-bars');
+  if(bars){var mx=Math.max(1,Math.max.apply(null,Object.values(catCounts).concat([1])));bars.innerHTML='';
+  var CLR=['var(--p1)','var(--cy)','var(--gn)','var(--am)','var(--rs)','var(--pk)'];
+  Object.keys(catCounts).forEach(function(cat,i){bars.innerHTML+='<div class="ce-cat-bar-row"><div class="ce-cat-bar-label">'+esc(cat)+'</div><div class="ce-cat-bar"><div class="ce-cat-bar-fill" style="width:'+(catCounts[cat]/mx*100)+'%;background:'+CLR[i%CLR.length]+'"></div></div><div class="ce-cat-bar-count">'+catCounts[cat]+' slots</div></div>';});}
+}
+
+// ── Library Tab State ────────────────────────────
+var currentLibTab = 'songs';
+var selectedLibItemId = 0;
+var selectedLibItemName = '';
+var libItems = [];
+var selectedSweeperPosition = 'START_OF_SONG';
+
+var SWEEPER_POSITIONS = [
+  {value:'BEFORE_INTRO', label:'Before Intro'},
+  {value:'START_OF_SONG', label:'Start of Song'},
+  {value:'BEFORE_END', label:'Before End'},
+  {value:'BRIDGE_AT_END', label:'Bridge at End'},
+  {value:'INDEPENDENT', label:'Independent'},
+  {value:'CUSTOM', label:'Custom Position'},
+];
+
+function switchLibType(el) {
+  document.querySelectorAll('.ce-lib-tab').forEach(function(t){t.classList.remove('active');});
+  el.classList.add('active');
+  currentLibTab = el.dataset.type || 'songs';
+  selectedLibItemId = 0;
+  selectedLibItemName = '';
+  renderLibPanel();
+}
+
+function renderLibPanel() {
+  var panel = document.getElementById('lib-panel-content');
+  if (!panel) return;
+
+  if (currentLibTab === 'sweepers') {
+    panel.innerHTML =
+      '<div style="margin:6px 0"><div class="ce-filter-label">SWEEPER WILL BE PLACED</div>' +
+      '<select class="ce-filter-select" id="sw-position" style="border-color:var(--cy)" onchange="selectedSweeperPosition=this.value">' +
+      SWEEPER_POSITIONS.map(function(p){return '<option value="'+p.value+'"'+(p.value===selectedSweeperPosition?' selected':'')+'>'+p.label+'</option>';}).join('') +
+      '</select></div>' +
+      '<div style="margin:4px 0;font-size:8px;color:var(--t3)"><label><input type="radio" name="sw-mode" checked style="margin-right:4px">Specific Sweeper</label></div>' +
+      '<div class="ce-filter-label" style="margin-top:8px">CATEGORY</div>' +
+      '<select class="ce-filter-select" id="sw-cat-filter" onchange="loadLibItems()"><option value="">All</option></select>' +
+      '<div id="lib-item-list" style="margin-top:8px;flex:1;overflow-y:auto"></div>';
+    loadSweeperCategories();
+    loadLibItems();
+
+  } else if (currentLibTab === 'jingles') {
+    panel.innerHTML =
+      '<div class="ce-filter-label" style="margin-top:6px">CATEGORY</div>' +
+      '<select class="ce-filter-select" id="sw-cat-filter" onchange="loadLibItems()"><option value="">All</option></select>' +
+      '<div id="lib-item-list" style="margin-top:8px;flex:1;overflow-y:auto"></div>';
+    loadJingleCategories();
+    loadLibItems();
+
+  } else if (currentLibTab === 'spots') {
+    panel.innerHTML =
+      '<div class="ce-filter-label" style="margin-top:6px">CAMPAIGN</div>' +
+      '<select class="ce-filter-select" id="sw-cat-filter" onchange="loadLibItems()"><option value="">All</option></select>' +
+      '<div id="lib-item-list" style="margin-top:8px;flex:1;overflow-y:auto"></div>';
+    loadLibItems();
+
+  } else {
+    // Songs + Events: show category filters
+    panel.innerHTML =
+      '<div class="ce-sub-tabs" style="padding:0;margin:4px 0"><div class="ce-sub-tab active">Category</div><div class="ce-sub-tab">Specific Song</div></div>' +
+      '<div class="ce-filter-label">CATEGORIES</div>' +
+      '<select class="ce-filter-select" id="f-cat1"><option>All Categories</option></select>' +
+      '<div style="margin-top:6px"><div class="ce-filter-label">Vocal Type</div><select class="ce-filter-select"><option>Vocal (All)</option></select></div>' +
+      '<div class="ce-songs-found" style="margin:8px 0"><div class="ce-songs-label">Songs Found:</div><div class="ce-songs-count" id="songs-found">0</div></div>' +
+      '<div class="ce-filter-btns" style="padding:0"><button class="ce-filter-btn ce-reset-btn">Reset</button><button class="ce-filter-btn ce-preview-btn">▶ Preview</button></div>';
+    loadCategories();
+    loadSongsCount();
+  }
+}
+
+function loadSweeperCategories() {
+  var sel = document.getElementById('sw-cat-filter');
+  if (!sel) return;
+  // Sweeper categories come from the sweepers table
+  callBridgeAsync('get_library_sweepers', [''], function(data) {
+    var cats = {};
+    (data || []).forEach(function(s) { if (s.category) cats[s.category] = true; });
+    Object.keys(cats).forEach(function(c) { sel.innerHTML += '<option>' + esc(c) + '</option>'; });
+  });
+}
+
+function loadJingleCategories() {
+  var sel = document.getElementById('sw-cat-filter');
+  if (!sel) return;
+  callBridgeAsync('get_library_jingles', [''], function(data) {
+    var cats = {};
+    (data || []).forEach(function(s) { if (s.category) cats[s.category] = true; });
+    Object.keys(cats).forEach(function(c) { sel.innerHTML += '<option>' + esc(c) + '</option>'; });
+  });
+}
+
+function loadLibItems() {
+  var catSel = document.getElementById('sw-cat-filter');
+  var cat = catSel ? catSel.value : '';
+  var method = currentLibTab === 'sweepers' ? 'get_library_sweepers' :
+               currentLibTab === 'jingles' ? 'get_library_jingles' :
+               currentLibTab === 'spots'   ? 'get_library_spots' : null;
+  if (!method) return;
+
+  var _loadAttempt = 0;
+  function _doLoad() {
+  callBridgeAsync(method, [cat], function(data) {
+    console.log('[clock-editor] ' + method + ' attempt=' + _loadAttempt + ' returned:', data ? (Array.isArray(data) ? data.length + ' items' : typeof data) : 'NULL');
+    // Retry once if null (QWebChannel Promise timing)
+    if (data === null && _loadAttempt === 0) {
+      _loadAttempt++;
+      setTimeout(_doLoad, 300);
+      return;
+    }
+    libItems = data || [];
+    // If data is not an array (e.g. object wrapper), try to unwrap
+    if (data && !Array.isArray(data) && typeof data === 'object') {
+      // Bridge might return {sweepers: [...]} or similar wrapper
+      var keys = Object.keys(data);
+      for (var k = 0; k < keys.length; k++) {
+        if (Array.isArray(data[keys[k]])) { libItems = data[keys[k]]; break; }
+      }
+    }
+    var list = document.getElementById('lib-item-list');
+    if (!list) { console.warn('[clock-editor] #lib-item-list not found in DOM'); return; }
+    if (libItems.length === 0) {
+      list.innerHTML = '<div style="color:var(--t3);font-size:9px;text-align:center;padding:12px">No items found</div>';
+      return;
+    }
+    list.innerHTML = '<table style="width:100%;border-collapse:collapse">' +
+      '<tr style="font-size:8px;color:var(--t3)"><th style="text-align:left;padding:3px 4px">Title</th><th style="text-align:right;padding:3px 4px;width:44px">Dur</th></tr>' +
+      libItems.map(function(item) {
+        var sel = item.id === selectedLibItemId ? 'background:var(--p4);border-left:2px solid var(--p1)' : '';
+        return '<tr style="cursor:pointer;font-size:10px;' + sel + '" onclick="selectLibItem(' + item.id + ',\'' + esc(item.name).replace(/'/g,"\\'") + '\')">' +
+          '<td style="padding:4px;color:var(--t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:130px">' + esc(item.name) + '</td>' +
+          '<td style="padding:4px;color:var(--t3);text-align:right;font-family:\'Roboto Mono\',monospace;font-size:9px">' + (item.duration || '') + '</td></tr>';
+      }).join('') + '</table>';
+  });
+  }
+  _doLoad();
+}
+
+function selectLibItem(id, name) {
+  selectedLibItemId = id;
+  selectedLibItemName = name;
+  loadLibItems(); // re-render to show highlight
+}
+
+// ── Add Slot (uses current tab + selected item) ──
+function addSlot() {
+  ensureClockSaved(function() {
+    var slotData = {
+      slot_type: currentLibTab === 'sweepers' ? 'Sweeper' :
+                 currentLibTab === 'jingles'  ? 'Jingle' :
+                 currentLibTab === 'spots'    ? 'Spot' : 'Song',
+      energy: 'Any', vocal: 'Any', priority: 'Normal',
+      item_id: selectedLibItemId || 0,
+      is_break: currentLibTab === 'spots',
+    };
+    if (currentLibTab === 'sweepers') {
+      slotData.sweeper_position = selectedSweeperPosition || 'START_OF_SONG';
+    }
+    callBridgeAsync('add_clock_slot', [clockId, JSON.stringify(slotData)], function(ok) {
+      if (ok) loadSlots();
+    });
+  });
+}
+
+function insertSlot() { addSlot(); }
+
+function deleteSlot() {
+  if (!selectedSlotId) { alert('Select a slot first'); return; }
+  callBridgeAsync('delete_clock_slot', [selectedSlotId], function(ok) {
+    if (ok) { selectedSlotId = null; loadSlots(); }
+  });
+}
+
+function moveSlot(dir) {
+  if (!selectedSlotId || !clockId) return;
+  callBridgeAsync('move_clock_slot', [clockId, selectedSlotId, dir], function(ok) {
+    if (ok) loadSlots();
+  });
+}
+
+function applySlotChanges() {
+  if (!selectedSlotId) { alert('Select a slot first'); return; }
+  var d = {
+    slot_type: document.getElementById('prop-type').value,
+    category_id: parseInt(document.getElementById('prop-category').value, 10) || 0,
+    energy: document.getElementById('prop-energy').value,
+    vocal: document.getElementById('prop-vocal').value,
+    priority: document.getElementById('prop-priority').value,
+    separation: parseInt(document.getElementById('prop-sep').value, 10) || 0,
+    is_break: document.getElementById('prop-type').value === 'Spot',
+  };
+  callBridgeAsync('update_clock_slot', [selectedSlotId, JSON.stringify(d)], function(ok) {
+    if (ok) loadSlots();
+  });
+}
+
+function changeSlot() { applySlotChanges(); }
+
+function ensureClockSaved(cb) { if (clockId) { cb(); return; } saveClock(cb); }
+
+function saveClock(cb) {
+  var name = document.getElementById('clock-name').value.trim();
+  if (!name) { alert('Enter a clock name'); return; }
+  var d = { name: name, time_start: '', time_end: '',
+            description: document.getElementById('clock-comments').value };
+  if (clockId) d.id = clockId;
+  callBridgeAsync('save_clock', [JSON.stringify(d)], function(r) {
+    if (r && r.id) { clockId = r.id; if (typeof cb === 'function') cb(); else alert('Clock saved!'); }
+  });
+}
+
+function aiOptimise() {
+  alert('AI Optimise - analyses clock balance and suggests improvements.\nComing in next AI update.');
+}
+function esc(s){return(s==null?'':String(s)).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+</script>
+</body>
+</html>

@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sweepers Library — RadioAI Studio Pro</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+/* ── Sweepers-specific overrides ─────────────────── */
+.breadcrumb .active{color:var(--rs);font-weight:600}
+.rp-tab.active{color:var(--rs);border-bottom-color:var(--rs)}
+tr.selected{background:var(--rsD)!important;border-left:3px solid var(--rs)}
+.play-btn{background:var(--rs)}
+.play-btn:hover{background:#f7627d}
+.progress-fill{background:var(--rs)}
+
+/* Position dots */
+.pos-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px;flex-shrink:0}
+.pos-dot.bridge{background:var(--rs)}
+.pos-dot.before-intro{background:var(--cy)}
+.pos-dot.start-song{background:var(--gn)}
+.pos-dot.before-end{background:var(--am)}
+.pos-dot.independent{background:var(--p1)}
+.pos-dot.custom{background:var(--tl)}
+
+/* Position filter buttons in left panel */
+.pos-filter-item{display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:var(--radius);cursor:pointer;font-size:11px;color:var(--t2);margin-bottom:3px;transition:background 0.15s}
+.pos-filter-item:hover{background:var(--card)}
+.pos-filter-item.active{background:var(--card2);color:var(--t1)}
+
+/* How Sweeper Positions Work diagram */
+.diagram-section{padding:16px;border-top:1px solid var(--b1);background:var(--card)}
+.diagram-title{font-size:11px;font-weight:700;color:var(--t2);margin-bottom:12px;letter-spacing:0.5px}
+.timeline-container{position:relative;padding:30px 20px 40px}
+.timeline-line{height:4px;background:linear-gradient(90deg,var(--gn),var(--cy),var(--am),var(--rs));border-radius:2px;position:relative}
+.timeline-markers{display:flex;justify-content:space-between;position:relative;margin-top:-2px}
+.timeline-marker{display:flex;flex-direction:column;align-items:center;position:relative}
+.marker-dot{width:12px;height:12px;border-radius:50%;border:2px solid var(--bg);position:relative;z-index:1;margin-top:-4px}
+.marker-label{font-size:8px;color:var(--t3);margin-top:6px;text-align:center;white-space:nowrap;font-weight:600;letter-spacing:0.5px}
+.marker-active .marker-label{color:var(--rs)}
+.sweeper-callout{position:absolute;top:-28px;right:15%;display:flex;align-items:center;gap:4px;font-size:9px;color:var(--rs);font-weight:600}
+.callout-arrow{font-size:12px}
+.diagram-note{font-size:9px;color:var(--t3);margin-top:14px;line-height:1.5;text-align:center}
+.diagram-note span{color:var(--t2);font-weight:500}
+
+/* Right panel position list */
+.position-list{display:flex;flex-direction:column;gap:4px}
+.position-option{display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);cursor:pointer;transition:all 0.15s}
+.position-option:hover{border-color:var(--b2)}
+.position-option.active{border-color:var(--rs);background:var(--rsD)}
+.position-radio{width:14px;height:14px;border-radius:50%;border:2px solid var(--b2);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.position-option.active .position-radio{border-color:var(--rs)}
+.position-radio-inner{width:6px;height:6px;border-radius:50%;background:var(--rs);display:none}
+.position-option.active .position-radio-inner{display:block}
+.position-name{font-size:11px;color:var(--t2)}
+.position-option.active .position-name{color:var(--t1);font-weight:600}
+
+/* AI insight card */
+.ai-card{background:var(--card);border:1px solid var(--b1);border-radius:var(--radius);padding:10px 12px;margin-top:10px}
+.ai-card-label{font-size:9px;color:var(--p2);font-weight:600;margin-bottom:4px;display:flex;align-items:center;gap:4px}
+.ai-card-text{font-size:11px;color:var(--t2);line-height:1.5}
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="header">
+  <div class="logo" onclick="goBack()">
+    <div class="logo-icon">((●))</div>
+    <div class="logo-text"><div class="logo-title">RadioAI</div><div class="logo-sub">STUDIO PRO</div></div>
+  </div>
+  <div class="breadcrumb">
+    <a onclick="goBack()">Control Panel</a><span class="bc-sep">›</span>
+    <a onclick="goBack()">Libraries</a><span class="bc-sep">›</span>
+    <span class="active">Sweepers</span>
+  </div>
+  <div class="page-title-area">
+    <div class="page-title">Sweepers Library</div>
+    <div class="page-subtitle">Audio overlays that play over songs — set position and timing</div>
+  </div>
+  <div class="header-spacer"></div>
+  <div style="display:flex;flex-direction:column;align-items:center;gap:1px">
+    <div class="clock-time" id="clock-time">00:00:00</div>
+    <div class="clock-date" id="clock-date"></div>
+  </div>
+  <div class="station-box">
+    <div class="station-label">ACTIVE STATION</div>
+    <div class="station-name" id="station-name">KISS FM 91.5</div>
+    <div class="station-loc" id="station-loc">Jaipur, Rajasthan</div>
+  </div>
+  <button class="open-studio-btn" onclick="openStudio()">▶ Open Studio</button>
+</div>
+
+<!-- MAIN 3-COLUMN LAYOUT -->
+<div class="main">
+
+  <!-- LEFT PANEL -->
+  <div class="left-panel">
+    <div class="lp-header">
+      <div class="lp-count"><b id="sw-shown">3</b> / <b id="sw-total">3</b>&nbsp; sweepers</div>
+      <button class="lp-btn" style="background:var(--rs);color:#fff" onclick="addSweeper()">+ Add New</button>
+      <button class="lp-btn lp-btn-green">■ Mass Import</button>
+      <button class="lp-btn" style="background:transparent;color:var(--cy);border:1px solid var(--cy);margin-top:2px" onclick="editSweeper()">✎ Edit Sweeper</button>
+      <button class="lp-btn lp-btn-danger" onclick="deleteSweeper()">× Delete</button>
+    </div>
+
+    <div class="lp-section">
+      <div class="lp-section-title">Position Filter</div>
+      <select class="lp-select" id="pos-filter-select" onchange="filterByPosition(this.value)">
+        <option value="all">All Positions</option>
+        <option value="start">Start of Song</option>
+        <option value="before-intro">Before Intro</option>
+        <option value="before-end">Before End</option>
+        <option value="bridge">Bridge at End</option>
+        <option value="independent">Independent</option>
+        <option value="custom">Custom Position</option>
+      </select>
+      <div style="margin-top:6px">
+        <div class="pos-filter-item active" onclick="selectPosFilter(this,'all')">
+          <span class="pos-dot" style="background:var(--t3)"></span> All Positions
+        </div>
+        <div class="pos-filter-item" onclick="selectPosFilter(this,'start')">
+          <span class="pos-dot start-song"></span> Start of Song
+        </div>
+        <div class="pos-filter-item" onclick="selectPosFilter(this,'before-intro')">
+          <span class="pos-dot before-intro"></span> Before Intro
+        </div>
+        <div class="pos-filter-item" onclick="selectPosFilter(this,'before-end')">
+          <span class="pos-dot before-end"></span> Before End
+        </div>
+        <div class="pos-filter-item" onclick="selectPosFilter(this,'bridge')">
+          <span class="pos-dot bridge"></span> Bridge at End
+        </div>
+        <div class="pos-filter-item" onclick="selectPosFilter(this,'independent')">
+          <span class="pos-dot independent"></span> Independent
+        </div>
+        <div class="pos-filter-item" onclick="selectPosFilter(this,'custom')">
+          <span class="pos-dot custom"></span> Custom Position
+        </div>
+      </div>
+    </div>
+
+    <div class="lp-actions">
+      <button class="lp-action-btn" style="background:var(--tl);border:none;color:#fff">↑ Export to Playlister</button>
+      <button class="lp-action-btn" style="background:transparent;border:1px solid var(--tl);color:var(--tl)">◎ Playlister Prefix</button>
+    </div>
+  </div>
+
+  <!-- CENTER PANEL -->
+  <div class="center-panel">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:30px;text-align:center">#</th>
+            <th onclick="sortBy('name')">Sweeper Name</th>
+            <th onclick="sortBy('position')">Position</th>
+            <th onclick="sortBy('duration')" style="text-align:right">Duration</th>
+            <th onclick="sortBy('category')">Category</th>
+            <th onclick="sortBy('properties')">Properties</th>
+            <th onclick="sortBy('last_used')">Last Used</th>
+          </tr>
+        </thead>
+        <tbody id="sweeper-tbody"></tbody>
+      </table>
+    </div>
+
+    <!-- How Sweeper Positions Work diagram -->
+    <div class="diagram-section">
+      <div class="diagram-title">HOW SWEEPER POSITIONS WORK</div>
+      <div class="timeline-container">
+        <div class="sweeper-callout">Sweeper plays here <span class="callout-arrow">↓</span></div>
+        <div class="timeline-line"></div>
+        <div class="timeline-markers">
+          <div class="timeline-marker">
+            <div class="marker-dot" style="background:var(--gn)"></div>
+            <div class="marker-label">Start of Song</div>
+          </div>
+          <div class="timeline-marker">
+            <div class="marker-dot" style="background:var(--cy)"></div>
+            <div class="marker-label">Before Intro</div>
+          </div>
+          <div class="timeline-marker">
+            <div class="marker-dot" style="background:var(--am)"></div>
+            <div class="marker-label">Before End</div>
+          </div>
+          <div class="timeline-marker marker-active">
+            <div class="marker-dot" style="background:var(--rs)"></div>
+            <div class="marker-label">Bridge at End</div>
+          </div>
+        </div>
+        <div class="diagram-note">
+          <span>It plays simultaneously with song</span><br>
+          The song continues playing underneath — sweeper is layered on top
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT PANEL -->
+  <div class="right-panel">
+    <div class="rp-tabs">
+      <div class="rp-tab active">Sweeper Details</div>
+    </div>
+    <div class="rp-content" id="rp-content">
+
+      <!-- Detail Card -->
+      <div class="detail-card" id="detail-card">
+        <div class="detail-icon" style="background:var(--rsD);color:var(--rs)">≈</div>
+        <div class="detail-info">
+          <div class="detail-name" id="detail-name">KISS Open Bridge</div>
+          <div class="detail-sub" id="detail-sub">Station sweeper</div>
+          <div class="detail-meta" id="detail-meta">
+            <span>0:08</span>
+            <span style="color:var(--t4)">|</span>
+            <span>Bridge at End</span>
+          </div>
+          <div class="detail-badges">
+            <span class="detail-badge" style="background:var(--cyD);color:var(--cy)">Station</span>
+            <span class="detail-badge" style="background:rgba(255,255,255,0.06);color:var(--t2)">Regular</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Fields -->
+      <div class="rp-section-title">Information</div>
+      <div class="field-group">
+        <div class="field-label">Name</div>
+        <div class="field-value" id="f-name">KISS Open Bridge</div>
+      </div>
+      <div class="field-group">
+        <div class="field-label">Category</div>
+        <div class="field-value" id="f-category">Station</div>
+      </div>
+      <div class="field-group">
+        <div class="field-label">Duration</div>
+        <div class="field-value mono" id="f-duration">0:08</div>
+      </div>
+      <div class="field-group">
+        <div class="field-label">Position</div>
+        <div class="field-value" id="f-position">Bridge at End</div>
+      </div>
+      <div class="field-group">
+        <div class="field-label">Properties</div>
+        <div class="field-value" id="f-properties">Regular</div>
+      </div>
+      <div class="field-group">
+        <div class="field-label">Playlister Code</div>
+        <div class="field-value mono" id="f-playlister">SW-001</div>
+      </div>
+
+      <!-- Position Settings -->
+      <div class="rp-section-title">Position Settings</div>
+      <div class="position-list" id="position-list">
+        <div class="position-option" data-pos="start" onclick="selectPosition(this)">
+          <div class="position-radio"><div class="position-radio-inner"></div></div>
+          <span class="pos-dot start-song"></span>
+          <span class="position-name">Start of Song</span>
+        </div>
+        <div class="position-option" data-pos="before-intro" onclick="selectPosition(this)">
+          <div class="position-radio"><div class="position-radio-inner"></div></div>
+          <span class="pos-dot before-intro"></span>
+          <span class="position-name">Before Intro</span>
+        </div>
+        <div class="position-option" data-pos="before-end" onclick="selectPosition(this)">
+          <div class="position-radio"><div class="position-radio-inner"></div></div>
+          <span class="pos-dot before-end"></span>
+          <span class="position-name">Before End</span>
+        </div>
+        <div class="position-option active" data-pos="bridge" onclick="selectPosition(this)">
+          <div class="position-radio"><div class="position-radio-inner"></div></div>
+          <span class="pos-dot bridge"></span>
+          <span class="position-name">Bridge at End</span>
+        </div>
+        <div class="position-option" data-pos="independent" onclick="selectPosition(this)">
+          <div class="position-radio"><div class="position-radio-inner"></div></div>
+          <span class="pos-dot independent"></span>
+          <span class="position-name">Independent</span>
+        </div>
+        <div class="position-option" data-pos="custom" onclick="selectPosition(this)">
+          <div class="position-radio"><div class="position-radio-inner"></div></div>
+          <span class="pos-dot custom"></span>
+          <span class="position-name">Custom Position</span>
+        </div>
+      </div>
+
+      <!-- AI Insight -->
+      <div class="ai-card">
+        <div class="ai-card-label">✦ AI Insight</div>
+        <div class="ai-card-text" id="ai-insight-text">Bridge position creates smooth transitions between songs without interrupting the listener experience.</div>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+
+<!-- PLAYBACK BAR -->
+<div class="playback-bar">
+  <button class="play-btn" id="play-btn" onclick="togglePlayback()">▶</button>
+  <div class="playback-info">
+    <div class="playback-title" id="pb-title">KISS Open Bridge</div>
+    <div class="playback-sub" id="pb-sub">Station — Bridge at End</div>
+  </div>
+  <div class="progress-bar" onclick="seekPlayback(event)">
+    <div class="progress-fill" id="progress-fill" style="width:50%"></div>
+  </div>
+  <div class="playback-time"><span id="pb-current">0:04</span> / <span id="pb-total">0:08</span></div>
+</div>
+
+<!-- STATUS BAR -->
+<div class="status-bar">
+  <div class="status-indicator"><span class="status-dot" style="background:var(--gn)"></span> AUTO MODE</div>
+  <div class="status-indicator"><span class="status-dot" style="background:var(--p1)"></span> AI Active</div>
+  <div class="status-spacer"></div>
+  <div class="status-indicator"><span class="status-dot" style="background:var(--rs)"></span> 3 Sweepers</div>
+  <div class="status-info" id="status-version">RadioAI Studio Pro v1.0</div>
+</div>
+
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script src="js/bridge_helper.js"></script>
+<script>
+/* ══════════════════════════════════════════════════════
+   Sweepers Library — JavaScript
+   ══════════════════════════════════════════════════════ */
+
+// Position → CSS class map
+var POS_CLASS_MAP = {
+  'Bridge at End': 'bridge',
+  'Before Intro': 'before-intro',
+  'Start of Song': 'start-song',
+  'Before End': 'before-end',
+  'Independent': 'independent',
+  'Custom Position': 'custom'
+};
+
+// Seed data (replaced by DB load)
+var sweepers = [
+  { id:1, name:'KISS Open Bridge',   position:'Bridge at End',  posCls:'bridge',       duration_ms:8000,  category:'Station', properties:'Regular', playlister:'SW-001', lastUsed:'1h ago',  file_path:'' },
+  { id:2, name:'KISS Before Intro',  position:'Before Intro',   posCls:'before-intro', duration_ms:6000,  category:'Station', properties:'Regular', playlister:'SW-002', lastUsed:'1d ago',  file_path:'' },
+  { id:3, name:'KISS Start Overlay', position:'Start of Song',  posCls:'start-song',   duration_ms:5000,  category:'Station', properties:'Special', playlister:'SW-003', lastUsed:'1h ago',  file_path:'' }
+];
+
+var selectedId = 1;
+var currentFilter = 'all';
+
+// Load sweepers from DB on bridge ready
+onBridgeReady(function(){ loadFromBridge(); });
+window.addEventListener('pageshow', function(){ if(typeof bridge !== 'undefined' && bridge) loadFromBridge(); });
+
+function loadFromBridge(){
+  if(typeof bridge === 'undefined' || !bridge) return;
+  var filters = {};
+  if(currentFilter && currentFilter !== 'all') filters.position = currentFilter;
+  var searchEl = document.getElementById('search-input');
+  if(searchEl && searchEl.value) filters.search = searchEl.value;
+  callBridgeAsync('get_sweepers', [JSON.stringify(filters)], function(data){
+    if(!data || !data.sweepers) return;
+    sweepers = data.sweepers.map(function(s){
+      return {
+        id: s.id, name: s.name,
+        position: s.position, posCls: POS_CLASS_MAP[s.position] || 'bridge',
+        duration_ms: s.duration_ms, category: s.category,
+        properties: s.properties, playlister: s.playlister_code,
+        lastUsed: 'Never', file_path: s.file_path,
+        comments: s.comments, song_volume: s.song_volume,
+        sweeper_volume: s.sweeper_volume, position_offset: s.position_offset,
+        fade_duration: s.fade_duration, is_enabled: s.is_enabled
+      };
+    });
+    renderTable();
+    if(sweepers.length > 0 && !sweepers.find(function(x){ return x.id === selectedId; })){
+      selectedId = sweepers[0].id;
+    }
+    updateDetails();
+  });
+}
+
+function goBack(){ window.location.href='control_panel.html'; }
+
+function openStudio() {
+  if (bridge) navigateTo('studio_screen');
+}
+
+// ── Clock ───────────────────────────────────────────
+function updateClock() {
+  var now = new Date();
+  var h = String(now.getHours()).padStart(2,'0');
+  var m = String(now.getMinutes()).padStart(2,'0');
+  var s = String(now.getSeconds()).padStart(2,'0');
+  document.getElementById('clock-time').textContent = h+':'+m+':'+s;
+  var days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  document.getElementById('clock-date').textContent = days[now.getDay()]+', '+now.getDate()+' '+months[now.getMonth()]+' '+now.getFullYear();
+}
+updateClock();
+setInterval(updateClock, 1000);
+
+// ── Format Duration ─────────────────────────────────
+function fmtDur(ms) {
+  var s = Math.round(ms/1000);
+  var m = Math.floor(s/60);
+  s = s % 60;
+  return m + ':' + String(s).padStart(2,'0');
+}
+
+// ── Render Table ────────────────────────────────────
+function renderTable() {
+  var tbody = document.getElementById('sweeper-tbody');
+  var filtered = sweepers.filter(function(sw) {
+    if (currentFilter === 'all') return true;
+    return sw.posCls === currentFilter;
+  });
+  document.getElementById('sw-shown').textContent = filtered.length;
+  document.getElementById('sw-total').textContent = sweepers.length;
+
+  var html = '';
+  for (var i = 0; i < filtered.length; i++) {
+    var sw = filtered[i];
+    var sel = sw.id === selectedId ? ' selected' : '';
+    var catColor = 'var(--cy)';
+    var catBg = 'var(--cyD)';
+    var propColor = sw.properties === 'Special' ? 'var(--am)' : 'var(--t2)';
+    var propBg = sw.properties === 'Special' ? 'var(--amD)' : 'rgba(255,255,255,0.06)';
+
+    html += '<tr class="'+sel+'" onclick="selectSweeper('+sw.id+')">';
+    html += '<td style="width:30px;text-align:center;color:var(--t3)">'+(i+1)+'</td>';
+    html += '<td style="font-weight:600">'+sw.name+'</td>';
+    html += '<td><span style="display:flex;align-items:center"><span class="pos-dot '+sw.posCls+'"></span>'+sw.position+'</span></td>';
+    html += '<td class="dur-cell">'+fmtDur(sw.duration_ms)+'</td>';
+    html += '<td><span class="cat-badge" style="background:'+catBg+';color:'+catColor+'">'+sw.category+'</span></td>';
+    html += '<td><span class="cat-badge" style="background:'+propBg+';color:'+propColor+'">'+sw.properties+'</span></td>';
+    html += '<td style="color:var(--t3);font-size:11px">'+sw.lastUsed+'</td>';
+    html += '</tr>';
+  }
+  tbody.innerHTML = html;
+}
+
+// ── Select Sweeper ──────────────────────────────────
+function selectSweeper(id) {
+  selectedId = id;
+  renderTable();
+  updateDetails();
+}
+
+function updateDetails() {
+  var sw = sweepers.find(function(s){ return s.id === selectedId; });
+  if (!sw) return;
+
+  document.getElementById('detail-name').textContent = sw.name;
+  document.getElementById('detail-sub').textContent = sw.category + ' sweeper';
+  document.getElementById('detail-meta').innerHTML =
+    '<span>'+fmtDur(sw.duration_ms)+'</span>' +
+    '<span style="color:var(--t4)">|</span>' +
+    '<span>'+sw.position+'</span>';
+
+  var catBadge = '<span class="detail-badge" style="background:var(--cyD);color:var(--cy)">'+sw.category+'</span>';
+  var propColor = sw.properties === 'Special' ? 'var(--am)' : 'var(--t2)';
+  var propBg = sw.properties === 'Special' ? 'var(--amD)' : 'rgba(255,255,255,0.06)';
+  var propBadge = '<span class="detail-badge" style="background:'+propBg+';color:'+propColor+'">'+sw.properties+'</span>';
+  document.querySelector('.detail-badges').innerHTML = catBadge + propBadge;
+
+  document.getElementById('f-name').textContent = sw.name;
+  document.getElementById('f-category').textContent = sw.category;
+  document.getElementById('f-duration').textContent = fmtDur(sw.duration_ms);
+  document.getElementById('f-position').textContent = sw.position;
+  document.getElementById('f-properties').textContent = sw.properties;
+  document.getElementById('f-playlister').textContent = sw.playlister;
+
+  // Update position radio list
+  var items = document.querySelectorAll('.position-option');
+  for (var i = 0; i < items.length; i++) {
+    var pos = items[i].getAttribute('data-pos');
+    if (pos === sw.posCls) {
+      items[i].classList.add('active');
+    } else {
+      items[i].classList.remove('active');
+    }
+  }
+
+  // Update AI insight
+  var insights = {
+    'bridge':       'Bridge position creates smooth transitions between songs without interrupting the listener experience.',
+    'before-intro': 'Before Intro position layers the sweeper just before vocals begin — great for branding.',
+    'start-song':   'Start of Song position plays the sweeper right as the track begins for maximum impact.',
+    'before-end':   'Before End position creates anticipation for the upcoming song transition.',
+    'independent':  'Independent sweepers play on their own schedule, not tied to any song position.',
+    'custom':       'Custom position allows precise timing control for specialized broadcast needs.'
+  };
+  document.getElementById('ai-insight-text').textContent = insights[sw.posCls] || insights['bridge'];
+
+  // Update playback bar
+  document.getElementById('pb-title').textContent = sw.name;
+  document.getElementById('pb-sub').textContent = sw.category + ' — ' + sw.position;
+  document.getElementById('pb-total').textContent = fmtDur(sw.duration_ms);
+}
+
+// ── Position Selection (Right Panel) ────────────────
+function selectPosition(el) {
+  var items = document.querySelectorAll('.position-option');
+  for (var i = 0; i < items.length; i++) items[i].classList.remove('active');
+  el.classList.add('active');
+
+  var pos = el.getAttribute('data-pos');
+  var sw = sweepers.find(function(s){ return s.id === selectedId; });
+  if (sw) {
+    sw.posCls = pos;
+    var posNames = {
+      'start':'Start of Song', 'before-intro':'Before Intro', 'before-end':'Before End',
+      'bridge':'Bridge at End', 'independent':'Independent', 'custom':'Custom Position'
+    };
+    sw.position = posNames[pos] || pos;
+    renderTable();
+    updateDetails();
+  }
+}
+
+// ── Position Filter (Left Panel) ────────────────────
+function selectPosFilter(el, filter) {
+  var items = document.querySelectorAll('.pos-filter-item');
+  for (var i = 0; i < items.length; i++) items[i].classList.remove('active');
+  el.classList.add('active');
+  currentFilter = filter;
+  renderTable();
+}
+
+function filterByPosition(val) {
+  currentFilter = val;
+  renderTable();
+  // Sync visual highlight
+  var items = document.querySelectorAll('.pos-filter-item');
+  for (var i = 0; i < items.length; i++) {
+    var itemFilter = items[i].getAttribute('onclick').match(/'([^']+)'/);
+    if (itemFilter && itemFilter[1] === val) {
+      items[i].classList.add('active');
+    } else {
+      items[i].classList.remove('active');
+    }
+  }
+}
+
+// ── Sort ────────────────────────────────────────────
+var sortField = 'name';
+var sortAsc = true;
+function sortBy(field) {
+  if (sortField === field) { sortAsc = !sortAsc; } else { sortField = field; sortAsc = true; }
+  sweepers.sort(function(a,b) {
+    var va = a[field] || '';
+    var vb = b[field] || '';
+    if (typeof va === 'number') return sortAsc ? va - vb : vb - va;
+    va = String(va).toLowerCase();
+    vb = String(vb).toLowerCase();
+    if (va < vb) return sortAsc ? -1 : 1;
+    if (va > vb) return sortAsc ? 1 : -1;
+    return 0;
+  });
+  renderTable();
+}
+
+// ── Playback ────────────────────────────────────────
+var isPlaying = false;
+function togglePlayback() {
+  isPlaying = !isPlaying;
+  document.getElementById('play-btn').textContent = isPlaying ? '⏸' : '▶';
+}
+
+function seekPlayback(e) {
+  var bar = e.currentTarget;
+  var pct = (e.offsetX / bar.offsetWidth) * 100;
+  document.getElementById('progress-fill').style.width = pct + '%';
+}
+
+// ── Add / Edit / Delete ─────────────────────────────
+function addSweeper() {
+  sessionStorage.removeItem('edit_sweeper_id');
+  window.location.href = 'add_sweeper.html';
+}
+
+function editSweeper() {
+  if(!selectedId){ alert('⚠ Select a sweeper first!'); return; }
+  sessionStorage.setItem('edit_sweeper_id', String(selectedId));
+  window.location.href = 'add_sweeper.html';
+}
+
+function deleteSweeper() {
+  if(!selectedId){ alert('⚠ Select a sweeper first!'); return; }
+  var sw = sweepers.find(function(x){ return x.id === selectedId; });
+  var name = sw ? sw.name : 'this sweeper';
+  if(!confirm('Delete "' + name + '"?\n\nThis cannot be undone.')) return;
+  callBridgeAsync('delete_sweeper', [selectedId], function(data){
+    if(data){
+      alert('✅ Deleted: ' + name);
+      selectedId = null;
+      loadFromBridge();
+    } else {
+      alert('❌ Delete failed');
+    }
+  });
+}
+
+// ── Init ────────────────────────────────────────────
+renderTable();
+updateDetails();
+</script>
+</body>
+</html>

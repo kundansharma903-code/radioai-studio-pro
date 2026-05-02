@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Final Log Creator — RadioAI Studio Pro</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+/* ── Final Log Creator overrides ──────────────── */
+.breadcrumb .active{color:var(--gn);font-weight:600}
+
+/* Left panel radios & checks */
+.lp-radio{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--t2);margin-bottom:6px;cursor:pointer;padding:5px 0}
+.lp-radio input[type="radio"]{accent-color:var(--p1);margin:0}
+.lp-radio.selected{color:var(--p1);font-weight:600}
+.lp-check{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--t2);margin-bottom:5px;cursor:pointer}
+.lp-check input[type="checkbox"]{accent-color:var(--p1);margin:0}
+
+.quick-btns{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px}
+.quick-btn{padding:4px 10px;border:1px solid var(--b1);border-radius:var(--radius);background:var(--card);color:var(--t2);font-size:10px;font-weight:500;font-family:'Inter',sans-serif;cursor:pointer;transition:all 0.15s}
+.quick-btn:hover{border-color:var(--p1);color:var(--t1)}
+.quick-btn.active{border-color:var(--gn);color:var(--gn);background:var(--gnD)}
+
+.generate-btn{display:block;width:100%;padding:10px 12px;border:none;border-radius:var(--radius);background:var(--gn);color:#fff;font-family:'Inter',sans-serif;font-size:13px;font-weight:700;cursor:pointer;text-align:center;margin-top:8px;margin-bottom:8px;transition:opacity 0.15s}
+.generate-btn:hover{opacity:0.85}
+
+.lp-link{display:block;font-size:11px;font-weight:600;cursor:pointer;margin-bottom:4px;text-decoration:none;padding:2px 0}
+.lp-link-purple{color:var(--p1)}
+.lp-link-purple:hover{color:var(--p2)}
+.lp-link-default{color:var(--t2)}
+.lp-link-default:hover{color:var(--t1)}
+
+/* Center panel header bar */
+.log-header{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--b1)}
+.log-header-title{font-size:15px;font-weight:700;flex:1}
+.log-header-btn{padding:5px 14px;border-radius:var(--radius);font-family:'Inter',sans-serif;font-size:11px;font-weight:600;cursor:pointer;border:none}
+.log-header-btn.edit{background:var(--card2);color:var(--t1);border:1px solid var(--b2)}
+.log-header-btn.edit:hover{background:var(--b1)}
+.log-header-btn.lock{background:var(--am);color:#000}
+.log-header-btn.lock:hover{opacity:0.85}
+
+.log-meta{padding:6px 16px;font-size:10px;color:var(--t3);border-bottom:1px solid var(--b1);display:flex;align-items:center;gap:6px}
+.log-meta .ai-badge{color:var(--p2);font-weight:600}
+
+/* Filter tabs */
+.filter-tabs{display:flex;border-bottom:1px solid var(--b1);min-height:34px;padding:0 12px}
+.filter-tab{padding:8px 14px;font-size:11px;font-weight:500;color:var(--t3);cursor:pointer;border-bottom:2px solid transparent;transition:color 0.15s,border-color 0.15s;white-space:nowrap}
+.filter-tab:hover{color:var(--t2)}
+.filter-tab.active{color:var(--gn);border-bottom-color:var(--gn);font-weight:600}
+
+/* Type badges */
+.type-badge{display:inline-block;padding:2px 10px;border-radius:8px;font-size:10px;font-weight:600;white-space:nowrap}
+.type-song{background:rgba(139,92,246,0.15);color:var(--p1)}
+.type-jingle{background:rgba(245,158,11,0.15);color:var(--am)}
+.type-break{background:rgba(16,185,129,0.15);color:var(--gn)}
+
+/* Status badges */
+.status-ok{color:var(--gn);font-size:11px;font-weight:600}
+.status-warn{color:var(--am);font-size:11px;font-weight:600}
+
+/* AI column */
+.ai-arrow{color:var(--p1);font-size:12px;cursor:pointer}
+.ai-warn{color:var(--am);font-size:12px}
+
+/* Highlighted row */
+tr.highlight{background:rgba(139,92,246,0.08)!important}
+tr.selected{background:var(--p4)!important;border-left:3px solid var(--p1)}
+
+/* More entries indicator */
+.more-entries{padding:12px 16px;font-size:11px;color:var(--t3);text-align:center;border-bottom:1px solid var(--b1)}
+
+/* Summary bar */
+.summary-bar{display:flex;align-items:stretch;gap:0;border-top:1px solid var(--b1);min-height:48px}
+.summary-box{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:8px 12px;border-right:1px solid var(--b1);gap:2px}
+.summary-box:last-child{border-right:none}
+.summary-box .val{font-size:16px;font-weight:700}
+.summary-box .lbl{font-size:9px;color:var(--t2);text-transform:uppercase;letter-spacing:0.5px}
+.summary-purple{background:rgba(139,92,246,0.1)}
+.summary-amber{background:rgba(245,158,11,0.1)}
+.summary-green{background:rgba(16,185,129,0.1)}
+.summary-teal{background:rgba(20,184,166,0.1)}
+
+/* Right panel */
+.rp-header{padding:12px 14px 6px}
+.rp-title{font-size:13px;font-weight:700}
+.rp-date{font-size:10px;color:var(--t3);margin-top:2px}
+
+.rp-actions{padding:10px 14px;display:flex;flex-direction:column;gap:5px}
+.rp-action-btn{display:block;width:100%;padding:8px 12px;border-radius:var(--radius);font-family:'Inter',sans-serif;font-size:12px;font-weight:600;cursor:pointer;text-align:left;border:none;transition:opacity 0.15s}
+.rp-action-btn:hover{opacity:0.85}
+.rp-btn-green{background:var(--gn);color:#fff}
+.rp-btn-cyan{background:var(--cy);color:#fff}
+.rp-btn-purple{background:var(--p1);color:#fff}
+.rp-btn-amber{background:var(--am);color:#000}
+.rp-btn-text{background:transparent;color:var(--tl);padding:6px 12px;font-size:11px}
+.rp-btn-text:hover{background:var(--tlD)!important;opacity:1}
+.rp-btn-text-red{background:transparent;color:var(--rs);padding:6px 12px;font-size:11px}
+.rp-btn-text-red:hover{background:var(--rsD)!important;opacity:1}
+.rp-btn-text-gray{background:transparent;color:var(--t3);padding:6px 12px;font-size:11px}
+.rp-btn-text-gray:hover{background:var(--card)!important;opacity:1;color:var(--t2)}
+
+/* Warnings section */
+.warnings-title{font-size:11px;font-weight:700;color:var(--am);padding:12px 14px 6px;display:flex;align-items:center;gap:6px}
+.warning-item{padding:6px 14px;display:flex;flex-direction:column;gap:2px;cursor:pointer;transition:background 0.1s}
+.warning-item:hover{background:var(--card)}
+.warning-artist{font-size:12px;font-weight:600;color:var(--t1)}
+.warning-msg{font-size:10px;color:var(--am)}
+.more-warnings{padding:8px 14px;font-size:11px;color:var(--am);cursor:pointer;font-weight:500}
+.more-warnings:hover{color:var(--p1)}
+</style>
+</head>
+<body>
+
+<!-- ═══ Header ═══════════════════════════════════════ -->
+<header class="header">
+  <div class="logo" onclick="goBack()">
+    <div class="logo-icon">R</div>
+    <div class="logo-text">
+      <div class="logo-title">RadioAI</div>
+      <div class="logo-sub">STUDIO PRO</div>
+    </div>
+  </div>
+  <div class="breadcrumb">
+    <a onclick="goBack()">Control Panel</a>
+    <span class="bc-sep">›</span>
+    <a onclick="goToScheduling()">Scheduling</a>
+    <span class="bc-sep">›</span>
+    <span class="active">Final Log</span>
+  </div>
+  <div class="page-title-area">
+    <div class="page-title">Final Log Creator</div>
+    <div class="page-subtitle">RadioAI Studio &bull; <span class="station-name">KISS FM 91.5</span> &bull; <span class="station-loc">Jaipur</span></div>
+  </div>
+  <div class="header-spacer"></div>
+  <div style="display:flex;flex-direction:column;align-items:flex-end;gap:1px">
+    <div class="clock-time" id="clockTime">--:--:--</div>
+    <div class="clock-date" id="clockDate">--</div>
+  </div>
+  <div class="station-box">
+    <div class="station-label">Station</div>
+    <div class="station-name">KISS FM 91.5</div>
+    <div class="station-loc">Jaipur, Rajasthan</div>
+  </div>
+  <button class="open-studio-btn">&#9654; Open Studio</button>
+</header>
+
+<!-- ═══ Main 3-Column Layout ═════════════════════════ -->
+<div class="main">
+
+  <!-- ── Left Panel ─────────────────────────────────── -->
+  <aside class="left-panel">
+    <div class="lp-header">
+      <div class="lp-section-title">GENERATE LOG</div>
+    </div>
+
+    <div class="lp-section">
+      <div class="lp-section-title">Select Date</div>
+      <select class="lp-select" id="dateSelect">
+        <option selected>Wednesday, 08 April 2026</option>
+        <option>Thursday, 09 April 2026</option>
+        <option>Friday, 10 April 2026</option>
+      </select>
+      <div class="quick-btns">
+        <button class="quick-btn active" data-offset="0">Today</button>
+        <button class="quick-btn" data-offset="1">Tomorrow</button>
+        <button class="quick-btn" data-offset="2">+2 Days</button>
+        <button class="quick-btn" data-offset="custom">Custom</button>
+      </div>
+    </div>
+
+    <div class="lp-section">
+      <div class="lp-section-title">Generation Mode</div>
+      <label class="lp-radio selected">
+        <input type="radio" name="genMode" value="ai" checked>
+        <span>&#10022; AI Auto-Generate</span>
+      </label>
+      <label class="lp-radio">
+        <input type="radio" name="genMode" value="clock">
+        <span>From Clock Rules</span>
+      </label>
+      <label class="lp-radio">
+        <input type="radio" name="genMode" value="manual">
+        <span>Manual Build</span>
+      </label>
+    </div>
+
+    <div class="lp-section">
+      <div class="lp-section-title">Options</div>
+      <label class="lp-check"><input type="checkbox" checked> Include AI song suggestions</label>
+      <label class="lp-check"><input type="checkbox" checked> Auto-fill spot breaks</label>
+      <label class="lp-check"><input type="checkbox" checked> Apply energy matching</label>
+      <label class="lp-check"><input type="checkbox" checked> Check file availability</label>
+      <label class="lp-check"><input type="checkbox" checked> Flag overplayed songs</label>
+    </div>
+
+    <div class="lp-section">
+      <button class="generate-btn" id="generateBtn">&#9654; Generate Log Now</button>
+      <a class="lp-link lp-link-purple" href="#">&#10022; AI Magic &mdash; Full Auto</a>
+      <a class="lp-link lp-link-default" href="#">View Saved Logs</a>
+    </div>
+  </aside>
+
+  <!-- ── Center Panel ───────────────────────────────── -->
+  <section class="center-panel">
+    <div class="log-header">
+      <div class="log-header-title">FINAL LOG &mdash; Wednesday 08 April 2026</div>
+      <button class="log-header-btn edit">Edit</button>
+      <button class="log-header-btn lock">&#128274; Lock</button>
+    </div>
+    <div class="log-meta">
+      Generated by <span class="ai-badge">&#10022; AI</span>
+      <span>&bull;</span> <span>286 entries</span>
+      <span>&bull;</span> <span>24:00:00</span>
+      <span>&bull;</span> <span>Last modified: Now</span>
+    </div>
+
+    <!-- Filter Tabs -->
+    <div class="filter-tabs">
+      <div class="filter-tab active" data-filter="all">All</div>
+      <div class="filter-tab" data-filter="song">Songs</div>
+      <div class="filter-tab" data-filter="break">Spots</div>
+      <div class="filter-tab" data-filter="jingle">Jingles</div>
+      <div class="filter-tab" data-filter="breaks">Breaks</div>
+    </div>
+
+    <!-- Log Table -->
+    <div class="table-wrap" id="logTableWrap">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:80px">Time</th>
+            <th style="width:80px">Type</th>
+            <th style="min-width:160px">Artist / Campaign</th>
+            <th style="min-width:140px">Title</th>
+            <th style="width:70px;text-align:right">Duration</th>
+            <th style="width:100px">Status</th>
+            <th style="width:40px;text-align:center">AI</th>
+          </tr>
+        </thead>
+        <tbody id="logBody"></tbody>
+      </table>
+      <div class="more-entries" id="moreEntries">&hellip; 274 more entries below</div>
+    </div>
+
+    <!-- Summary Bar -->
+    <div class="summary-bar">
+      <div class="summary-box summary-purple">
+        <div class="val" style="color:var(--p1)">286</div>
+        <div class="lbl">Entries</div>
+      </div>
+      <div class="summary-box summary-amber">
+        <div class="val" style="color:var(--am)">14</div>
+        <div class="lbl">Warnings</div>
+      </div>
+      <div class="summary-box summary-green">
+        <div class="val" style="color:var(--gn)">48</div>
+        <div class="lbl">Breaks</div>
+      </div>
+      <div class="summary-box summary-teal">
+        <div class="val" style="color:var(--tl)">6:32:14</div>
+        <div class="lbl">Drive Music</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Right Panel ────────────────────────────────── -->
+  <aside class="right-panel">
+    <div class="rp-header">
+      <div class="rp-title">LOG ACTIONS</div>
+      <div class="rp-date">Wednesday, 08 April 2026</div>
+    </div>
+
+    <div class="rp-actions">
+      <button class="rp-action-btn rp-btn-green">&#10003; Confirm &amp; Lock Log</button>
+      <button class="rp-action-btn rp-btn-cyan">Export as Text File</button>
+      <button class="rp-action-btn rp-btn-purple">Print Log</button>
+      <button class="rp-action-btn rp-btn-amber">Regenerate Log</button>
+      <button class="rp-action-btn rp-btn-text">Edit Entry</button>
+      <button class="rp-action-btn rp-btn-text-red">Delete Entry</button>
+      <button class="rp-action-btn rp-btn-text-gray">Lock Entry</button>
+    </div>
+
+    <div class="warnings-title">
+      <span>&#9888;</span> 14 AI WARNINGS
+    </div>
+    <div id="warningsList">
+      <div class="warning-item">
+        <div class="warning-artist">Amy Winehouse</div>
+        <div class="warning-msg">Overplay &mdash; 5x this week</div>
+      </div>
+      <div class="warning-item">
+        <div class="warning-artist">Fairground Attraction</div>
+        <div class="warning-msg">Low rotation &mdash; 1 play/30d</div>
+      </div>
+      <div class="warning-item">
+        <div class="warning-artist">Harry Styles</div>
+        <div class="warning-msg">Energy mismatch &mdash; low BPM</div>
+      </div>
+    </div>
+    <div class="more-warnings">+ 11 more warnings</div>
+  </aside>
+</div>
+
+<!-- ═══ Status Bar ═══════════════════════════════════ -->
+<footer class="status-bar">
+  <div class="status-indicator"><span class="status-dot" style="background:var(--gn)"></span> AUTO MODE</div>
+  <div class="status-indicator"><span class="status-dot" style="background:var(--gn)"></span> Log Ready</div>
+  <div class="status-indicator"><span class="status-dot" style="background:var(--am)"></span> 14 Warnings</div>
+  <div class="status-spacer"></div>
+  <div class="status-info">RadioAI Studio Pro v1.0</div>
+</footer>
+
+<!-- ═══ JavaScript ═══════════════════════════════════ -->
+<script>
+/* ── Navigation ──────────────────────────────────── */
+function goBack(){ window.location.href='control_panel.html'; }
+function goToScheduling(){ window.location.href='control_panel.html#scheduling'; }
+
+/* ── Clock ───────────────────────────────────────── */
+function updateClock(){
+  const now=new Date();
+  const h=String(now.getHours()).padStart(2,'0');
+  const m=String(now.getMinutes()).padStart(2,'0');
+  const s=String(now.getSeconds()).padStart(2,'0');
+  document.getElementById('clockTime').textContent=h+':'+m+':'+s;
+  const days=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  document.getElementById('clockDate').textContent=days[now.getDay()]+', '+now.getDate()+' '+months[now.getMonth()]+' '+now.getFullYear();
+}
+updateClock();
+setInterval(updateClock,1000);
+
+/* ── Log Entry Data ──────────────────────────────── */
+const logEntries=[
+  {time:'06:00:00',type:'song',  artist:'Harry Styles',    title:'As It Was',               dur:'2:37', status:'ok',   ai:'arrow'},
+  {time:'06:02:37',type:'jingle',artist:'KISS Main Ident',  title:'Station ID',             dur:'0:05', status:'ok',   ai:''},
+  {time:'06:02:42',type:'song',  artist:'Amy Winehouse',    title:"You Know I'm No Good",   dur:'3:45', status:'warn', ai:'warn', highlight:true},
+  {time:'06:06:27',type:'song',  artist:'Billie Eilish',    title:'Bury a Friend',           dur:'3:26', status:'ok',   ai:''},
+  {time:'06:09:53',type:'song',  artist:'Coldplay',         title:'Clocks',                  dur:'5:07', status:'ok',   ai:'arrow'},
+  {time:'06:15:00',type:'break', artist:'FreshBurst Cola 30s',title:'Ad Break',              dur:'0:30', status:'ok',   ai:''},
+  {time:'06:15:30',type:'break', artist:'NovaTech Mobile 15s',title:'Ad Break',              dur:'0:15', status:'ok',   ai:''},
+  {time:'06:15:45',type:'jingle',artist:'City FM Station ID',title:'Station ID',             dur:'0:05', status:'ok',   ai:''},
+  {time:'06:16:00',type:'song',  artist:'Drake',            title:"God's Plan",              dur:'3:18', status:'ok',   ai:''},
+  {time:'06:19:18',type:'jingle',artist:'KISS Shot 01',      title:'Station ID',             dur:'0:03', status:'ok',   ai:''},
+  {time:'06:19:21',type:'song',  artist:'Eagle Eye Cherry',  title:'Save Tonight',           dur:'3:56', status:'ok',   ai:''},
+  {time:'06:23:17',type:'song',  artist:'Kylie Minogue',     title:'Step Back In Time',      dur:'3:46', status:'ok',   ai:''}
+];
+
+let selectedRow=null;
+let activeFilter='all';
+
+/* ── Render Log Table ────────────────────────────── */
+function renderLog(){
+  const tbody=document.getElementById('logBody');
+  tbody.innerHTML='';
+  const filtered=activeFilter==='all'
+    ? logEntries
+    : logEntries.filter(e=>e.type===activeFilter);
+
+  filtered.forEach((entry,i)=>{
+    const tr=document.createElement('tr');
+    if(entry.highlight) tr.classList.add('highlight');
+    tr.dataset.index=i;
+    tr.addEventListener('click',()=>selectRow(tr,i));
+
+    /* Time */
+    const tdTime=document.createElement('td');
+    tdTime.className='mono';
+    tdTime.style.fontSize='11px';
+    tdTime.style.color='var(--t2)';
+    tdTime.textContent=entry.time;
+    tr.appendChild(tdTime);
+
+    /* Type badge */
+    const tdType=document.createElement('td');
+    const badge=document.createElement('span');
+    badge.className='type-badge';
+    if(entry.type==='song')   badge.classList.add('type-song');
+    if(entry.type==='jingle') badge.classList.add('type-jingle');
+    if(entry.type==='break')  badge.classList.add('type-break');
+    badge.textContent=entry.type.toUpperCase();
+    tdType.appendChild(badge);
+    tr.appendChild(tdType);
+
+    /* Artist / Campaign */
+    const tdArtist=document.createElement('td');
+    tdArtist.textContent=entry.artist;
+    tdArtist.style.fontWeight='500';
+    tr.appendChild(tdArtist);
+
+    /* Title */
+    const tdTitle=document.createElement('td');
+    tdTitle.textContent=entry.title;
+    tdTitle.style.color='var(--t2)';
+    tr.appendChild(tdTitle);
+
+    /* Duration (mono) */
+    const tdDur=document.createElement('td');
+    tdDur.className='dur-cell';
+    tdDur.textContent=entry.dur;
+    tr.appendChild(tdDur);
+
+    /* Status */
+    const tdStatus=document.createElement('td');
+    if(entry.status==='ok'){
+      tdStatus.className='status-ok';
+      tdStatus.innerHTML='&#10003; OK';
+    } else {
+      tdStatus.className='status-warn';
+      tdStatus.innerHTML='&#9888; Overplay';
+    }
+    tr.appendChild(tdStatus);
+
+    /* AI */
+    const tdAI=document.createElement('td');
+    tdAI.style.textAlign='center';
+    if(entry.ai==='arrow'){
+      tdAI.innerHTML='<span class="ai-arrow">&#8594;</span>';
+    } else if(entry.ai==='warn'){
+      tdAI.innerHTML='<span class="ai-warn">&#9888;</span>';
+    }
+    tr.appendChild(tdAI);
+
+    tbody.appendChild(tr);
+  });
+
+  /* Update more-entries visibility */
+  document.getElementById('moreEntries').style.display=activeFilter==='all'?'block':'none';
+}
+
+/* ── Row Selection ───────────────────────────────── */
+function selectRow(tr,index){
+  if(selectedRow) selectedRow.classList.remove('selected');
+  tr.classList.add('selected');
+  selectedRow=tr;
+}
+
+/* ── Filter Tabs ─────────────────────────────────── */
+document.querySelectorAll('.filter-tab').forEach(tab=>{
+  tab.addEventListener('click',function(){
+    document.querySelectorAll('.filter-tab').forEach(t=>t.classList.remove('active'));
+    this.classList.add('active');
+    activeFilter=this.dataset.filter;
+    renderLog();
+  });
+});
+
+/* ── Quick Date Buttons ──────────────────────────── */
+document.querySelectorAll('.quick-btn').forEach(btn=>{
+  btn.addEventListener('click',function(){
+    document.querySelectorAll('.quick-btn').forEach(b=>b.classList.remove('active'));
+    this.classList.add('active');
+  });
+});
+
+/* ── Generation Mode Radio Styling ───────────────── */
+document.querySelectorAll('input[name="genMode"]').forEach(radio=>{
+  radio.addEventListener('change',function(){
+    document.querySelectorAll('.lp-radio').forEach(r=>r.classList.remove('selected'));
+    if(this.checked) this.closest('.lp-radio').classList.add('selected');
+  });
+});
+
+/* ── Generate Button ─────────────────────────────── */
+document.getElementById('generateBtn').addEventListener('click',function(){
+  this.textContent='Generating...';
+  this.style.opacity='0.7';
+  setTimeout(()=>{
+    this.textContent='\u25B6 Generate Log Now';
+    this.style.opacity='1';
+  },1500);
+});
+
+/* ── Init ─────────────────────────────────────────── */
+renderLog();
+</script>
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script src="js/bridge_helper.js"></script>
+</body>
+</html>
