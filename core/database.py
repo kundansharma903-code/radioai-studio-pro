@@ -641,6 +641,36 @@ class Database:
         conn.execute("DELETE FROM spot_files WHERE id = ?", [int(file_id)])
         conn.commit()
 
+    # ── Scheduler dispatch helpers (Phase D4) ────────────────────────────────
+
+    def get_active_breaks_for_day(self, day_of_week: int) -> List[sqlite3.Row]:
+        """Return all campaign_schedule rows for a given day-of-week
+        (0=Mon … 6=Sun) where the campaign is active and not past its
+        end date.
+
+        Used by the SchedulerEngine each midnight to refresh its in-memory
+        break list. Keyed by break_time + campaign_id; the scheduler then
+        ticks against this list."""
+        self._ensure_campaign_schedule_columns()
+        conn = self._conn()
+        return conn.execute(
+            """
+            SELECT cs.id, cs.campaign_id, cs.day_of_week, cs.break_time,
+                   cs.slot_order,
+                   COALESCE(cs.priority, 'Medium') AS priority,
+                   c.name AS campaign_name
+            FROM   campaign_schedule cs
+            JOIN   campaigns c ON cs.campaign_id = c.id
+            WHERE  cs.day_of_week = ?
+            AND    c.is_active = 1
+            AND   (c.end_date IS NULL OR c.end_date = ''
+                    OR c.end_date = 'Never'
+                    OR c.end_date >= date('now'))
+            ORDER  BY cs.break_time
+            """,
+            [int(day_of_week)],
+        ).fetchall()
+
     # ── Break schedule (campaign × day × break_time) ──────────────────────────
 
     def get_break_schedule(self, campaign_id: int) -> List[sqlite3.Row]:

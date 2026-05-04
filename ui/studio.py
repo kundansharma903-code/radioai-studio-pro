@@ -41,6 +41,7 @@ Day D2 will:
 from __future__ import annotations
 
 import logging
+import os
 from typing import Optional
 
 from PyQt6.QtCore import Qt, QRect, QRectF, QTimer, pyqtSignal
@@ -1105,7 +1106,12 @@ class _HistoryRow(QFrame):
 
 
 class _NextBreakCard(QFrame):
-    """Big countdown card — '04:26 / in 4 min 26 sec'."""
+    """Big countdown card — drives off scheduler.next_break_in tick.
+
+    Phase D4: set_countdown(seconds) drives the display.
+      seconds >= 0 → "MM:SS" + "in N min M sec"
+      seconds < 0  → "—:—" + "no breaks scheduled"
+    """
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1116,6 +1122,14 @@ class _NextBreakCard(QFrame):
             f"border-left: 3px solid {AMBER}; "
             f"border-radius: 6px; }}"
         )
+        self._seconds: int = -1   # -1 = no upcoming break
+
+    def set_countdown(self, seconds: int) -> None:
+        s = int(seconds) if seconds is not None else -1
+        if self._seconds == s:
+            return
+        self._seconds = s
+        self.update()
 
     def paintEvent(self, _e):
         super().paintEvent(_e)
@@ -1128,17 +1142,29 @@ class _NextBreakCard(QFrame):
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                    "NEXT BREAK")
         # Big countdown
-        p.setPen(QColor(AMBER_LIGHT))
+        if self._seconds < 0:
+            big_text = "—:—"
+            sub_text = "no breaks scheduled"
+            color = TEXT_DIM
+        else:
+            mm, ss = divmod(int(self._seconds), 60)
+            big_text = f"{mm:02d}:{ss:02d}"
+            if mm > 0:
+                sub_text = f"in {mm} min {ss} sec"
+            else:
+                sub_text = f"in {ss} sec"
+            color = AMBER_LIGHT
+        p.setPen(QColor(color))
         p.setFont(mono(38, bold=True))
         p.drawText(QRectF(0, 22, self.width(), 64),
                    Qt.AlignmentFlag.AlignCenter,
-                   "04:26")
+                   big_text)
         # Subtitle
         p.setPen(QColor(TEXT_MUTED))
         p.setFont(inter(9))
         p.drawText(QRectF(0, self.height() - 22, self.width(), 18),
                    Qt.AlignmentFlag.AlignCenter,
-                   "in 4 min 26 sec")
+                   sub_text)
 
 
 class _UpcomingSpotsList(QFrame):
@@ -1370,6 +1396,10 @@ class Studio(QWidget):
         self._stop_after_current: bool = False
         self._master_volume: int = self.DEFAULT_VOLUME
         self._fade_out_timer: Optional[QTimer] = None
+        # Phase D4: track whether the active channel is a spot or deck song
+        # ("deck" = manual-played song; "spot" = scheduler-triggered ad)
+        self._playback_kind: Optional[str] = None
+        self._playback_campaign_id: Optional[int] = None  # set when kind=='spot'
 
         # Real-DB queue (D5 will replace this with proper queue logic)
         self._queue_songs: list[dict] = self._load_queue_from_db()
@@ -1386,15 +1416,15 @@ class Studio(QWidget):
             self._engine.playback_ended.connect(self._on_engine_playback_ended)
             self._engine.error_occurred.connect(self._on_engine_error)
 
-        # Scheduler signal connections (Phase D3 — handlers are no-ops
-        # for now; D4 will wire spot_due to real spot playback, D5 will
-        # wire song_auto_advance to queue advancement)
+        # Scheduler signal connections (Phase D4 wired)
         if self._scheduler is not None:
             self._scheduler.spot_due.connect(self._on_scheduler_spot_due)
             self._scheduler.song_auto_advance.connect(
                 self._on_scheduler_song_advance)
             self._scheduler.break_approaching.connect(
                 self._on_scheduler_break_warn)
+            self._scheduler.next_break_in.connect(
+                self._on_scheduler_next_break_in)
 
         # Wire transport + master vol + queue
         self._transport.restart_clicked.connect(self._on_restart_clicked)
@@ -1535,9 +1565,10 @@ class Studio(QWidget):
             y += 36
         y += 8
 
-        # Next Break card
-        nb = _NextBreakCard(self)
-        nb.setGeometry(RIGHT_X + right_pad, y, RIGHT_W - 2 * right_pad, 118)
+        # Next Break card — driven by scheduler next_break_in signal
+        self._next_break = _NextBreakCard(self)
+        self._next_break.setGeometry(
+            RIGHT_X + right_pad, y, RIGHT_W - 2 * right_pad, 118)
         y += 124
 
         # Upcoming spots
@@ -1674,6 +1705,8 @@ class Studio(QWidget):
         self._engine.play(cid)
 
         self._playback_cid = cid
+        self._playback_kind = "deck"           # Phase D4 — manual deck play
+        self._playback_campaign_id = None
         self._current_track = song
         self._current_duration_ms = self._engine.get_duration_ms(cid) or \
             int(song.get("duration_ms", 0))
@@ -1740,6 +1773,8 @@ class Studio(QWidget):
             except Exception:
                 pass
             self._playback_cid = None
+        self._playback_kind = None
+        self._playback_campaign_id = None
         self._current_track = None
         self._apply_idle_state()
         log.info("[studio] fade out complete — deck idle")
@@ -1770,11 +1805,15 @@ class Studio(QWidget):
     def _on_engine_playback_ended(self, channel_id: int) -> None:
         if channel_id != self._playback_cid:
             return
-        log.info(f"[studio] EOS on ch={channel_id}")
-        # D2: just go idle. D5 will check loop / stop_after_current /
-        # auto-advance to next queue item.
+        kind = self._playback_kind
+        log.info(f"[studio] EOS on ch={channel_id} (kind={kind})")
+        # D2/D4: cleanup + idle. D5 will check loop / stop_after_current /
+        # auto-advance for kind=='deck' EOS, and kind=='spot' EOS will
+        # resume the deck queue.
         self._engine.cleanup(channel_id)
         self._playback_cid = None
+        self._playback_kind = None
+        self._playback_campaign_id = None
         self._current_track = None
         self._apply_idle_state()
 
@@ -1784,22 +1823,134 @@ class Studio(QWidget):
         log.warning(f"[studio] engine error: {message}")
         self._on_engine_playback_ended(channel_id)
 
-    # ── Scheduler signal handlers (Phase D3 — placeholder logging) ───────
+    # ── Scheduler signal handlers (Phase D4 wired) ───────────────────────
 
     def _on_scheduler_spot_due(self, campaign_id: int) -> None:
-        """D4 will wire this to actually fetch + play the campaign's spot
-        file via the deck channel (or a dedicated spots channel). For
-        D3, just log."""
-        log.info(f"[studio] scheduler: spot_due campaign={campaign_id}")
+        """Phase D4: scheduler says a campaign's spot is due. Stop the
+        deck (if playing), play the spot's first active file on a fresh
+        channel, write a real broadcast_log entry.
+
+        Spot replaces music — traditional radio behavior. D5 will
+        auto-resume the queue on spot EOS."""
+        try:
+            self._do_scheduler_spot_due(campaign_id)
+        except Exception as exc:
+            import traceback
+            log.error(
+                f"[studio] spot_due handler crashed: "
+                f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}")
+
+    def _do_scheduler_spot_due(self, campaign_id: int) -> None:
+        if self._engine is None:
+            log.warning(
+                f"[studio] spot_due {campaign_id} — no engine, skipping")
+            return
+
+        # Pick first active spot file with on-disk path. Round-robin in D5.
+        try:
+            spot_files = self._db.get_spot_files(campaign_id)
+        except Exception as exc:
+            log.warning(f"[studio] get_spot_files({campaign_id}): {exc}")
+            return
+        chosen = None
+        for sf in spot_files:
+            path = sf["file_path"] if "file_path" in sf.keys() else None
+            is_active = (sf["is_active"]
+                         if "is_active" in sf.keys() else 1)
+            if path and os.path.exists(path) and int(is_active or 0):
+                chosen = sf
+                break
+        if chosen is None:
+            log.warning(
+                f"[studio] campaign {campaign_id} has no playable spot file")
+            return
+
+        # Stop the deck (if active) — spot replaces music
+        if self._playback_cid is not None:
+            try:
+                self._engine.cleanup(self._playback_cid)
+            except Exception as exc:
+                log.debug(f"[studio] deck cleanup before spot: {exc}")
+            self._playback_cid = None
+            self._playback_kind = None
+            self._current_track = None
+
+        # Cancel any in-flight fade-out timer
+        if self._fade_out_timer is not None:
+            self._fade_out_timer.stop()
+            self._fade_out_timer = None
+
+        # Load + play spot
+        path = chosen["file_path"]
+        try:
+            cid = self._engine.load_file(path)
+        except Exception as exc:
+            log.warning(f"[studio] spot load_file failed: {exc}")
+            return
+        self._engine.set_volume(cid, self._master_volume)
+        self._engine.play(cid)
+
+        self._playback_cid = cid
+        self._playback_kind = "spot"
+        self._playback_campaign_id = int(campaign_id)
+        # Read row fields defensively — sqlite3.Row supports indexing but
+        # not .get(). Use `in row.keys()` to check field presence.
+        chosen_keys = set(chosen.keys())
+        chosen_duration_ms = int(chosen["duration_ms"] or 0) \
+            if "duration_ms" in chosen_keys else 0
+        chosen_filename = (chosen["filename"] if "filename" in chosen_keys
+                           and chosen["filename"] else "—")
+        self._current_duration_ms = (self._engine.get_duration_ms(cid)
+                                     or chosen_duration_ms)
+
+        # Update the Now Playing card with spot info (campaign name)
+        campaign_name = chosen_filename
+        try:
+            full = self._db.get_campaign(int(campaign_id))
+            if full and full.get("name"):
+                campaign_name = full["name"]
+        except Exception:
+            pass
+        self._current_track = {
+            "id":       int(campaign_id),
+            "title":    campaign_name,
+            "artist":   "Spot · auto-aired",
+            "tags":     ["Ad Break", "Auto"],
+        }
+        self._apply_playing_state(self._current_track)
+
+        # Real airtime — write broadcast_log (only scheduler-triggered
+        # plays land here; manual deck plays stay unlogged per Q5).
+        try:
+            self._db.log_play(
+                entry_type="spot",
+                campaign_id=int(campaign_id),
+                duration_ms=int(self._current_duration_ms),
+                deck="A",
+                was_manual=0,
+            )
+        except Exception as exc:
+            log.warning(f"[studio] broadcast_log write failed: {exc}")
+
+        log.info(
+            f"[studio] auto-spot ch={cid} campaign={campaign_id} "
+            f"file={os.path.basename(path)} dur={self._current_duration_ms}ms"
+            f" — broadcast_log written")
 
     def _on_scheduler_song_advance(self) -> None:
         """D5 will wire this to load the next queue item on the deck.
-        For D3, just log."""
-        log.info("[studio] scheduler: song_auto_advance")
+        For D4, still no-op."""
+        log.info("[studio] scheduler: song_auto_advance (D5 will wire)")
 
     def _on_scheduler_break_warn(self, seconds_until: int) -> None:
-        """D4 will wire this to flash the Next Break card. For D3, log."""
-        log.info(f"[studio] scheduler: break_approaching in {seconds_until}s")
+        """D4: log the 30s warning. D6 polish will flash the card."""
+        log.info(
+            f"[studio] scheduler: break_approaching in {seconds_until}s")
+
+    def _on_scheduler_next_break_in(self, seconds: int) -> None:
+        """Per-tick countdown driver for _NextBreakCard."""
+        if hasattr(self, "_next_break") and self._next_break is not None:
+            self._next_break.set_countdown(seconds)
 
     # ── Lifecycle: stop on hide / navigate-away ──────────────────────────
 
