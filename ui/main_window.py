@@ -151,7 +151,8 @@ class MainWindow(QMainWindow):
 
             # Instant Jingles — live broadcast pads (Figma 44:688)
             from ui.instant_jingles import InstantJingles
-            self.instant_jingles = InstantJingles(self._db)
+            self.instant_jingles = InstantJingles(
+                self._db, engine=self._engine)
             self.instant_jingles.breadcrumb_clicked.connect(self._on_breadcrumb)
             self.instant_jingles.studio_clicked.connect(self._on_studio_clicked)
             self._stack.addWidget(self.instant_jingles)

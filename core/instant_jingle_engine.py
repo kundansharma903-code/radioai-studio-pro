@@ -1,20 +1,34 @@
 """
-RadioAI Studio Pro — Instant Jingle Engine
+RadioAI Studio Pro — Instant Jingle Engine (Phase B4 — adapter).
 
-Polyphonic BASS playback for the Instant Jingles screen. Multiple pads can
-play simultaneously through the same BASS output device. Each pad gets its
-own BASS stream handle; the engine tracks them in a dict so Stop All can
-kill every channel at once and Latch can toggle a single pad on/off.
+Thin adapter over `core.audio.AudioEngine`. Maps `pad_id → channel_id`
+and forwards the IJE public API onto the shared multi-channel engine.
 
-Design parallels SweeperEngine (overlay player) — same DLL handle pattern,
-same volume-attribute write — but extended to N concurrent channels.
+The polyphony cap (8 pads) is enforced HERE — not at the engine level —
+so it filters to JINGLE PAD channels only. Other consumers of the same
+AudioEngine (Songs Library row preview, Audio Cue Editor PREVIEW, Spots
+Now Airing) keep their channels independent of the jingle pad cap.
 
-Polyphony cap: 8. BASS itself can handle far more, but UI scaling (and the
-practical reality of a DJ overlapping more than 8 jingles in a live break)
-makes higher counts a footgun. Clamp + warn rather than silently drop.
+Public API preserved (caller in ui/instant_jingles.py is untouched):
+  - play_pad(pad_id, file_path, volume, loop)
+  - stop_pad(pad_id)
+  - stop_all()
+  - is_playing(pad_id)
+  - active_pad_ids()
+  - get_duration_ms(file_path)
+
+Improvement over the pre-B4 implementation: `pad_ended` signal now
+actually fires on natural EOS (the engine's playback_ended signal does
+the heavy lifting; we translate cid → pad_id).
+
+If this rebase causes regressions, revert via:
+  git revert <Phase B4 commit hash>
+The pre-rebase direct-BASS implementation is preserved in git history
+(the commit prior to Phase B4 — see `git log --oneline core/instant_jingle_engine.py`).
 """
 
-import ctypes
+from __future__ import annotations
+
 import logging
 import os
 import threading
@@ -22,46 +36,42 @@ from typing import Optional
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from pybass3 import BassStream, BassChannel
-import pybass3.bass_module as _bm
-
-# Reuse the DLL loader + BASS_ATTRIB_VOL constant from AudioEngine — single
-# source of truth for ctypes argtype declarations.
-from core.audio_engine import _get_dll, BASS_ATTRIB_VOL, BASS_STREAM_PRESCAN
 
 log = logging.getLogger("InstantJingleEngine")
 
-# BASS_ChannelFlags() flag — loop the sample on EOF.
-BASS_SAMPLE_LOOP = 4
-# Magic value to ChannelFlags() that means "set/clear from this mask only".
-_FLAGS_MASK_LOOP = BASS_SAMPLE_LOOP
-
 
 class InstantJingleEngine(QObject):
-    """Multi-channel jingle player.
+    """Multi-channel jingle player. Adapter over AudioEngine.
 
     Usage::
 
-        engine = InstantJingleEngine()
-        engine.play_pad(pad_id=42, file_path='/path/x.mp3', volume=90, loop=False)
-        engine.stop_pad(42)
-        engine.stop_all()
+        engine = AudioEngine(parent=main_window)
+        ije = InstantJingleEngine(engine=engine)
+        ije.play_pad(pad_id=42, file_path='/path/x.mp3', volume=90, loop=False)
+        ije.stop_pad(42)
+        ije.stop_all()
     """
 
-    # Emitted from the BASS callback thread (sync end-of-stream). Connect
-    # with Qt.AutoConnection — Qt will marshal to the main thread.
-    pad_started = pyqtSignal(int)   # pad_id
-    pad_ended   = pyqtSignal(int)   # pad_id (stream finished naturally)
-    pad_stopped = pyqtSignal(int)   # pad_id (stopped by user / stop_all)
+    # Same signals as the legacy implementation. The receiver in
+    # ui/instant_jingles.py connects to all three.
+    pad_started = pyqtSignal(int)   # pad_id — when play_pad succeeds
+    pad_ended   = pyqtSignal(int)   # pad_id — natural EOS (now ACTUALLY wired)
+    pad_stopped = pyqtSignal(int)   # pad_id — manual stop / stop_all / eviction
 
     MAX_POLYPHONY = 8
 
-    def __init__(self, parent=None):
+    def __init__(self, engine=None, parent=None):
         super().__init__(parent)
-        self._dll = _get_dll()
-        # pad_id -> BASS stream handle (int)
-        self._channels: dict[int, int] = {}
+        self._engine = engine
+        # pad_id → channel_id. Insertion order = age, used for eviction.
+        self._pads: dict[int, int] = {}
         self._lock = threading.Lock()
+
+        # Wire engine.playback_ended → translate cid to pad_id and emit
+        # pad_ended. Pre-B4 the pad_ended signal was declared but never
+        # fired — the rebase fixes that for free.
+        if self._engine is not None:
+            self._engine.playback_ended.connect(self._on_engine_ended)
 
     # ── Public API ────────────────────────────────────────────────────────
 
@@ -69,9 +79,12 @@ class InstantJingleEngine(QObject):
                  volume: int = 100, loop: bool = False) -> bool:
         """Play a pad. Returns True if playback started.
 
-        If the same pad_id is already playing, the existing channel is stopped
-        first (re-trigger). If the polyphony cap is reached, the oldest
-        channel is evicted to make room.
+        Re-trigger semantics: if the same pad_id is already playing, the
+        existing channel is stopped first (BASS handles fresh restart).
+
+        Polyphony cap (8): filters to JINGLE PAD channels only — does NOT
+        touch other AudioEngine consumers. When at cap, the oldest pad
+        (insertion order) is evicted.
         """
         if not file_path:
             log.warning(f"[pad {pad_id}] no file_path — skipping")
@@ -79,60 +92,42 @@ class InstantJingleEngine(QObject):
         if not os.path.exists(file_path):
             log.warning(f"[pad {pad_id}] file missing: {file_path}")
             return False
+        if self._engine is None:
+            log.warning(f"[pad {pad_id}] no engine — IJE inactive")
+            return False
 
         with self._lock:
             # Re-trigger: stop existing channel for this pad
-            if pad_id in self._channels:
-                self._stop_handle(self._channels[pad_id])
-                del self._channels[pad_id]
+            if pad_id in self._pads:
+                old_cid = self._pads.pop(pad_id)
+                self._cleanup_silently(old_cid)
 
-            # Polyphony cap — evict oldest (insertion order) if full
-            if len(self._channels) >= self.MAX_POLYPHONY:
-                oldest_id, oldest_handle = next(iter(self._channels.items()))
+            # Polyphony cap (filtered to OUR pads only)
+            if len(self._pads) >= self.MAX_POLYPHONY:
+                oldest_pid, oldest_cid = next(iter(self._pads.items()))
                 log.warning(
                     f"polyphony cap reached ({self.MAX_POLYPHONY}); "
-                    f"evicting pad {oldest_id}"
+                    f"evicting pad {oldest_pid}"
                 )
-                self._stop_handle(oldest_handle)
-                del self._channels[oldest_id]
-                self.pad_stopped.emit(int(oldest_id))
+                self._cleanup_silently(oldest_cid)
+                del self._pads[oldest_pid]
+                self.pad_stopped.emit(int(oldest_pid))
 
-            # Create the stream
+            # Create stream + play via engine. AudioEngine.load_file
+            # will raise on missing file or BASS error — propagate as
+            # a bool return rather than letting it bubble.
             try:
-                handle = BassStream.CreateFile(
-                    False, file_path.encode("utf-8"), 0, 0, BASS_STREAM_PRESCAN
-                )
+                cid = self._engine.load_file(file_path, loop=loop)
             except Exception as exc:
-                err = _bm.BASS_ErrorGetCode()
-                log.error(f"[pad {pad_id}] BASS_StreamCreateFile error {err}: {exc}")
+                log.error(f"[pad {pad_id}] engine.load_file failed: {exc}")
                 return False
 
-            # Set volume
-            v = max(0, min(100, int(volume))) / 100.0
-            self._dll.BASS_ChannelSetAttribute(
-                int(handle), BASS_ATTRIB_VOL, ctypes.c_float(v)
-            )
-
-            # Loop flag (best-effort — BASS_ChannelFlags isn't in pybass3 always)
-            if loop:
-                try:
-                    if hasattr(self._dll, "BASS_ChannelFlags"):
-                        self._dll.BASS_ChannelFlags.argtypes = [
-                            ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong
-                        ]
-                        self._dll.BASS_ChannelFlags.restype = ctypes.c_ulong
-                        self._dll.BASS_ChannelFlags(
-                            int(handle), BASS_SAMPLE_LOOP, _FLAGS_MASK_LOOP
-                        )
-                except Exception as exc:
-                    log.warning(f"[pad {pad_id}] could not set LOOP flag: {exc}")
-
-            # Play
-            BassChannel.Play(int(handle), False)
-            self._channels[pad_id] = int(handle)
+            self._engine.set_volume(cid, max(0, min(100, int(volume))))
+            self._engine.play(cid)
+            self._pads[pad_id] = cid
             log.info(
-                f"[pad {pad_id}] playing {os.path.basename(file_path)} "
-                f"vol={volume} loop={loop}"
+                f"[pad {pad_id}] playing ch={cid} "
+                f"{os.path.basename(file_path)} vol={volume} loop={loop}"
             )
 
         self.pad_started.emit(int(pad_id))
@@ -141,79 +136,68 @@ class InstantJingleEngine(QObject):
     def stop_pad(self, pad_id: int) -> bool:
         """Stop a specific pad. Returns True if it was playing."""
         with self._lock:
-            handle = self._channels.pop(pad_id, None)
-        if handle is None:
+            cid = self._pads.pop(pad_id, None)
+        if cid is None:
             return False
-        self._stop_handle(handle)
-        log.info(f"[pad {pad_id}] stopped")
+        self._cleanup_silently(cid)
+        log.info(f"[pad {pad_id}] stopped (ch={cid})")
         self.pad_stopped.emit(int(pad_id))
         return True
 
     def stop_all(self) -> int:
-        """Emergency stop — kills every channel. Returns count stopped."""
+        """Emergency stop — kills every JINGLE PAD channel only. Other
+        AudioEngine consumers (library / cue editor / spots) are untouched.
+
+        Returns count stopped."""
         with self._lock:
-            ids = list(self._channels.keys())
-            for pid, handle in self._channels.items():
-                self._stop_handle(handle)
-            self._channels.clear()
+            ids = list(self._pads.keys())
+            for _pid, cid in self._pads.items():
+                self._cleanup_silently(cid)
+            self._pads.clear()
         for pid in ids:
             self.pad_stopped.emit(int(pid))
-        log.warning(f"STOP ALL — killed {len(ids)} channel(s)")
+        log.warning(f"STOP ALL — killed {len(ids)} jingle pad(s)")
         return len(ids)
 
     def is_playing(self, pad_id: int) -> bool:
-        return pad_id in self._channels
+        """True if the pad is currently in our active map. Mirrors the
+        pre-B4 semantics — checks dict membership, not BASS state."""
+        return pad_id in self._pads
 
     def active_pad_ids(self) -> list[int]:
         with self._lock:
-            return list(self._channels.keys())
+            return list(self._pads.keys())
 
     def get_duration_ms(self, file_path: str) -> Optional[int]:
-        """Probe a file for its duration in milliseconds. Used by the
-        editor's Assign Audio path so the duration can be cached."""
-        if not file_path or not os.path.exists(file_path):
+        """Probe a file's duration without consuming a channel slot.
+        Returns ms, or None if unreadable."""
+        if self._engine is None:
             return None
-        try:
-            handle = BassStream.CreateFile(
-                False, file_path.encode("utf-8"), 0, 0, BASS_STREAM_PRESCAN
-            )
-        except Exception:
-            return None
-        try:
-            # BASS_ChannelGetLength → bytes; convert via BASS_ChannelBytes2Seconds
-            if not hasattr(self._dll, "BASS_ChannelGetLength"):
-                self._dll.BASS_ChannelGetLength.argtypes = [
-                    ctypes.c_ulong, ctypes.c_ulong
-                ]
-                self._dll.BASS_ChannelGetLength.restype = ctypes.c_ulonglong
-            if not hasattr(self._dll, "BASS_ChannelBytes2Seconds"):
-                self._dll.BASS_ChannelBytes2Seconds.argtypes = [
-                    ctypes.c_ulong, ctypes.c_ulonglong
-                ]
-                self._dll.BASS_ChannelBytes2Seconds.restype = ctypes.c_double
-            byte_len = self._dll.BASS_ChannelGetLength(int(handle), 0)
-            seconds  = self._dll.BASS_ChannelBytes2Seconds(int(handle), byte_len)
-            return int(round(seconds * 1000))
-        except Exception:
-            return None
-        finally:
-            try:
-                self._stop_handle(int(handle))
-            except Exception:
-                pass
+        return self._engine.probe_duration_ms(file_path)
 
     # ── Internals ─────────────────────────────────────────────────────────
 
-    def _stop_handle(self, handle) -> None:
-        """Best-effort BASS_ChannelStop + BASS_StreamFree."""
+    def _cleanup_silently(self, cid: int) -> None:
+        """engine.cleanup(cid) wrapped to swallow any error — IJE never
+        propagates BASS-level errors back to the UI; the caller already
+        knows the pad is "stopped" by virtue of having been removed from
+        the dict."""
         try:
-            if not hasattr(self._dll, "BASS_ChannelStop"):
-                self._dll.BASS_ChannelStop.argtypes = [ctypes.c_ulong]
-                self._dll.BASS_ChannelStop.restype  = ctypes.c_bool
-            if not hasattr(self._dll, "BASS_StreamFree"):
-                self._dll.BASS_StreamFree.argtypes = [ctypes.c_ulong]
-                self._dll.BASS_StreamFree.restype  = ctypes.c_bool
-            self._dll.BASS_ChannelStop(int(handle))
-            self._dll.BASS_StreamFree(int(handle))
+            self._engine.cleanup(cid)
         except Exception as exc:
-            log.warning(f"_stop_handle({handle}) error: {exc}")
+            log.warning(f"engine.cleanup({cid}) error: {exc}")
+
+    def _on_engine_ended(self, channel_id: int) -> None:
+        """AudioEngine reports natural EOS — translate cid to our pad_id
+        and fire pad_ended. Filtered to OUR channels (the engine is
+        shared)."""
+        pad_id = None
+        with self._lock:
+            for pid, cid in list(self._pads.items()):
+                if cid == channel_id:
+                    pad_id = pid
+                    del self._pads[pid]
+                    break
+        if pad_id is not None:
+            log.info(f"[pad {pad_id}] ended (natural EOS, ch={channel_id})")
+            self.pad_ended.emit(int(pad_id))

@@ -27,6 +27,7 @@ BASS_ATTRIB_VOL       = 2              # per-channel volume attribute (0.0–1.0
 BASS_SYNC_END         = 2              # sync type: end-of-stream
 BASS_SYNC_ONETIME     = 0x80000000     # fire sync callback only once
 BASS_POS_BYTE         = 0              # GetLength / SetPosition mode: bytes
+BASS_SAMPLE_LOOP      = 4              # stream creation flag — loop on EOF
 
 
 # ── ctypes typedefs ─────────────────────────────────────────────────────────

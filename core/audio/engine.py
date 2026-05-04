@@ -54,7 +54,7 @@ from pybass3 import BassStream, BassChannel
 
 from core.audio._bass import (
     BASS_ATTRIB_VOL, BASS_POS_BYTE, BASS_STREAM_PRESCAN,
-    BASS_SYNC_END, BASS_SYNC_ONETIME,
+    BASS_SAMPLE_LOOP, BASS_SYNC_END, BASS_SYNC_ONETIME,
     SYNCPROC, get_dll, error_code,
 )
 from core.audio.channels import Channel, CHANNEL_STATES
@@ -136,8 +136,19 @@ class AudioEngine(QObject):
 
     # ── Public API: load / playback control ───────────────────────────────
 
-    def load_file(self, path: str) -> int:
+    def load_file(self, path: str, loop: bool = False) -> int:
         """Open `path` as a BASS stream. Returns the new channel id.
+
+        Args:
+            path: Audio file path.
+            loop: If True, channel loops indefinitely when played
+                  (BASS_SAMPLE_LOOP flag at stream creation). Default
+                  False (one-shot playback). Phase B4 addition — used
+                  primarily by Instant Jingles loop-mode pads.
+
+        Note: `loop` is set at stream-creation time (BASS_SAMPLE_LOOP).
+        It cannot be toggled after load — reload with a different value
+        if needed.
 
         If MAX_CHANNELS is already reached, the oldest channel is evicted
         automatically to make room (Phase A3 — silent eviction matches
@@ -163,11 +174,14 @@ class AudioEngine(QObject):
             self._evict_oldest()
 
         with self._lock:
+            flags = BASS_STREAM_PRESCAN
+            if loop:
+                flags |= BASS_SAMPLE_LOOP
             try:
                 handle = BassStream.CreateFile(
                     False, path.encode("utf-8"),
                     0, 0,
-                    BASS_STREAM_PRESCAN,
+                    flags,
                 )
             except Exception as exc:
                 err = error_code()
@@ -464,6 +478,39 @@ class AudioEngine(QObject):
             cid for cid, ch in self._channels.items()
             if ch.state in ("playing", "paused")
         ]
+
+    def probe_duration_ms(self, path: str) -> Optional[int]:
+        """Read an audio file's duration WITHOUT creating a persistent
+        channel.
+
+        Loads with PRESCAN, reads length, frees the handle. Returns ms
+        or None if the file can't be loaded. No channel is added to the
+        active map — `active_channels()` is unchanged after this call.
+
+        Phase B4 primitive: lets Instant Jingles (and any future import
+        flow) cache duration without consuming a channel slot."""
+        if not path or not os.path.exists(path):
+            return None
+        try:
+            handle = BassStream.CreateFile(
+                False, path.encode("utf-8"),
+                0, 0,
+                BASS_STREAM_PRESCAN,
+            )
+        except Exception as exc:
+            log.debug(f"probe_duration_ms({path!r}) load failed: {exc}")
+            return None
+        h = int(handle)
+        try:
+            len_bytes = self._dll.BASS_ChannelGetLength(h, BASS_POS_BYTE)
+            return int(self._dll.BASS_ChannelBytes2Seconds(h, len_bytes) * 1000)
+        except Exception:
+            return None
+        finally:
+            try:
+                BassStream.Free(h)
+            except Exception:
+                pass
 
     # ── Internals ─────────────────────────────────────────────────────────
 

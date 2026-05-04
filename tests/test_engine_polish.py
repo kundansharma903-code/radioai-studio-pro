@@ -178,3 +178,46 @@ def test_get_active_channels_filters_by_state(qtbot, engine, test_song_path):
     # Stop cb → only cc remains in playing/paused
     engine.stop(cb)
     assert engine.get_active_channels() == [cc]
+
+
+# ── Phase B4 primitives — probe_duration_ms + load_file(loop=True) ──────
+
+def test_probe_duration_ms_valid_file(engine, test_song_path):
+    """probe_duration_ms reads duration without creating a channel."""
+    duration = engine.probe_duration_ms(test_song_path)
+    assert duration is not None
+    assert duration > 1_000
+
+
+def test_probe_duration_ms_does_not_create_channel(engine, test_song_path):
+    """The probe must NOT leak channels into active_channels()."""
+    before = engine.active_channels()
+    engine.probe_duration_ms(test_song_path)
+    engine.probe_duration_ms(test_song_path)
+    after = engine.active_channels()
+    assert before == after, \
+        f"probe leaked channels: {before} -> {after}"
+
+
+def test_probe_duration_ms_missing_file(engine):
+    """Missing file returns None — never raises (paint-loop-safe)."""
+    assert engine.probe_duration_ms(r"E:\does\not\exist.mp3") is None
+    assert engine.probe_duration_ms("") is None
+
+
+def test_load_file_loop_param_accepted(engine, test_song_path):
+    """load_file(path, loop=True) loads with BASS_SAMPLE_LOOP set. Full
+    'plays past EOF' verification would need >duration playback (slow);
+    here we just verify the load-then-play path works cleanly."""
+    cid = engine.load_file(test_song_path, loop=True)
+    assert cid > 0
+    assert engine.get_state(cid) == "loaded"
+    engine.play(cid)
+    assert engine.is_playing(cid)
+
+
+def test_load_file_default_loop_is_false(engine, test_song_path):
+    """Default behaviour unchanged — loop param is opt-in."""
+    cid = engine.load_file(test_song_path)
+    assert cid > 0
+    assert engine.get_state(cid) == "loaded"

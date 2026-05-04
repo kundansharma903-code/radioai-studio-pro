@@ -1160,9 +1160,10 @@ class InstantJingles(QWidget):
     pad_played         = pyqtSignal(int, str)   # pad_id, file_path
     pad_selected       = pyqtSignal(int)        # pad_id (right-click)
 
-    def __init__(self, db, parent=None):
+    def __init__(self, db, parent=None, engine=None):
         super().__init__(parent)
         self._db = db
+        self._audio_engine = engine    # shared AudioEngine (Option C DI)
 
         # State
         self._pallets: list[dict]   = []
@@ -1200,10 +1201,12 @@ class InstantJingles(QWidget):
         except Exception as exc:
             log.error(f"seed/migrate failed: {exc}")
 
-        # Polyphonic playback engine
+        # Polyphonic playback engine — Phase B4 rebased on AudioEngine.
+        # IJE is now a thin adapter; constructor takes the shared engine.
         try:
             from core.instant_jingle_engine import InstantJingleEngine
-            self._engine = InstantJingleEngine(self)
+            self._engine = InstantJingleEngine(
+                engine=self._audio_engine, parent=self)
             self._engine.pad_started.connect(self._on_engine_started)
             self._engine.pad_ended.connect(self._on_engine_ended)
             self._engine.pad_stopped.connect(self._on_engine_stopped)
