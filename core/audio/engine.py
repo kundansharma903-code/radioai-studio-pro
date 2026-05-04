@@ -6,6 +6,13 @@ streams through a single BASS output device. Each load_file returns a
 never-reused channel id; subsequent play / pause / resume / stop / cleanup
 calls reference the channel by that id.
 
+Capacity behavior (Phase A3): when MAX_CHANNELS is reached, the oldest
+channel (by insertion order — Python 3.7+ dicts preserve it) is
+automatically evicted to make room. The eviction emits
+channel_state_changed(oldest_id, "stopped") before cleanup so UI consumers
+tracking the active set see a clean transition. This matches the
+InstantJingleEngine precedent.
+
 Phase A roadmap:
   A1 — architecture + single channel: load_file, play, pause, resume, stop,
        cleanup, cleanup_all. Per-channel EOS sync callback bridges to Qt.
@@ -125,22 +132,30 @@ class AudioEngine(QObject):
     def load_file(self, path: str) -> int:
         """Open `path` as a BASS stream. Returns the new channel id.
 
+        If MAX_CHANNELS is already reached, the oldest channel is evicted
+        automatically to make room (Phase A3 — silent eviction matches
+        InstantJingleEngine precedent). The eviction emits
+        channel_state_changed(oldest_id, "stopped") before cleanup so UI
+        consumers track the transition.
+
         Raises:
-            AudioEngineError — if path missing/empty, capacity reached, or
-                               BASS fails to create the stream.
+            AudioEngineError — path missing/empty, or BASS stream-creation
+                               failure (decoder/format issues surface as
+                               FormatError).
         """
         if not path:
             raise AudioEngineError("file path is empty")
         if not os.path.exists(path):
             raise AudioEngineError(f"file not found: {path}")
 
-        with self._lock:
-            if len(self._channels) >= self.MAX_CHANNELS:
-                raise AudioEngineError(
-                    f"channel cap reached ({self.MAX_CHANNELS}); "
-                    f"cleanup an existing channel before loading another"
-                )
+        # Capacity policy (Phase A3): evict oldest to make room.
+        # Done before the lock-protected section because cleanup() takes
+        # the lock internally — calling it from inside another lock would
+        # deadlock.
+        while len(self._channels) >= self.MAX_CHANNELS:
+            self._evict_oldest()
 
+        with self._lock:
             try:
                 handle = BassStream.CreateFile(
                     False, path.encode("utf-8"),
@@ -327,6 +342,41 @@ class AudioEngine(QObject):
         ch = self._channels.get(channel_id)
         return ch.volume if ch else 100
 
+    def fade_volume_to(self, channel_id: int, target_volume: int,
+                       duration_ms: int) -> None:
+        """Smoothly slide channel volume to `target_volume` over
+        `duration_ms` via BASS_ChannelSlideAttribute (BASS-native; no Python
+        timer needed).
+
+        Edge cases (Phase A3 / Q4):
+          - duration_ms <= 0 → behaves identically to set_volume (instant).
+          - Channel in any state — paused / loaded channels apply the fade
+            when play() resumes (BASS-native behavior).
+
+        Volume is clamped silently to [0, 100]. ch.volume cache updates
+        synchronously to the target value; callers who need the in-flight
+        BASS volume can use BASS_ChannelGetAttribute directly. This matches
+        the legacy AudioEngine.fade_to source-of-truth semantic.
+        """
+        ch = self._require_channel(channel_id)
+        target = max(0, min(100, int(target_volume)))
+
+        if duration_ms <= 0:
+            # Instant — delegate so the clamp + cache logic stays in
+            # one place.
+            self.set_volume(channel_id, target)
+            return
+
+        self._dll.BASS_ChannelSlideAttribute(
+            ch.handle,
+            BASS_ATTRIB_VOL,
+            ctypes.c_float(target / 100.0),
+            ctypes.c_ulong(int(duration_ms)),
+        )
+        # Source-of-truth update: caller sees ch.volume == target
+        # immediately, even though BASS is still tweening.
+        ch.volume = target
+
     # ── Public API: cleanup ───────────────────────────────────────────────
 
     def cleanup(self, channel_id: int) -> None:
@@ -359,6 +409,33 @@ class AudioEngine(QObject):
         if ch is None:
             raise ChannelError(f"channel {channel_id} not found")
         return ch
+
+    def _evict_oldest(self) -> int:
+        """Evict the oldest channel to make room (Phase A3 / Q1).
+
+        Eviction uses Python 3.7+ dict insertion order — the first key in
+        iter() is the oldest. No separate `loaded_at` field is needed
+        (matches InstantJingleEngine precedent).
+
+        Q2 ordering: channel_state_changed(oldest_id, "stopped") is
+        emitted BEFORE cleanup, so UI consumers see "channel X stopped" →
+        "channel Y loaded" in clean order rather than a silent disappear.
+
+        Returns the evicted channel id, or 0 if the engine has no channels.
+        """
+        with self._lock:
+            if not self._channels:
+                return 0
+            oldest_id = next(iter(self._channels))
+
+        log.warning(
+            f"channel cap reached ({self.MAX_CHANNELS}); "
+            f"evicting oldest ch {oldest_id}"
+        )
+        # Q2: emit the stop signal BEFORE cleanup.
+        self.channel_state_changed.emit(oldest_id, "stopped")
+        self.cleanup(oldest_id)
+        return oldest_id
 
     def _make_sync_cb(self, channel_id: int):
         """Create a SYNCPROC bound to a specific channel id.
