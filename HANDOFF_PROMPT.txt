@@ -41,9 +41,10 @@ to it if I describe a specific test failure.
 HARD CONSTRAINTS — DO NOT VIOLATE
 ═══════════════════════════════════════════════════════════════════════
 
-A) E:\RadioAI_v2\ is NOT a git repo locally — `git status` returns
-   "fatal: not a git repository". I commit from elsewhere. Do not
-   `git init` here without explicit approval.
+A) E:\RadioAI_v2\ IS now a git repo locally, initialized 2026-05-04
+   and connected to github.com/kundansharma903-code/radioai-studio-pro
+   on branch native-pyqt6. See GITHUB CONNECTION + COMMIT POLICY
+   sections below for the rules.
 
 B) Destructive ops protocol (per CLAUDE.md): never DELETE/UPDATE with
    LIKE patterns on shared tables. Always SELECT-COUNT first, show me,
@@ -64,18 +65,68 @@ E) Use canonical _ms cue columns only when writing (start_point_ms,
    Legacy duplicates (intro_time, mix_point, etc.) stay untouched.
 
 ═══════════════════════════════════════════════════════════════════════
-GITHUB CONTEXT
+GITHUB CONNECTION — FIRST ACTION
 ═══════════════════════════════════════════════════════════════════════
 
-  • Repo:    github.com/kundansharma903-code/radioai-studio-pro
-  • Branch:  native-pyqt6
-  • Local E:\RadioAI_v2\ is NOT git-initialized — I commit via a
-    separate workflow on a different machine.
-  • DO NOT `git init` locally without explicit approval (would diverge
-    from canonical user-side repo).
-  • DO NOT push to GitHub from this session.
-  • For history reference, you may `git clone` to a temp path for
-    READ-ONLY inspection if absolutely needed.
+The local repo at E:\RadioAI_v2\ is already initialized as a git repo
+connected to:
+  https://github.com/kundansharma903-code/radioai-studio-pro
+
+  • Active branch:   native-pyqt6
+  • Latest commit:   feat: Phase 5-A + 5-B Audio Cue Editor + handoff
+                     package (root commit, hash 84df90e)
+  • Branch policy:   native-pyqt6 is the canonical branch from now on.
+                     DO NOT touch `main`.
+
+═══════════════════════════════════════════════════════════════════════
+COMMIT POLICY — PUSH PROACTIVELY
+═══════════════════════════════════════════════════════════════════════
+
+After EVERY phase completion (Phase 5-C, future phases, any significant
+feature):
+
+  1. git add .
+  2. git commit -m "feat: <phase code> — <short summary>"
+  3. git push origin native-pyqt6
+
+Push proactively at:
+  • End of each phase (5-C, 6-A, 6-B, etc.)
+  • After bug fixes
+  • After incident recoveries
+  • At natural stopping points
+
+DO NOT:
+  • git init                  (already done)
+  • git remote add            (already done)
+  • Touch the `main` branch
+  • Force push without explicit approval
+  • git reset --hard without explicit approval
+
+DO use:
+  • git status               (frequently — before any operation)
+  • git log --oneline -5     (verify history)
+  • git diff                 (before committing — show me what's staged)
+
+═══════════════════════════════════════════════════════════════════════
+COMMIT MESSAGE FORMAT
+═══════════════════════════════════════════════════════════════════════
+
+  feat: <phase code> — <short summary>
+
+  <detailed body if useful, including:>
+    • What was built
+    • Files changed
+    • Notable decisions
+    • Known issues / next steps
+
+Examples:
+  "feat: Phase 5-C — Audio Cue Editor completion (options bar +
+     metadata + Songs Library integration + DB save flow)"
+
+  "fix: Spot Programming dialog freeze (nested QScrollArea removal +
+     event.rect() clipping)"
+
+  "feat: Phase 6-A — Jingles Library main screen (Figma 44:2)"
 
 ═══════════════════════════════════════════════════════════════════════
 WORKING PROTOCOL (mirrors what previous session followed)
