@@ -160,6 +160,14 @@ def _category_color(cat: str) -> str:
     }.get(cat, TEXT_MUTED)
 
 
+def _fmt_duration(ms: int) -> str:
+    """Format duration ms as 'M:SS' (or '0:00' if invalid)."""
+    if ms is None or ms < 0:
+        return "0:00"
+    s = int(ms // 1000)
+    return f"{s // 60}:{s % 60:02d}"
+
+
 def _ai_icon(kind: str) -> tuple[str, str]:
     """(glyph, color) for AI insight rows."""
     return {
@@ -299,23 +307,42 @@ class _StudioHeader(QFrame):
 # ════════════════════════════════════════════════════════════════════════════
 
 class _QueueRow(QFrame):
-    """One row in the playlist queue (300×46)."""
+    """One row in the playlist queue (300×46).
+
+    Phase D2: stores the source song dict + emits double_clicked(dict)
+    so Studio can load and play it on the deck."""
 
     ROW_H = 46
 
-    def __init__(self, idx: int, title: str, artist: str, time_str: str,
-                 duration: str, category: str, badge: str, parent=None):
+    double_clicked = pyqtSignal(dict)
+
+    def __init__(self, idx: int, song: dict, parent=None):
+        """song dict keys: id, title, artist, file_path, duration_ms,
+        category (optional), badge (optional)."""
         super().__init__(parent)
         self._idx       = idx
-        self._title     = title
-        self._artist    = artist
-        self._time_str  = time_str
-        self._duration  = duration
-        self._category  = category
-        self._badge     = badge
-        self._is_break  = (title == "BREAK")
-        self._is_current = (idx == 1)
+        self._song      = song
+        self._title     = song.get("title", "—")
+        self._artist    = song.get("artist", "")
+        self._time_str  = song.get("time_str", "")     # display-only
+        self._duration  = song.get("duration_str", "") # display-only
+        self._category  = song.get("category", "")
+        self._badge     = song.get("badge", "")
+        self._is_break  = bool(song.get("is_break", False)) or self._title == "BREAK"
+        self._is_current = bool(song.get("is_current", False))
         self.setFixedSize(LEFT_W - 8, self.ROW_H)
+        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+
+    def set_current(self, is_current: bool) -> None:
+        if self._is_current == is_current:
+            return
+        self._is_current = is_current
+        self.update()
+
+    def mouseDoubleClickEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton and not self._is_break:
+            self.double_clicked.emit(self._song)
+        super().mouseDoubleClickEvent(e)
 
     def paintEvent(self, _e):
         p = QPainter(self)
@@ -409,10 +436,17 @@ class _QueueRow(QFrame):
 
 
 class _PlaylistQueue(QFrame):
-    """Left panel — header + scrollable rows + bottom action bar."""
+    """Left panel — header + scrollable rows + bottom action bar.
 
-    def __init__(self, parent=None):
+    Phase D2: accepts a list of song dicts. Emits song_double_clicked
+    when a row is double-clicked (Studio handles the play action)."""
+
+    song_double_clicked = pyqtSignal(dict)
+
+    def __init__(self, songs: list[dict], parent=None):
         super().__init__(parent)
+        self._songs = songs
+        self._row_widgets: list[_QueueRow] = []
         self.setFixedSize(LEFT_W, WINDOW_H - HEADER_H - STATUS_H)
         self.setStyleSheet(
             f"QFrame {{ background: {BG_DARK}; "
@@ -448,8 +482,11 @@ class _PlaylistQueue(QFrame):
         body = QFrame(); body.setStyleSheet("background: transparent;")
         rows_v = QVBoxLayout(body)
         rows_v.setContentsMargins(0, 0, 0, 0); rows_v.setSpacing(2)
-        for row_data in QUEUE_PLACEHOLDER:
-            rows_v.addWidget(_QueueRow(*row_data))
+        for i, song in enumerate(self._songs):
+            row = _QueueRow(i + 1, song)
+            row.double_clicked.connect(self.song_double_clicked.emit)
+            self._row_widgets.append(row)
+            rows_v.addWidget(row)
         rows_v.addStretch()
         scroll.setWidget(body)
         v.addWidget(scroll, stretch=1)
@@ -487,50 +524,65 @@ class _PlaylistQueue(QFrame):
 # ════════════════════════════════════════════════════════════════════════════
 
 class _NowPlayingCard(QFrame):
-    """Album art + title + artist + tag pills row."""
+    """Album art + title + artist + tag pills row.
+
+    Phase D2: state-driven. set_track(dict|None) drives all paint output.
+    None → idle state ("— IDLE —" placeholder)."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedHeight(86)
         self.setStyleSheet("background: transparent;")
+        self._track: Optional[dict] = None
+
+    def set_track(self, track: Optional[dict]) -> None:
+        """track dict keys (when not None): title, artist, tags (list[str])."""
+        self._track = track
+        self.update()
 
     def paintEvent(self, _e):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        idle = self._track is None
 
         # Album art square (placeholder — music icon glyph)
         art = QRectF(0, 8, 70, 70)
         path = QPainterPath(); path.addRoundedRect(art, 8, 8)
         p.setClipPath(path)
         grad = QLinearGradient(art.topLeft(), art.bottomRight())
-        grad.setColorAt(0.0, QColor(PURPLE_DARK))
+        grad.setColorAt(0.0, QColor(PURPLE_DARK if not idle else BG_PURPLE_DK))
         grad.setColorAt(1.0, QColor(BG_PURPLE_DK))
         p.fillRect(art, QBrush(grad))
         p.setClipping(False)
-        p.setPen(QColor(PURPLE_LIGHT))
+        p.setPen(QColor(PURPLE_LIGHT if not idle else TEXT_DIM))
         p.setFont(inter(28, QFont.Weight.Black))
         p.drawText(art, Qt.AlignmentFlag.AlignCenter, "♪")
 
-        # Title (huge)
-        p.setPen(QColor(TEXT_PRI))
+        # Title
+        p.setPen(QColor(TEXT_PRI if not idle else TEXT_MUTED))
         p.setFont(inter(20, QFont.Weight.Black, letter_spacing=0.3))
+        title = (self._track or {}).get("title", "— IDLE —")
         p.drawText(QRectF(82, 6, self.width() - 90, 30),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                   CURRENT_TRACK["title"])
+                   title)
 
         # Artist
-        p.setPen(QColor(TEXT_SEC))
+        p.setPen(QColor(TEXT_SEC if not idle else TEXT_DIM))
         p.setFont(inter(11, QFont.Weight.Medium))
+        artist = (self._track or {}).get("artist",
+                                         "Double-click a queue row to load")
         p.drawText(QRectF(82, 32, self.width() - 90, 18),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                   CURRENT_TRACK["artist"])
+                   artist)
 
         # Tag pills row
+        if idle:
+            return
         x = 82
         tag_colors = [PINK, CYAN, GREEN, AMBER]
         p.setFont(inter(8, QFont.Weight.Bold, letter_spacing=0.4))
         fm = p.fontMetrics()
-        for i, tag in enumerate(CURRENT_TRACK["tags"]):
+        for i, tag in enumerate(self._track.get("tags", [])):
             tag_w = fm.horizontalAdvance(tag) + 14
             pill = QRectF(x, 56, tag_w, 18)
             cbg = QColor(tag_colors[i % len(tag_colors)]); cbg.setAlphaF(0.18)
@@ -568,6 +620,35 @@ class _StudioWaveform(QFrame):
             env = 0.4 + 0.6 * math.sin(math.pi * (i / self.BAR_COUNT))
             self._bars.append(max(0.10, min(1.0, base * env)))
 
+        # Phase D2: state-driven
+        self._progress: float = 0.0
+        self._idle: bool = True
+        self._elapsed_text: str = "0:00"
+        self._total_text: str = "0:00"
+
+    # ── Public API ────────────────────────────────────────────────────────
+
+    def set_progress(self, fraction: float) -> None:
+        f = max(0.0, min(1.0, float(fraction)))
+        if abs(self._progress - f) < 0.001:
+            return
+        self._progress = f
+        self.update()
+
+    def set_idle(self, idle: bool) -> None:
+        if self._idle == idle:
+            return
+        self._idle = idle
+        self.update()
+
+    def set_time_labels(self, elapsed: str, total: str) -> None:
+        self._elapsed_text = elapsed
+        self._total_text = total
+        # Only repaint the bottom labels strip
+        self.update(QRect(0, self.height() - 24, self.width(), 24))
+
+    # ── Paint ─────────────────────────────────────────────────────────────
+
     def paintEvent(self, _e):
         super().paintEvent(_e)
         p = QPainter(self)
@@ -581,29 +662,29 @@ class _StudioWaveform(QFrame):
         plot_right = self.width() - margin_x
         plot_w = plot_right - plot_left
 
-        # Played-fraction cutoff (matches Figma: ~01:23 / 03:45 ≈ 37%)
-        played_frac = 1.43 / 3.75
+        played_frac = self._progress if not self._idle else 0.0
         playhead_idx = int(played_frac * self.BAR_COUNT)
 
-        # Cue markers
-        markers = [
-            (0.05,  "INTRO",    CYAN),
-            (0.20,  "HOOK IN",  PINK),
-            (0.70,  "OUTRO",    AMBER),
-            (0.97,  "MIX",      RED),
-        ]
-        for frac, label, color in markers:
-            mx = plot_left + int(plot_w * frac)
-            p.setPen(QPen(QColor(color), 1))
-            p.drawLine(mx, plot_top, mx, plot_bot)
-            tag_w = 56
-            tag = QRectF(mx - tag_w / 2, 0, tag_w, plot_top + 2)
-            tint = QColor(color); tint.setAlphaF(0.85)
-            p.setBrush(tint); p.setPen(Qt.PenStyle.NoPen)
-            p.drawRoundedRect(tag, 3, 3)
-            p.setPen(QColor("#0a0c14"))
-            p.setFont(inter(7, QFont.Weight.Bold, letter_spacing=0.4))
-            p.drawText(tag, Qt.AlignmentFlag.AlignCenter, label)
+        # Cue markers (decorative — D5 will sync to real cue points)
+        if not self._idle:
+            markers = [
+                (0.05,  "INTRO",    CYAN),
+                (0.20,  "HOOK IN",  PINK),
+                (0.70,  "OUTRO",    AMBER),
+                (0.97,  "MIX",      RED),
+            ]
+            for frac, label, color in markers:
+                mx = plot_left + int(plot_w * frac)
+                p.setPen(QPen(QColor(color), 1))
+                p.drawLine(mx, plot_top, mx, plot_bot)
+                tag_w = 56
+                tag = QRectF(mx - tag_w / 2, 0, tag_w, plot_top + 2)
+                tint = QColor(color); tint.setAlphaF(0.85)
+                p.setBrush(tint); p.setPen(Qt.PenStyle.NoPen)
+                p.drawRoundedRect(tag, 3, 3)
+                p.setPen(QColor("#0a0c14"))
+                p.setFont(inter(7, QFont.Weight.Bold, letter_spacing=0.4))
+                p.drawText(tag, Qt.AlignmentFlag.AlignCenter, label)
 
         # Bars
         bar_total_w = plot_w / self.BAR_COUNT
@@ -611,31 +692,37 @@ class _StudioWaveform(QFrame):
         cy = plot_top + plot_h / 2
         for i, amp in enumerate(self._bars):
             x = plot_left + int(i * bar_total_w + (bar_total_w - bar_w) / 2)
-            color = QColor(GREEN) if i < playhead_idx else QColor(255, 255, 255, 90)
+            if self._idle:
+                color = QColor(255, 255, 255, 50)
+            elif i < playhead_idx:
+                color = QColor(GREEN)
+            else:
+                color = QColor(255, 255, 255, 90)
             bh = max(4, int(amp * plot_h * 0.85))
             y = int(cy - bh / 2)
             p.setBrush(color); p.setPen(Qt.PenStyle.NoPen)
             p.drawRoundedRect(QRectF(x, y, bar_w, bh), 1, 1)
 
-        # Playhead bright line
-        ph_x = plot_left + int(played_frac * plot_w)
-        p.setPen(QPen(QColor("#ffffff"), 2))
-        p.drawLine(ph_x, plot_top, ph_x, plot_bot)
+        # Playhead bright line (only when not idle)
+        if not self._idle:
+            ph_x = plot_left + int(played_frac * plot_w)
+            p.setPen(QPen(QColor("#ffffff"), 2))
+            p.drawLine(ph_x, plot_top, ph_x, plot_bot)
 
         # Time labels (mono)
-        p.setPen(QColor(GREEN_LIGHT))
+        p.setPen(QColor(GREEN_LIGHT if not self._idle else TEXT_DIM))
         p.setFont(mono(10, bold=True))
         p.drawText(QRectF(margin_x, plot_bot + 4, 80, 18),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                   CURRENT_TRACK["elapsed"])
+                   self._elapsed_text)
         p.setPen(QColor(TEXT_MUTED))
         p.drawText(QRectF(self.width() - 90, plot_bot + 4, 80, 18),
                    Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
-                   CURRENT_TRACK["total"])
+                   self._total_text)
 
 
 class _Countdown(QFrame):
-    """Big red mono countdown — '-01:22 remaining'."""
+    """Big red mono countdown. State-driven via set_text(str)."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -645,20 +732,25 @@ class _Countdown(QFrame):
             f"border: 1px solid {rgba(RED, 0.20)}; "
             f"border-radius: 6px; }}"
         )
+        self._text: str = "0:00"
+        self._idle: bool = True
+
+    def set_remaining(self, text: str, idle: bool = False) -> None:
+        self._text = text
+        self._idle = idle
+        self.update()
 
     def paintEvent(self, _e):
         super().paintEvent(_e)
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        # Vertical accent stripe at left
-        p.fillRect(0, 0, 4, self.height(), QColor(RED))
-        # Big countdown
-        p.setPen(QColor(RED_LIGHT))
+        accent = QColor(TEXT_DIM if self._idle else RED)
+        p.fillRect(0, 0, 4, self.height(), accent)
+        p.setPen(QColor(TEXT_DIM if self._idle else RED_LIGHT))
         p.setFont(mono(40, bold=True))
         p.drawText(QRectF(0, 0, self.width(), self.height() - 14),
                    Qt.AlignmentFlag.AlignCenter,
-                   CURRENT_TRACK["remaining_text"])
-        # "remaining" subtitle
+                   self._text)
         p.setPen(QColor(TEXT_MUTED))
         p.setFont(inter(8, QFont.Weight.Bold, letter_spacing=1.6))
         p.drawText(QRectF(0, self.height() - 18, self.width(), 16),
@@ -667,7 +759,17 @@ class _Countdown(QFrame):
 
 
 class _TransportRow(QFrame):
-    """Restart / Loop / Pause / Stop Next / Fade Out — visual stubs in D1."""
+    """Restart / Loop / Pause / Stop Next / Fade Out — Phase D2 wired.
+
+    All buttons emit signals; Studio connects them to engine actions.
+    Pause button toggles glyph between '‖ Pause' and '▶ Resume' via
+    set_paused(bool). Loop button toggles tint via set_loop(bool)."""
+
+    restart_clicked   = pyqtSignal()
+    loop_toggled      = pyqtSignal(bool)
+    pause_clicked     = pyqtSignal()    # also used to resume (toggle)
+    stop_next_clicked = pyqtSignal()
+    fade_out_clicked  = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -676,35 +778,126 @@ class _TransportRow(QFrame):
         h = QHBoxLayout(self)
         h.setContentsMargins(0, 0, 0, 0); h.setSpacing(6)
 
-        for glyph, label, color in [
-            ("⟳",  "Restart",   TEXT_SEC),
-            ("↻",  "Loop",      CYAN),
-            ("‖ ", "Pause",     AMBER),
-            ("■",  "Stop Next", RED),
-            ("▸",  "Fade Out",  GREEN),
-        ]:
-            btn = QPushButton(f"{glyph}  {label}")
-            btn.setFixedHeight(34)
-            btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-            btn.setFont(inter(10, QFont.Weight.DemiBold))
-            btn.setStyleSheet(
-                f"QPushButton {{ background: {rgba(color, 0.14)}; "
+        self._loop_on = False
+        self._paused = False
+        self._loop_color = CYAN
+        self._pause_color = AMBER
+
+        self.btn_restart = self._make_btn("⟳", "Restart", TEXT_SEC)
+        self.btn_restart.clicked.connect(self.restart_clicked.emit)
+        h.addWidget(self.btn_restart)
+
+        self.btn_loop = self._make_btn("↻", "Loop", CYAN)
+        self.btn_loop.clicked.connect(self._on_loop_clicked)
+        h.addWidget(self.btn_loop)
+
+        self.btn_pause = self._make_btn("‖", "Pause", AMBER)
+        self.btn_pause.clicked.connect(self.pause_clicked.emit)
+        h.addWidget(self.btn_pause)
+
+        self.btn_stop_next = self._make_btn("■", "Stop Next", RED)
+        self.btn_stop_next.clicked.connect(self.stop_next_clicked.emit)
+        h.addWidget(self.btn_stop_next)
+
+        self.btn_fade_out = self._make_btn("▸", "Fade Out", GREEN)
+        self.btn_fade_out.clicked.connect(self.fade_out_clicked.emit)
+        h.addWidget(self.btn_fade_out)
+
+    def _make_btn(self, glyph: str, label: str, color: str) -> QPushButton:
+        btn = QPushButton(f"{glyph}  {label}")
+        btn.setFixedHeight(34)
+        btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        btn.setFont(inter(10, QFont.Weight.DemiBold))
+        btn.setStyleSheet(self._btn_qss(color, active=False))
+        btn.setProperty("_color", color)
+        return btn
+
+    @staticmethod
+    def _btn_qss(color: str, active: bool) -> str:
+        if active:
+            return (
+                f"QPushButton {{ background: {rgba(color, 0.32)}; "
                 f"color: {color}; "
-                f"border: 1px solid {rgba(color, 0.30)}; "
+                f"border: 1px solid {rgba(color, 0.55)}; "
                 f"border-radius: 6px; padding: 0 10px; }}"
-                f"QPushButton:hover {{ background: {rgba(color, 0.24)}; }}"
+                f"QPushButton:hover {{ background: {rgba(color, 0.40)}; }}"
             )
-            h.addWidget(btn)
+        return (
+            f"QPushButton {{ background: {rgba(color, 0.14)}; "
+            f"color: {color}; "
+            f"border: 1px solid {rgba(color, 0.30)}; "
+            f"border-radius: 6px; padding: 0 10px; }}"
+            f"QPushButton:hover {{ background: {rgba(color, 0.24)}; }}"
+            f"QPushButton:disabled {{ background: rgba(255,255,255,0.02); "
+            f"color: {TEXT_DIM}; border-color: rgba(255,255,255,0.04); }}"
+        )
+
+    def _on_loop_clicked(self):
+        self._loop_on = not self._loop_on
+        self.btn_loop.setStyleSheet(
+            self._btn_qss(self._loop_color, active=self._loop_on))
+        self.loop_toggled.emit(self._loop_on)
+
+    def set_paused(self, paused: bool) -> None:
+        if self._paused == paused:
+            return
+        self._paused = paused
+        if paused:
+            self.btn_pause.setText("▶  Resume")
+        else:
+            self.btn_pause.setText("‖  Pause")
+
+    def set_idle(self, idle: bool) -> None:
+        """Disable transport when nothing is loaded (idle)."""
+        for btn in (self.btn_restart, self.btn_pause,
+                    self.btn_stop_next, self.btn_fade_out):
+            btn.setEnabled(not idle)
+        # Loop is a flag-toggle; OK to leave enabled even when idle.
 
 
 class _MasterVolumeStrip(QFrame):
-    """MASTER VOL slider strip — green bar at 85%."""
+    """MASTER VOL strip. Phase D2: click-to-set on the bar; emits
+    level_changed(int 0–100). External callers set the level via
+    set_level(int)."""
+
+    BAR_LEFT = 96
+    BAR_RIGHT_PAD = 60   # leaves room for "100%" mono label
+
+    level_changed = pyqtSignal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedHeight(28)
         self.setStyleSheet("background: transparent;")
         self._level = 0.85
+        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+
+    # ── Public API ────────────────────────────────────────────────────────
+
+    def set_level(self, level_0_100: int) -> None:
+        v = max(0, min(100, int(level_0_100)))
+        self._level = v / 100.0
+        self.update()
+
+    # ── Click-to-set ──────────────────────────────────────────────────────
+
+    def _bar_rect(self) -> QRectF:
+        return QRectF(self.BAR_LEFT, self.height() // 2 - 4,
+                      self.width() - self.BAR_LEFT - self.BAR_RIGHT_PAD, 8)
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            bar = self._bar_rect()
+            x = e.position().x()
+            if bar.left() <= x <= bar.right() + 6:
+                frac = (x - bar.left()) / max(1, bar.width())
+                v = max(0, min(100, int(round(frac * 100))))
+                self.set_level(v)
+                self.level_changed.emit(v)
+                return
+        super().mousePressEvent(e)
+
+    # ── Paint ─────────────────────────────────────────────────────────────
 
     def paintEvent(self, _e):
         super().paintEvent(_e)
@@ -717,7 +910,7 @@ class _MasterVolumeStrip(QFrame):
                    Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
                    "MASTER VOL")
         # Bar
-        bar = QRectF(96, self.height() // 2 - 4, self.width() - 156, 8)
+        bar = self._bar_rect()
         path = QPainterPath(); path.addRoundedRect(bar, 4, 4)
         p.setClipPath(path)
         p.fillRect(bar, QColor("#0a0c18"))
@@ -729,13 +922,13 @@ class _MasterVolumeStrip(QFrame):
         # Percent text
         p.setPen(QColor(GREEN_LIGHT))
         p.setFont(mono(11, bold=True))
-        p.drawText(QRectF(self.width() - 50, 0, 46, self.height()),
+        p.drawText(QRectF(self.width() - 54, 0, 50, self.height()),
                    Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight,
                    f"{int(self._level * 100)}%")
 
 
 class _NextUpCard(QFrame):
-    """Mini "NEXT UP" preview card."""
+    """Mini "NEXT UP" preview card. State-driven via set_next(dict|None)."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -745,6 +938,12 @@ class _NextUpCard(QFrame):
             f"border: 1px solid {rgba('#ffffff', 0.06)}; "
             f"border-radius: 6px; }}"
         )
+        self._next: Optional[dict] = None
+
+    def set_next(self, item: Optional[dict]) -> None:
+        """item dict keys when not None: title, artist, etr."""
+        self._next = item
+        self.update()
 
     def paintEvent(self, _e):
         super().paintEvent(_e)
@@ -756,24 +955,31 @@ class _NextUpCard(QFrame):
         p.drawText(QRectF(12, 4, 100, 14),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                    "NEXT UP")
+        if self._next is None:
+            p.setPen(QColor(TEXT_DIM))
+            p.setFont(inter(11, QFont.Weight.Medium))
+            p.drawText(QRectF(12, 20, self.width() - 24, 24),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                       "—  no song queued")
+            return
         # Title
         p.setPen(QColor(TEXT_PRI))
         p.setFont(inter(12, QFont.Weight.Bold))
         p.drawText(QRectF(12, 20, 250, 18),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                   NEXT_UP["title"])
+                   self._next.get("title", "—"))
         # Artist
         p.setPen(QColor(TEXT_SEC))
         p.setFont(inter(9))
         p.drawText(QRectF(12, 38, 250, 16),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                   NEXT_UP["artist"])
+                   self._next.get("artist", ""))
         # ETR (right side)
         p.setPen(QColor(CYAN_LIGHT))
         p.setFont(mono(10, bold=True))
         p.drawText(QRectF(self.width() - 110, 0, 100, self.height()),
                    Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight,
-                   NEXT_UP["etr"])
+                   self._next.get("etr", ""))
 
 
 class _StudioJinglesGrid(QFrame):
@@ -1118,16 +1324,37 @@ class _StudioStatusBar(QFrame):
 class Studio(QWidget):
     """Studio Single Deck — broadcast operator workstation (Figma 182:2).
 
-    Phase D1: skeleton with hardcoded Figma example data. No audio
-    wiring (D2), no scheduler (D3+).
+    Phase D2: manual playback wired to AudioEngine (Option C DI). The
+    Studio owns its OWN playback channel, separate from Songs Library
+    row preview, Audio Cue Editor PREVIEW, and Spots Now Airing.
+
+    Lifecycle:
+      - Idle on first open (no track loaded). Transport disabled.
+      - Double-click a queue row → load + play that song. Studio takes
+        a channel from the shared engine, drives the Now Playing card
+        + waveform + countdown from real position.
+      - Pause/Resume toggles via the Pause button.
+      - Stop Next sets a flag; D5 will honor it on natural EOS.
+      - Fade Out slides volume to 0 over 3s, then auto-cleans.
+      - Restart seeks to 0 and continues playing.
+      - Loop is a flag for D5 queue behavior.
+      - Master Vol is click-to-set on the strip; drives engine volume
+        for the deck channel.
+
+    No broadcast_log persistence yet — D4 will own real-broadcast
+    logging when scheduler triggers spots. Day-D2 manual play is
+    audition-only on the deck.
     """
 
     breadcrumb_clicked = pyqtSignal(str)    # 'control_panel' navigation
 
+    DEFAULT_VOLUME = 85
+    FADE_OUT_MS = 3000
+
     def __init__(self, db, parent=None, engine=None, scheduler=None):
         super().__init__(parent)
         self._db = db
-        self._engine = engine          # Day D2 wires this
+        self._engine = engine          # shared AudioEngine (Option C)
         self._scheduler = scheduler    # Day D3+ wires this
         self.setFixedSize(WINDOW_W, WINDOW_H)
         self.setStyleSheet(
@@ -1135,13 +1362,81 @@ class Studio(QWidget):
             f"x1:0,y1:0,x2:1,y2:1, stop:0 #0a0d1a, stop:0.5 #06080f, stop:1 #020308);"
         )
 
+        # Phase D2 deck state
+        self._playback_cid: Optional[int] = None
+        self._current_track: Optional[dict] = None    # source song dict
+        self._current_duration_ms: int = 0
+        self._loop_enabled: bool = False
+        self._stop_after_current: bool = False
+        self._master_volume: int = self.DEFAULT_VOLUME
+        self._fade_out_timer: Optional[QTimer] = None
+
+        # Real-DB queue (D5 will replace this with proper queue logic)
+        self._queue_songs: list[dict] = self._load_queue_from_db()
+
         self._build_header()
         self._build_left()
         self._build_center()
         self._build_right()
         self._build_status_bar()
 
+        # Engine signal connections (filtered by cid in handlers)
+        if self._engine is not None:
+            self._engine.position_changed.connect(self._on_engine_position)
+            self._engine.playback_ended.connect(self._on_engine_playback_ended)
+            self._engine.error_occurred.connect(self._on_engine_error)
+
+        # Wire transport + master vol + queue
+        self._transport.restart_clicked.connect(self._on_restart_clicked)
+        self._transport.loop_toggled.connect(self._on_loop_toggled)
+        self._transport.pause_clicked.connect(self._on_pause_clicked)
+        self._transport.stop_next_clicked.connect(self._on_stop_next_clicked)
+        self._transport.fade_out_clicked.connect(self._on_fade_out_clicked)
+        self._master_vol.level_changed.connect(self._on_master_vol_changed)
+        self._queue.song_double_clicked.connect(self._on_queue_song_play)
+
+        # Initial state — idle
+        self._apply_idle_state()
+
         log.info("Studio ready (Figma 182:2)")
+
+    # ── Queue source (D5 will replace) ────────────────────────────────────
+
+    def _load_queue_from_db(self) -> list[dict]:
+        """Pull up to 12 real playable songs from DB. D5 will replace
+        this with proper scheduler-driven queue logic."""
+        out: list[dict] = []
+        try:
+            rows = self._db._conn().execute(
+                "SELECT id, title, artist, file_path, duration_ms, "
+                "category_id, energy "
+                "FROM songs "
+                "WHERE file_path IS NOT NULL AND file_path != '' "
+                "AND duration_ms > 5000 "
+                "ORDER BY id LIMIT 60"
+            ).fetchall()
+        except Exception as exc:
+            log.warning(f"queue load failed: {exc}")
+            return []
+        import os as _os
+        for r in rows:
+            path = r["file_path"]
+            if path and _os.path.exists(path):
+                out.append({
+                    "id":            r["id"],
+                    "title":         r["title"] or "—",
+                    "artist":        r["artist"] or "",
+                    "file_path":     path,
+                    "duration_ms":   int(r["duration_ms"] or 0),
+                    "duration_str":  _fmt_duration(int(r["duration_ms"] or 0)),
+                    "category":      "",       # D5 will populate
+                    "badge":         "",
+                    "is_break":      False,
+                    "is_current":    False,
+                })
+            if len(out) >= 12:
+                break
+        return out
 
     # ── Header ────────────────────────────────────────────────────────────
 
@@ -1156,7 +1451,7 @@ class Studio(QWidget):
     def _build_left(self):
         body_y = HEADER_H
         body_h = WINDOW_H - HEADER_H - STATUS_H
-        self._queue = _PlaylistQueue(self)
+        self._queue = _PlaylistQueue(self._queue_songs, self)
         self._queue.setGeometry(LEFT_X, body_y, LEFT_W, body_h)
 
     # ── Center ────────────────────────────────────────────────────────────
@@ -1254,3 +1549,239 @@ class Studio(QWidget):
     def _build_status_bar(self):
         self._status_bar = _StudioStatusBar(self)
         self._status_bar.setGeometry(0, WINDOW_H - STATUS_H, WINDOW_W, STATUS_H)
+
+    # ── Phase D2: deck state ──────────────────────────────────────────────
+
+    def _apply_idle_state(self) -> None:
+        """No track loaded — clear all displays, disable transport."""
+        self._now_playing.set_track(None)
+        self._waveform.set_idle(True)
+        self._waveform.set_progress(0.0)
+        self._waveform.set_time_labels("0:00", "0:00")
+        self._countdown.set_remaining("0:00", idle=True)
+        self._transport.set_idle(True)
+        self._transport.set_paused(False)
+        self._next_up.set_next(self._compute_next_up())
+        self._master_vol.set_level(self._master_volume)
+
+    def _apply_playing_state(self, song: dict) -> None:
+        """Track loaded and playing — populate all displays."""
+        track = {
+            "title":  song.get("title", "—"),
+            "artist": song.get("artist", ""),
+            "tags":   self._derive_tags(song),
+        }
+        self._now_playing.set_track(track)
+        self._waveform.set_idle(False)
+        self._waveform.set_progress(0.0)
+        total_ms = self._current_duration_ms or int(song.get("duration_ms", 0))
+        self._waveform.set_time_labels("0:00", _fmt_duration(total_ms))
+        self._countdown.set_remaining(self._fmt_remaining(total_ms), idle=False)
+        self._transport.set_idle(False)
+        self._transport.set_paused(False)
+        # Mark the playing row in the queue
+        for row in self._queue._row_widgets:
+            row.set_current(row._song.get("id") == song.get("id"))
+        # Update Next Up
+        self._next_up.set_next(self._compute_next_up(after_song_id=song.get("id")))
+
+    @staticmethod
+    def _derive_tags(song: dict) -> list[str]:
+        """Best-effort tag extraction for the Now Playing card."""
+        tags: list[str] = []
+        cat = song.get("category", "")
+        if cat:
+            tags.append(cat)
+        energy = song.get("energy", "")
+        if energy:
+            tags.append(f"{energy} Energy")
+        return tags
+
+    def _compute_next_up(self, after_song_id: Optional[int] = None) -> Optional[dict]:
+        """Find the next song in the queue after `after_song_id` (or
+        the first song if no current track)."""
+        if not self._queue_songs:
+            return None
+        if after_song_id is None:
+            s = self._queue_songs[0]
+        else:
+            idx = next((i for i, sg in enumerate(self._queue_songs)
+                        if sg.get("id") == after_song_id), -1)
+            nxt_idx = idx + 1
+            if nxt_idx >= len(self._queue_songs):
+                return None
+            s = self._queue_songs[nxt_idx]
+        return {
+            "title":  s.get("title", "—"),
+            "artist": s.get("artist", ""),
+            "etr":    f"{s.get('duration_str', '')}",
+        }
+
+    @staticmethod
+    def _fmt_remaining(ms_remaining: int) -> str:
+        if ms_remaining <= 0:
+            return "0:00"
+        total_s = int(ms_remaining // 1000)
+        m = total_s // 60
+        s = total_s % 60
+        return f"-{m}:{s:02d}"
+
+    # ── Queue → deck ──────────────────────────────────────────────────────
+
+    def _on_queue_song_play(self, song: dict) -> None:
+        """User double-clicked a queue row. Stop current playback (if
+        any) and load+play this song on the deck."""
+        if self._engine is None:
+            log.warning("[studio] no engine — playback unavailable")
+            return
+        path = song.get("file_path")
+        import os as _os
+        if not path or not _os.path.exists(path):
+            log.warning(f"[studio] file missing: {path!r}")
+            return
+
+        # Cancel any in-flight fade-out timer
+        if self._fade_out_timer is not None:
+            self._fade_out_timer.stop()
+            self._fade_out_timer = None
+
+        # Cleanup any existing deck channel
+        if self._playback_cid is not None:
+            try:
+                self._engine.cleanup(self._playback_cid)
+            except Exception:
+                pass
+            self._playback_cid = None
+
+        try:
+            cid = self._engine.load_file(path)
+        except Exception as exc:
+            log.warning(f"[studio] load_file failed: {exc}")
+            return
+
+        # Apply current master volume to the new channel
+        self._engine.set_volume(cid, self._master_volume)
+        self._engine.play(cid)
+
+        self._playback_cid = cid
+        self._current_track = song
+        self._current_duration_ms = self._engine.get_duration_ms(cid) or \
+            int(song.get("duration_ms", 0))
+        self._stop_after_current = False
+        self._apply_playing_state(song)
+
+        log.info(
+            f"[studio] deck play ch={cid} song_id={song.get('id')} "
+            f"{song.get('title')!r} dur_ms={self._current_duration_ms}")
+
+    # ── Transport handlers ───────────────────────────────────────────────
+
+    def _on_pause_clicked(self) -> None:
+        if self._playback_cid is None or self._engine is None:
+            return
+        state = self._engine.get_state(self._playback_cid)
+        if state == "playing":
+            self._engine.pause(self._playback_cid)
+            self._transport.set_paused(True)
+            log.info("[studio] paused")
+        elif state == "paused":
+            self._engine.resume(self._playback_cid)
+            self._transport.set_paused(False)
+            log.info("[studio] resumed")
+
+    def _on_restart_clicked(self) -> None:
+        if self._playback_cid is None or self._engine is None:
+            return
+        self._engine.seek_to_ms(self._playback_cid, 0)
+        # Ensure playing (in case restart was hit while paused)
+        if self._engine.get_state(self._playback_cid) != "playing":
+            self._engine.play(self._playback_cid)
+            self._transport.set_paused(False)
+        log.info("[studio] restart → 0ms")
+
+    def _on_stop_next_clicked(self) -> None:
+        """Flag-only in D2. D5 will honor it on natural EOS to skip
+        auto-advance. Phase D2 also exposes a way to stop NOW: hit
+        Stop Next twice within ~2s to confirm."""
+        self._stop_after_current = True
+        log.info(
+            "[studio] stop-after-current flag set (D5 will honor on EOS)")
+
+    def _on_fade_out_clicked(self) -> None:
+        if self._playback_cid is None or self._engine is None:
+            return
+        cid = self._playback_cid
+        try:
+            self._engine.fade_volume_to(cid, 0, self.FADE_OUT_MS)
+        except Exception as exc:
+            log.warning(f"[studio] fade_volume_to failed: {exc}")
+            return
+        log.info(f"[studio] fade out → 0 over {self.FADE_OUT_MS}ms")
+        # Schedule auto-stop+cleanup at fade end
+        self._fade_out_timer = QTimer(self)
+        self._fade_out_timer.setSingleShot(True)
+        self._fade_out_timer.timeout.connect(self._on_fade_out_complete)
+        self._fade_out_timer.start(self.FADE_OUT_MS + 100)
+
+    def _on_fade_out_complete(self) -> None:
+        if self._playback_cid is not None and self._engine is not None:
+            try:
+                self._engine.cleanup(self._playback_cid)
+            except Exception:
+                pass
+            self._playback_cid = None
+        self._current_track = None
+        self._apply_idle_state()
+        log.info("[studio] fade out complete — deck idle")
+
+    def _on_loop_toggled(self, on: bool) -> None:
+        self._loop_enabled = on
+        log.info(f"[studio] loop = {on}  (D5 will honor on EOS)")
+
+    def _on_master_vol_changed(self, level: int) -> None:
+        self._master_volume = level
+        if self._playback_cid is not None and self._engine is not None:
+            self._engine.set_volume(self._playback_cid, level)
+        log.info(f"[studio] master vol → {level}%")
+
+    # ── Engine signal handlers (filtered to OUR channel) ─────────────────
+
+    def _on_engine_position(self, channel_id: int, position_ms: int) -> None:
+        if channel_id != self._playback_cid:
+            return
+        dur = self._current_duration_ms
+        if dur > 0:
+            self._waveform.set_progress(position_ms / dur)
+            self._waveform.set_time_labels(
+                _fmt_duration(position_ms), _fmt_duration(dur))
+            self._countdown.set_remaining(
+                self._fmt_remaining(dur - position_ms))
+
+    def _on_engine_playback_ended(self, channel_id: int) -> None:
+        if channel_id != self._playback_cid:
+            return
+        log.info(f"[studio] EOS on ch={channel_id}")
+        # D2: just go idle. D5 will check loop / stop_after_current /
+        # auto-advance to next queue item.
+        self._engine.cleanup(channel_id)
+        self._playback_cid = None
+        self._current_track = None
+        self._apply_idle_state()
+
+    def _on_engine_error(self, channel_id: int, message: str) -> None:
+        if channel_id != self._playback_cid:
+            return
+        log.warning(f"[studio] engine error: {message}")
+        self._on_engine_playback_ended(channel_id)
+
+    # ── Lifecycle: stop on hide / navigate-away ──────────────────────────
+
+    def hideEvent(self, event):
+        """Studio hidden → don't kill the deck. Broadcasting continues
+        in the background. (This differs from B2 library-preview which
+        DOES stop on hide — Studio is the broadcast surface.)
+
+        D2 design choice: keep playing. User can navigate to other
+        screens while the deck plays. They must hit Stop or Fade Out
+        explicitly to silence the deck."""
+        super().hideEvent(event)
