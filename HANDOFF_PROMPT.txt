@@ -1,5 +1,5 @@
 ═══════════════════════════════════════════════════════════════════════
-RadioAI Studio Pro v2.0 — SESSION HANDOFF
+RadioAI Studio Pro v2.0 — SESSION HANDOFF (Phase F kickoff)
 ═══════════════════════════════════════════════════════════════════════
 
 Hi Claude. Resuming work on a previous session that hit token limit.
@@ -15,85 +15,105 @@ mental model.
 
 STEP 2 — Once read, here's the immediate situation:
 
-  • Active task: Phase 5 — Audio Cue Editor dialog (Figma 30:2)
-  • Phase 5-A (skeleton + waveform + stationary markers): APPROVED
-  • Phase 5-B (drag interaction + cue cards + fade sliders + validation):
-    CODE COMMITTED but USER HAS NOT YET MANUALLY VERIFIED
-  • Phase 5-C (options bar + metadata + AI banner + real save): NOT STARTED
-
-The Phase 5-B code IS in ui/dialogs/audio_cue_editor_dialog.py — drag
-handlers, _CueCard, _VerticalFadeSlider, _validate, the works. A
-screenshot is at screenshots/audio_cue_editor_markers.png. The previous
-session paused for handoff before user could test it manually in the app.
+  • Active task: Phase F kickoff — Scheduling UI section (8 screens, ~7-8 days)
+  • Decided build order: F2 Clock Editor (Figma 165:2) FIRST, then
+    F1 Auto Schedule (161:2), then F3 Hub (50:2), then F4-F8.
+  • Pre-planning report was DELIVERED (it's documented in
+    CURRENT_TASK_STATE.md §"Pre-planning report"), but Q1-Q8 questions
+    are NOT YET ANSWERED. I (the user) need to answer them before you
+    can start F2.1 build.
+  • Studio + scheduler are PRODUCTION-READY ("lagao chod do" capable).
+  • Test count: 74/74 passing under pytest.
+  • Phase D close-out commit + marker pushed to native-pyqt6.
 
 STEP 3 — Your first action when I confirm I'm ready:
 
-  Run:  py main.py --debug   (in background, run_in_background=True)
-  Then I'll drive the test myself. When I report back:
-    APPROVE → proceed to Phase 5-C
-    ITERATE → fix what I describe, re-screenshot, re-test
+  Re-pose the 8 pending questions from CURRENT_TASK_STATE.md
+  §"Pending decisions (Q1-Q8)". Wait for my answers + explicit "GO F2.1"
+  before building anything.
 
-STEP 4 — While I test, the 12-point manual interaction checklist is in
-CURRENT_TASK_STATE.md §"Phase 5-B — manual interaction checklist". Refer
-to it if I describe a specific test failure.
+  Don't auto-start coding. Don't auto-fetch Figma again — the design
+  references are already inventoried in CURRENT_TASK_STATE.md. Just
+  re-pose the questions concisely so I can answer them.
+
+STEP 4 — While I'm answering, you can optionally:
+
+  • Read ui/studio.py to refresh how the deck integration looks
+    (Phase D's most recent screen, similar layout complexity to F2)
+  • Read ui/songs_library.py for the row-table pattern (F2's slot
+    list will use the same paint pattern)
+  • Read core/database.py for clock-related queries (search "clocks"
+    to find existing read paths)
 
 ═══════════════════════════════════════════════════════════════════════
 HARD CONSTRAINTS — DO NOT VIOLATE
 ═══════════════════════════════════════════════════════════════════════
 
-A) E:\RadioAI_v2\ IS now a git repo locally, initialized 2026-05-04
-   and connected to github.com/kundansharma903-code/radioai-studio-pro
-   on branch native-pyqt6. See GITHUB CONNECTION + COMMIT POLICY
-   sections below for the rules.
+A) E:\RadioAI_v2\ IS a git repo, connected to
+   github.com/kundansharma903-code/radioai-studio-pro on branch
+   native-pyqt6. Push proactively after every phase day. See COMMIT
+   POLICY below.
 
 B) Destructive ops protocol (per CLAUDE.md): never DELETE/UPDATE with
    LIKE patterns on shared tables. Always SELECT-COUNT first, show me,
-   wait for explicit confirmation. We had a real incident where a
-   malformed LIKE pattern wiped 15 campaigns.
+   wait for explicit confirmation. We had a real incident (DELETE-
+   with-LIKE wiped 15 campaigns).
 
-C) Performance invariants for the cue editor's custom-paint widget are
-   documented at the top of ui/dialogs/audio_cue_editor_dialog.py.
-   Don't violate them — the Spot Programming dialog froze for the same
-   reasons before I fixed it.
+C) Performance invariants for custom-paint widgets are documented at
+   the top of ui/dialogs/spot_programming_dialog.py,
+   ui/dialogs/audio_cue_editor_dialog.py, and ui/studio.py. F2's
+   slot list (clock_slots table view) MUST honor them — event.rect()
+   clipping, bounded mouseMoveEvent, no nested QScrollArea, no DB
+   calls in paintEvent.
 
-D) Real audio playback (PREVIEW / Play / Stop in the cue editor) is
-   STUBBED in Phase 5 by my explicit decision. Don't "helpfully" wire
-   pybass3 there — that's a separate follow-up phase.
+D) Phase B audio surfaces (Songs Library row preview / Audio Cue
+   Editor PREVIEW / Spots Now Airing / Instant Jingles pads) MUST
+   keep working through Phase F. They share the AudioEngine
+   singleton — F2 is data-only and shouldn't touch the engine.
 
-E) Use canonical _ms cue columns only when writing (start_point_ms,
-   intro_point_ms, hook_in_ms, hook_out_ms, outro_point_ms, mix_point_ms).
-   Legacy duplicates (intro_time, mix_point, etc.) stay untouched.
+E) Phase D's Studio + scheduler MUST keep working. F2 doesn't change
+   scheduler behavior; it just edits the data the scheduler doesn't
+   yet read (clock_slots — Phase E will wire those into the
+   scheduler).
+
+F) `core/scheduler.py` legacy file is SHADOWED DEAD CODE since Phase
+   D3. Recommend deleting in a prep commit before F2.1 build. ASK
+   before deleting.
+
+G) `core/audio_engine.py` legacy single-deck class is unused but the
+   module owns bass_init/bass_free. DON'T TOUCH unless explicitly
+   asked.
+
+H) Manual deck plays from Studio do NOT write to broadcast_log
+   (audition only). Only scheduler-triggered spots write. This is
+   the Q5/D4 contract — don't change it without explicit approval.
+
+I) Database singleton — never instantiate Database() multiple times.
+   Always Database() returns the same singleton. Connections are
+   thread-local; the scheduler thread gets its own.
 
 ═══════════════════════════════════════════════════════════════════════
-GITHUB CONNECTION — FIRST ACTION
+GITHUB CONNECTION + COMMIT POLICY
 ═══════════════════════════════════════════════════════════════════════
 
-The local repo at E:\RadioAI_v2\ is already initialized as a git repo
-connected to:
-  https://github.com/kundansharma903-code/radioai-studio-pro
+  • Active branch:   native-pyqt6 (canonical — DO NOT touch main)
+  • Latest commit:   docs: Phase D complete — Studio + scheduler +
+                     continuous play
+  • Repo URL:        https://github.com/kundansharma903-code/radioai-studio-pro
 
-  • Active branch:   native-pyqt6
-  • Latest commit:   feat: Phase 5-A + 5-B Audio Cue Editor + handoff
-                     package (root commit, hash 84df90e)
-  • Branch policy:   native-pyqt6 is the canonical branch from now on.
-                     DO NOT touch `main`.
+After EVERY phase day (F2.1, F2.2, F2.3, F2.4, F1.1, ...) commit + push:
 
-═══════════════════════════════════════════════════════════════════════
-COMMIT POLICY — PUSH PROACTIVELY
-═══════════════════════════════════════════════════════════════════════
+  1. git status (verify what's staged)
+  2. git add <specific files>     # not always `git add .` — see below
+  3. git commit -m "feat: Phase F<X>.<Y> — <short summary>"
+  4. git push origin native-pyqt6
 
-After EVERY phase completion (Phase 5-C, future phases, any significant
-feature):
+`git add .` is NOW SAFE since `.claude/worktrees/` was added to
+.gitignore in commit `be9e15b`. Use it freely; it won't include the
+worktree storage.
 
-  1. git add .
-  2. git commit -m "feat: <phase code> — <short summary>"
-  3. git push origin native-pyqt6
-
-Push proactively at:
-  • End of each phase (5-C, 6-A, 6-B, etc.)
-  • After bug fixes
-  • After incident recoveries
-  • At natural stopping points
+ALSO add `Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>`
+trailer to every commit message.
 
 DO NOT:
   • git init                  (already done)
@@ -101,6 +121,7 @@ DO NOT:
   • Touch the `main` branch
   • Force push without explicit approval
   • git reset --hard without explicit approval
+  • Skip hooks (--no-verify) unless I explicitly ask
 
 DO use:
   • git status               (frequently — before any operation)
@@ -111,43 +132,76 @@ DO use:
 COMMIT MESSAGE FORMAT
 ═══════════════════════════════════════════════════════════════════════
 
-  feat: <phase code> — <short summary>
+  feat: Phase F2.<day> — <short summary>
 
-  <detailed body if useful, including:>
-    • What was built
-    • Files changed
-    • Notable decisions
-    • Known issues / next steps
+  <detailed body>:
+    - What was built
+    - Files changed
+    - Test count delta
+    - Notable decisions
+    - Known issues / next steps
 
-Examples:
-  "feat: Phase 5-C — Audio Cue Editor completion (options bar +
-     metadata + Songs Library integration + DB save flow)"
+  Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+
+Examples that have been used in this project:
+
+  "feat: Phase D5 — song queue + auto-advance + loop / stop-next /
+     spot-resume"
+
+  "feat: Phase F2.1 — Clock Editor UI skeleton (Figma 165:2)"
 
   "fix: Spot Programming dialog freeze (nested QScrollArea removal +
      event.rect() clipping)"
 
-  "feat: Phase 6-A — Jingles Library main screen (Figma 44:2)"
-
 ═══════════════════════════════════════════════════════════════════════
-WORKING PROTOCOL (mirrors what previous session followed)
+WORKING PROTOCOL
 ═══════════════════════════════════════════════════════════════════════
 
-  1. Phase the build with screenshot checkpoints — don't burn through
-     scope without sync points.
+  1. Phase the build with screenshot checkpoints — small day → screenshot
+     → my approval → next day. Don't burn through scope without sync
+     points.
+
   2. Stop and ask before destructive actions (delete, schema changes,
-     git operations).
+     git operations beyond the standard add/commit/push flow).
+
   3. Push back when my technical call is wrong — silence on a bad call
-     is worse than a polite challenge.
-  4. Trust schema reality over my spec — the previous session caught
-     several mismatches (table names, column names) by reading
-     PRAGMA table_info() before coding.
-  5. Honest stubs — if PREVIEW is a stub, log "preview at <ms>
-     (audio wiring deferred)" and visually flash green; don't pretend
-     it's real.
-  6. Acknowledge incidents honestly. The two we have so far:
-     • DELETE-with-LIKE nuke (recovered via recovery_campaigns.sql)
-     • Spot Programming dialog freeze (resolved with Fix B/A/C)
-     Both have guardrails in CLAUDE.md and PROJECT_CONTEXT.md.
+     is worse than a polite challenge. Past sessions caught data-model
+     issues by reality-checking schema (PRAGMA table_info()) before
+     coding.
+
+  4. Trust schema reality over my spec — if a column name in my message
+     differs from what PRAGMA shows, schema wins.
+
+  5. Honest stubs — flag known TBDs in handoff. Validate / AI Optimise
+     buttons in F2 are stubs by design (Phase E).
+
+  6. Acknowledge incidents honestly. Three incidents on record:
+     • DELETE-with-LIKE wiped 15 campaigns (recovery script ran)
+     • Spot Programming dialog freeze (nested QScrollArea)
+     • Phase D4 Studio crash (`import os` missing + sqlite3.Row.get
+       — both fixed in same D4 commit)
+
+  7. Day-by-day cadence: pose Q1-QN questions before each day; wait
+     for answers + GO; build; commit; push; propose next day's Q&A.
+     This is the proven pattern from Phase A + B + D.
+
+═══════════════════════════════════════════════════════════════════════
+TEST + LIFECYCLE QUICK REFERENCE
+═══════════════════════════════════════════════════════════════════════
+
+Tests under pytest:
+
+  pytest                  # 74 total, ~13s including soak
+  pytest -m "not slow"    # 73 tests, ~12s — dev default
+  pytest -m slow          # 1 soak test, 100-cycle stress
+
+Studio + scheduler lifecycle:
+  • main.py owns bass_init / bass_free
+  • MainWindow.__init__ creates AudioEngine + SchedulerEngine
+  • MainWindow.closeEvent + aboutToQuit BOTH call _cleanup_engine
+    (idempotent belt-and-suspenders)
+  • _cleanup_engine: stop scheduler FIRST, then engine.cleanup_all()
+  • Scheduler is NOT auto-started in main.py — explicit start() needed
 
 ═══════════════════════════════════════════════════════════════════════
 WHAT I'LL SAY NEXT
@@ -155,11 +209,19 @@ WHAT I'LL SAY NEXT
 
 After you confirm you've read both context files, I'll either:
 
-  • "launch main.py" → you launch in background, I drive Phase 5-B test
-  • "show me what 5-B added" → you summarize the diff in the dialog
-    file (drag handlers, _CueCard, _VerticalFadeSlider, _validate)
-  • Direct change request — fixes/iterations on Phase 5-B
+  • Answer your re-posed Q1-Q8 + give you "GO F2.1" → you build the
+    Clock Editor skeleton, screenshot checkpoint, commit, push.
 
-Don't start coding new features without confirming the plan with me
-first. The cadence is: small phase → screenshot → my approval → next.
+  • "show me what's pending" → you summarize the 8 questions concisely
+    and any open follow-ups.
+
+  • "delete core/scheduler.py first" → you do the prep cleanup commit
+    (one-line removal + commit message), push, then we resume Q&A.
+
+  • Direct change request — possibly an iteration based on something
+    I noticed since the last session.
+
+DON'T start coding new features without my explicit GO. The cadence is:
+small phase → screenshot → my approval → next.
+
 ═══════════════════════════════════════════════════════════════════════
