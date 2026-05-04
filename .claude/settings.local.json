@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(py -c \"from core.constants import *; from core.logger import setup_logging; from core.database import Database; from core.settings import Settings; print\\('imports OK'\\)\")",
+      "Bash(timeout 8 py main.py)",
+      "mcp__5cba59a6-7186-467e-9585-0c4139665053__get_design_context",
+      "Bash(py -m pip index versions pybass4)",
+      "Bash(py -m pip index versions pybass)",
+      "Bash(py -m pip index versions bass)",
+      "Bash(py -m pip index versions bass-module)",
+      "Bash(py -m pip index versions pybass3)",
+      "Bash(py -m pip install pybass3 --quiet)",
+      "Bash(py -c \"import pybass3; print\\(dir\\(pybass3\\)\\)\")",
+      "Bash(curl -sL --max-time 20 -o /e/RadioAI_v2/figma_192-2.png \"https://www.figma.com/api/mcp/asset/4b1e21c9-207c-4fa4-bbaf-3ab247a08c8d\")",
+      "Bash(curl -sL --max-time 20 -o /e/RadioAI_v2/figma_212-2.png \"https://www.figma.com/api/mcp/asset/532daa01-4fff-40d7-b756-c5be6ed34023\")",
+      "mcp__5cba59a6-7186-467e-9585-0c4139665053__get_screenshot",
+      "Bash(curl -sL --max-time 15 -o /e/RadioAI_v2/figma_28-2.png \"https://www.figma.com/api/mcp/asset/2f6873a0-26c9-485c-8bad-dbe0c9cbc8d4\")",
+      "Bash(curl -sL --max-time 15 -o /e/RadioAI_v2/figma_218-2.png \"https://www.figma.com/api/mcp/asset/b71c9ac5-a888-407c-9942-7f3c572b758f\")",
+      "Bash(curl -sL --max-time 15 -o /e/RadioAI_v2/figma_218-46.png \"https://www.figma.com/api/mcp/asset/ef30f99e-77c4-421e-89d9-761eed08e621\")",
+      "Bash(file /e/RadioAI_v2/figma_218-*.png)"
+    ]
+  }
+}

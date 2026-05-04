@@ -1,0 +1,114 @@
+═══════════════════════════════════════════════════════════════════════
+RadioAI Studio Pro v2.0 — SESSION HANDOFF
+═══════════════════════════════════════════════════════════════════════
+
+Hi Claude. Resuming work on a previous session that hit token limit.
+Project root: E:\RadioAI_v2\
+
+STEP 1 — Read these two files in order, before anything else:
+
+  1. E:\RadioAI_v2\PROJECT_CONTEXT.md       (macro — what is this project)
+  2. E:\RadioAI_v2\CURRENT_TASK_STATE.md    (micro — exactly where we are)
+
+Don't summarize them back to me. Just read them so you have the full
+mental model.
+
+STEP 2 — Once read, here's the immediate situation:
+
+  • Active task: Phase 5 — Audio Cue Editor dialog (Figma 30:2)
+  • Phase 5-A (skeleton + waveform + stationary markers): APPROVED
+  • Phase 5-B (drag interaction + cue cards + fade sliders + validation):
+    CODE COMMITTED but USER HAS NOT YET MANUALLY VERIFIED
+  • Phase 5-C (options bar + metadata + AI banner + real save): NOT STARTED
+
+The Phase 5-B code IS in ui/dialogs/audio_cue_editor_dialog.py — drag
+handlers, _CueCard, _VerticalFadeSlider, _validate, the works. A
+screenshot is at screenshots/audio_cue_editor_markers.png. The previous
+session paused for handoff before user could test it manually in the app.
+
+STEP 3 — Your first action when I confirm I'm ready:
+
+  Run:  py main.py --debug   (in background, run_in_background=True)
+  Then I'll drive the test myself. When I report back:
+    APPROVE → proceed to Phase 5-C
+    ITERATE → fix what I describe, re-screenshot, re-test
+
+STEP 4 — While I test, the 12-point manual interaction checklist is in
+CURRENT_TASK_STATE.md §"Phase 5-B — manual interaction checklist". Refer
+to it if I describe a specific test failure.
+
+═══════════════════════════════════════════════════════════════════════
+HARD CONSTRAINTS — DO NOT VIOLATE
+═══════════════════════════════════════════════════════════════════════
+
+A) E:\RadioAI_v2\ is NOT a git repo locally — `git status` returns
+   "fatal: not a git repository". I commit from elsewhere. Do not
+   `git init` here without explicit approval.
+
+B) Destructive ops protocol (per CLAUDE.md): never DELETE/UPDATE with
+   LIKE patterns on shared tables. Always SELECT-COUNT first, show me,
+   wait for explicit confirmation. We had a real incident where a
+   malformed LIKE pattern wiped 15 campaigns.
+
+C) Performance invariants for the cue editor's custom-paint widget are
+   documented at the top of ui/dialogs/audio_cue_editor_dialog.py.
+   Don't violate them — the Spot Programming dialog froze for the same
+   reasons before I fixed it.
+
+D) Real audio playback (PREVIEW / Play / Stop in the cue editor) is
+   STUBBED in Phase 5 by my explicit decision. Don't "helpfully" wire
+   pybass3 there — that's a separate follow-up phase.
+
+E) Use canonical _ms cue columns only when writing (start_point_ms,
+   intro_point_ms, hook_in_ms, hook_out_ms, outro_point_ms, mix_point_ms).
+   Legacy duplicates (intro_time, mix_point, etc.) stay untouched.
+
+═══════════════════════════════════════════════════════════════════════
+GITHUB CONTEXT
+═══════════════════════════════════════════════════════════════════════
+
+  • Repo:    github.com/kundansharma903-code/radioai-studio-pro
+  • Branch:  native-pyqt6
+  • Local E:\RadioAI_v2\ is NOT git-initialized — I commit via a
+    separate workflow on a different machine.
+  • DO NOT `git init` locally without explicit approval (would diverge
+    from canonical user-side repo).
+  • DO NOT push to GitHub from this session.
+  • For history reference, you may `git clone` to a temp path for
+    READ-ONLY inspection if absolutely needed.
+
+═══════════════════════════════════════════════════════════════════════
+WORKING PROTOCOL (mirrors what previous session followed)
+═══════════════════════════════════════════════════════════════════════
+
+  1. Phase the build with screenshot checkpoints — don't burn through
+     scope without sync points.
+  2. Stop and ask before destructive actions (delete, schema changes,
+     git operations).
+  3. Push back when my technical call is wrong — silence on a bad call
+     is worse than a polite challenge.
+  4. Trust schema reality over my spec — the previous session caught
+     several mismatches (table names, column names) by reading
+     PRAGMA table_info() before coding.
+  5. Honest stubs — if PREVIEW is a stub, log "preview at <ms>
+     (audio wiring deferred)" and visually flash green; don't pretend
+     it's real.
+  6. Acknowledge incidents honestly. The two we have so far:
+     • DELETE-with-LIKE nuke (recovered via recovery_campaigns.sql)
+     • Spot Programming dialog freeze (resolved with Fix B/A/C)
+     Both have guardrails in CLAUDE.md and PROJECT_CONTEXT.md.
+
+═══════════════════════════════════════════════════════════════════════
+WHAT I'LL SAY NEXT
+═══════════════════════════════════════════════════════════════════════
+
+After you confirm you've read both context files, I'll either:
+
+  • "launch main.py" → you launch in background, I drive Phase 5-B test
+  • "show me what 5-B added" → you summarize the diff in the dialog
+    file (drag handlers, _CueCard, _VerticalFadeSlider, _validate)
+  • Direct change request — fixes/iterations on Phase 5-B
+
+Don't start coding new features without confirming the plan with me
+first. The cadence is: small phase → screenshot → my approval → next.
+═══════════════════════════════════════════════════════════════════════

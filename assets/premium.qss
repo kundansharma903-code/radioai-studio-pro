@@ -1,0 +1,271 @@
+/* ═══════════════════════════════════════════════════════════════════
+   RadioAI Studio Pro — premium.qss
+   Central stylesheet. Custom widgets paint themselves; this covers
+   stock Qt widgets (window, scrollbars, inputs, dropdowns, tooltips).
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── Window / base ────────────────────────────────────────────────── */
+/* Note: No font-size on QWidget — it cascades and overrides per-widget setFont() calls.
+   Each widget sets its own font via QFont in code or via specific selectors below. */
+QMainWindow {
+    background: qlineargradient(
+        x1:0, y1:0, x2:1, y2:1,
+        stop:0   #0a0d1a,
+        stop:0.5 #06080f,
+        stop:1   #020308
+    );
+}
+
+QWidget#root {
+    background: qlineargradient(
+        x1:0, y1:0, x2:1, y2:1,
+        stop:0   #0a0d1a,
+        stop:0.5 #06080f,
+        stop:1   #020308
+    );
+}
+
+/* ── Tooltip ──────────────────────────────────────────────────────── */
+QToolTip {
+    background: #131626;
+    color: #f1f5ff;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-size: 11px;
+    font-weight: 500;
+}
+
+/* ── Scrollbars (4px wide, no buttons) ────────────────────────────── */
+QScrollBar:vertical {
+    background: transparent;
+    width: 4px;
+    margin: 0;
+    border: none;
+}
+QScrollBar::handle:vertical {
+    background: rgba(37, 40, 64, 0.85);
+    border-radius: 2px;
+    min-height: 28px;
+}
+QScrollBar::handle:vertical:hover {
+    background: #8891b8;
+}
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+    height: 0;
+    background: none;
+    border: none;
+}
+QScrollBar::add-page:vertical,
+QScrollBar::sub-page:vertical {
+    background: none;
+}
+
+QScrollBar:horizontal {
+    background: transparent;
+    height: 4px;
+    margin: 0;
+    border: none;
+}
+QScrollBar::handle:horizontal {
+    background: rgba(37, 40, 64, 0.85);
+    border-radius: 2px;
+    min-width: 28px;
+}
+QScrollBar::handle:horizontal:hover {
+    background: #8891b8;
+}
+QScrollBar::add-line:horizontal,
+QScrollBar::sub-line:horizontal {
+    width: 0;
+    background: none;
+    border: none;
+}
+
+/* ── Input fields ─────────────────────────────────────────────────── */
+QLineEdit, QTextEdit, QPlainTextEdit {
+    background: #0e1020;
+    color: #f1f5ff;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 8px;
+    padding: 8px 12px;
+    selection-background-color: rgba(6, 182, 212, 0.25);
+    selection-color: #f1f5ff;
+    font-size: 12px;
+}
+QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus {
+    border-color: #06b6d4;
+    background: #0a0c16;
+}
+
+/* ── ComboBox ─────────────────────────────────────────────────────── */
+QComboBox {
+    background: #0e1020;
+    color: #f1f5ff;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 8px;
+    padding: 6px 28px 6px 12px;
+    font-size: 12px;
+}
+QComboBox:hover { border-color: rgba(255, 255, 255, 0.12); }
+QComboBox:focus { border-color: #06b6d4; }
+QComboBox::drop-down {
+    border: none;
+    width: 20px;
+}
+QComboBox::down-arrow {
+    image: none;
+    width: 0;
+    height: 0;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid #8891b8;
+    margin-right: 8px;
+}
+QComboBox QAbstractItemView {
+    background: #0e1020;
+    color: #f1f5ff;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 8px;
+    selection-background-color: rgba(139, 92, 246, 0.20);
+    selection-color: #a78bfa;
+    outline: none;
+    padding: 4px;
+}
+
+/* ── Spinbox ──────────────────────────────────────────────────────── */
+QSpinBox, QDoubleSpinBox {
+    background: #0e1020;
+    color: #f1f5ff;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 6px;
+    padding: 6px 10px;
+}
+QSpinBox:focus, QDoubleSpinBox:focus { border-color: #06b6d4; }
+
+/* ── CheckBox / RadioButton ───────────────────────────────────────── */
+QCheckBox, QRadioButton {
+    color: #f1f5ff;
+    background: transparent;
+    spacing: 8px;
+}
+QCheckBox::indicator, QRadioButton::indicator {
+    width: 16px;
+    height: 16px;
+    background: #0e1020;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 4px;
+}
+QCheckBox::indicator:checked {
+    background: #8b5cf6;
+    border-color: #8b5cf6;
+}
+QRadioButton::indicator { border-radius: 8px; }
+QRadioButton::indicator:checked {
+    background: #06b6d4;
+    border-color: #06b6d4;
+}
+
+/* ── Tabs ─────────────────────────────────────────────────────────── */
+QTabWidget::pane {
+    background: #0a0c16;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 12px;
+}
+QTabBar::tab {
+    background: transparent;
+    color: #8891b8;
+    border: none;
+    padding: 10px 18px;
+    font-size: 12px;
+    font-weight: 500;
+}
+QTabBar::tab:hover { color: #f1f5ff; }
+QTabBar::tab:selected {
+    color: #a78bfa;
+    border-bottom: 2px solid #8b5cf6;
+}
+
+/* ── Frame role hooks (use setProperty('role', ...) in Python) ────── */
+QFrame[role="header"] {
+    background: qlineargradient(
+        x1:0, y1:0, x2:0, y2:1,
+        stop:0 #10131f,
+        stop:1 rgba(10,12,22,0.9)
+    );
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+QFrame[role="bottombar"] {
+    background: rgba(10, 12, 22, 0.6);
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* ── QPushButton roles ────────────────────────────────────────────── */
+QPushButton[role="ghost"] {
+    background: transparent;
+    color: #8891b8;
+    border: none;
+    padding: 8px 14px;
+    font-size: 12px;
+    font-weight: 500;
+}
+QPushButton[role="ghost"]:hover { color: #f1f5ff; }
+
+QPushButton[role="ghost-active"] {
+    background: transparent;
+    color: #a78bfa;
+    border: none;
+    padding: 8px 14px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QPushButton[role="secondary"] {
+    background: #131626;
+    color: #f1f5ff;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 10px;
+    padding: 8px 16px;
+    font-size: 12px;
+    font-weight: 600;
+}
+QPushButton[role="secondary"]:hover {
+    border-color: rgba(255, 255, 255, 0.15);
+    background: #1a1d2e;
+}
+
+/* ── Label roles ──────────────────────────────────────────────────── */
+QLabel[role="page-title"] {
+    color: #f1f5ff;
+    font-size: 44px;
+    font-weight: 900;
+    letter-spacing: -1.5px;
+}
+
+QLabel[role="page-subtitle"] {
+    color: #454d6d;
+    font-size: 14px;
+    font-weight: 500;
+}
+
+QLabel[role="section-label"] {
+    color: #8891b8;
+    font-size: 9px;
+    font-weight: 900;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+}
+
+QLabel[role="muted"] {
+    color: #454d6d;
+    font-size: 11px;
+}
+
+QLabel[role="stat-value"] {
+    color: #f1f5ff;
+    font-size: 28px;
+    font-weight: 900;
+    letter-spacing: -0.8px;
+}

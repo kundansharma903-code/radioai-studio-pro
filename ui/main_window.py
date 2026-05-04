@@ -1,0 +1,197 @@
+"""
+RadioAI Studio Pro — Main Window (chrome-less shell)
+
+Each screen (ControlPanel, Studio, etc.) renders a fixed 1440×900 design.
+The QMainWindow auto-sizes to that client area + OS chrome (title bar +
+borders), so the FULL design is visible — no clipping.
+
+Use --maximized to launch maximized for testing on larger displays.
+"""
+
+import logging
+import sys
+
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QGuiApplication
+from PyQt6.QtWidgets import QMainWindow, QStackedWidget, QApplication
+
+from core.constants import APP_NAME, APP_VERSION, WINDOW_W, WINDOW_H
+
+log = logging.getLogger("MainWindow")
+
+
+class MainWindow(QMainWindow):
+    """Frame around a 1440×900 screen widget. Sized to fit client + chrome."""
+
+    def __init__(self, db_ok: bool = True, song_count: int = 0, db=None):
+        super().__init__()
+        self._db = db
+        self.setWindowTitle(f"{APP_NAME} v{APP_VERSION}")
+
+        # Adaptive sizing: never exceed 95% × 92% of available screen.
+        # On a 1920×1080 we get the full 1440×900 design. On a 1366×768
+        # laptop we get ≈1300×700 and the central widget scrolls if needed.
+        screen = QGuiApplication.primaryScreen()
+        if screen is not None:
+            avail = screen.availableGeometry()
+            max_w = int(avail.width()  * 0.98)
+            max_h = int(avail.height() * 0.95)
+        else:
+            max_w, max_h = WINDOW_W, WINDOW_H
+
+        target_w = min(WINDOW_W, max_w)
+        target_h = min(WINDOW_H, max_h)
+
+        # Wrap the QStackedWidget in a QScrollArea so screens larger than
+        # the window can be scrolled. CRITICAL: the QScrollArea has TWO
+        # background layers — the area widget itself AND its viewport
+        # (a hidden child QWidget). We must dark-ify BOTH or the default
+        # palette leaks through and we get a white background around the
+        # screen.
+        from PyQt6.QtWidgets import QScrollArea, QFrame
+        from PyQt6.QtCore import Qt as _Qt
+        from PyQt6.QtGui import QPalette, QColor as _QColor
+
+        self._stack = QStackedWidget()
+        self._stack.setFixedSize(WINDOW_W, WINDOW_H)  # design canvas
+
+        scroll = QScrollArea()
+        scroll.setObjectName("mwScroll")
+        scroll.setWidgetResizable(False)             # keep stack at design size
+        scroll.setHorizontalScrollBarPolicy(_Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(_Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+
+        # Dark-ify the viewport via palette (QSS doesn't reach it reliably)
+        viewport_bg = _QColor("#06080f")
+        pal = scroll.viewport().palette()
+        pal.setColor(QPalette.ColorRole.Base, viewport_bg)
+        pal.setColor(QPalette.ColorRole.Window, viewport_bg)
+        scroll.viewport().setPalette(pal)
+        scroll.viewport().setAutoFillBackground(True)
+
+        # Style the scrollbars (#mwScroll selector to scope precisely)
+        scroll.setStyleSheet(
+            "QScrollArea#mwScroll { background: #06080f; border: none; }"
+            "QScrollArea#mwScroll > QWidget > QWidget { background: #06080f; }"
+            "QScrollBar:vertical { background: rgba(255,255,255,0.02); width: 8px; }"
+            "QScrollBar::handle:vertical { background: rgba(167,139,250,0.4); "
+            "border-radius: 4px; min-height: 30px; margin: 2px; }"
+            "QScrollBar::handle:vertical:hover { background: rgba(167,139,250,0.7); }"
+            "QScrollBar:horizontal { background: rgba(255,255,255,0.02); height: 8px; }"
+            "QScrollBar::handle:horizontal { background: rgba(167,139,250,0.4); "
+            "border-radius: 4px; min-width: 30px; margin: 2px; }"
+            "QScrollBar::handle:horizontal:hover { background: rgba(167,139,250,0.7); }"
+            "QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }"
+        )
+        scroll.setWidget(self._stack)
+        self.setCentralWidget(scroll)
+        # Dark-ify the QMainWindow palette as well so any uncovered area
+        # (e.g. menu bar zone, tiny stragglers) stays dark.
+        mw_pal = self.palette()
+        mw_pal.setColor(QPalette.ColorRole.Window, viewport_bg)
+        self.setPalette(mw_pal)
+        self.setAutoFillBackground(True)
+
+        # Window can shrink below the design canvas (scrollbars will appear).
+        self.setMinimumSize(800, 600)
+        self.resize(target_w, target_h)
+
+        self._mount_control_panel()
+        self._center_on_screen()
+
+        log.info(
+            f"MainWindow ready — window={self.size().width()}x{self.size().height()}, "
+            f"design canvas={WINDOW_W}x{WINDOW_H}"
+        )
+
+    # ── Sizing helpers ────────────────────────────────────────────────────
+
+    def _center_on_screen(self) -> None:
+        screen = QGuiApplication.primaryScreen()
+        if screen is None:
+            return
+        avail = screen.availableGeometry()
+        x = avail.x() + (avail.width()  - self.width())  // 2
+        y = avail.y() + (avail.height() - self.height()) // 2
+        # Don't push above 0 if the window is taller than the screen
+        self.move(max(avail.x(), x), max(avail.y(), y))
+
+    # ── Mount ──────────────────────────────────────────────────────────────
+
+    def _mount_control_panel(self) -> None:
+        if self._db is None:
+            return
+        try:
+            from ui.control_panel import ControlPanel
+            self.control_panel = ControlPanel(self._db)
+            self.control_panel.card_clicked.connect(self._on_card_clicked)
+            self.control_panel.nav_clicked.connect(self._on_nav_clicked)
+            self.control_panel.studio_clicked.connect(self._on_studio_clicked)
+            self.control_panel.settings_clicked.connect(self._on_settings_clicked)
+            self._stack.addWidget(self.control_panel)
+            self._stack.setCurrentWidget(self.control_panel)
+
+            # Mount Songs Library lazily — it's heavy because it loads all songs
+            from ui.songs_library import SongsLibrary
+            self.songs_library = SongsLibrary(self._db)
+            self.songs_library.breadcrumb_clicked.connect(self._on_breadcrumb)
+            self.songs_library.studio_clicked.connect(self._on_studio_clicked)
+            self.songs_library.song_selected.connect(self._on_song_selected)
+            self.songs_library.play_song_clicked.connect(self._on_play_song)
+            self.songs_library.report_clicked.connect(self._on_report_clicked)
+            self._stack.addWidget(self.songs_library)
+
+            # Instant Jingles — live broadcast pads (Figma 44:688)
+            from ui.instant_jingles import InstantJingles
+            self.instant_jingles = InstantJingles(self._db)
+            self.instant_jingles.breadcrumb_clicked.connect(self._on_breadcrumb)
+            self.instant_jingles.studio_clicked.connect(self._on_studio_clicked)
+            self._stack.addWidget(self.instant_jingles)
+
+            # Spots & Commercials Library (Figma 35:2)
+            from ui.spots_commercials import SpotsCommercials
+            self.spots_commercials = SpotsCommercials(self._db)
+            self.spots_commercials.breadcrumb_clicked.connect(self._on_breadcrumb)
+            self.spots_commercials.studio_clicked.connect(self._on_studio_clicked)
+            self._stack.addWidget(self.spots_commercials)
+        except Exception as exc:
+            import traceback
+            log.error(f"Mount failed: {exc}\n{traceback.format_exc()}")
+
+    def _on_card_clicked(self, screen: str) -> None:
+        log.info(f"Card → {screen}")
+        # Route to matching screen
+        if screen == "songs" and hasattr(self, "songs_library"):
+            self._stack.setCurrentWidget(self.songs_library)
+        elif screen == "instant_jingles" and hasattr(self, "instant_jingles"):
+            self._stack.setCurrentWidget(self.instant_jingles)
+        elif screen == "spots" and hasattr(self, "spots_commercials"):
+            self._stack.setCurrentWidget(self.spots_commercials)
+
+    def _on_breadcrumb(self, where: str) -> None:
+        log.info(f"Breadcrumb → {where}")
+        if where == "control_panel" and hasattr(self, "control_panel"):
+            self._stack.setCurrentWidget(self.control_panel)
+
+    def _on_song_selected(self, song_id: int) -> None:
+        log.info(f"Song selected: id={song_id}")
+
+    def _on_play_song(self, song_id: int) -> None:
+        log.info(f"Play song: id={song_id}")
+
+    def _on_report_clicked(self, name: str) -> None:
+        log.info(f"Report → {name}")
+
+    def _on_nav_clicked(self, tab: str) -> None:
+        log.info(f"Nav → {tab}")
+
+    def _on_studio_clicked(self) -> None:
+        log.info("Open Studio →")
+
+    def _on_settings_clicked(self) -> None:
+        log.info("Settings →")
+
+    def closeEvent(self, event):
+        log.info("MainWindow closing")
+        super().closeEvent(event)

@@ -1,0 +1,569 @@
+const imgEllipse = "https://www.figma.com/api/mcp/asset/d0afeca3-672b-4a9f-84ed-de7238d3140e";
+const imgEllipse1 = "https://www.figma.com/api/mcp/asset/d548573b-1634-403d-8f0f-ce6399815344";
+const imgEllipse2 = "https://www.figma.com/api/mcp/asset/65d6afba-8201-48b1-83be-b1f99aa6cea0";
+const imgEllipse3 = "https://www.figma.com/api/mcp/asset/66136a1f-a0e6-499a-9bf3-3bbadcfdef84";
+const imgEllipse4 = "https://www.figma.com/api/mcp/asset/c73ef1c0-977e-4d5b-b771-214f6ea0ba11";
+const imgEllipse5 = "https://www.figma.com/api/mcp/asset/1e266847-3308-4960-a606-bf85873200c0";
+const imgEllipse6 = "https://www.figma.com/api/mcp/asset/69dedb34-11a8-4018-91f2-9dd4ab6cf1bd";
+const imgEllipse7 = "https://www.figma.com/api/mcp/asset/08960373-e290-4a56-ac5f-e35a0c3f05e7";
+const imgEllipse8 = "https://www.figma.com/api/mcp/asset/4a745fb5-f2da-4b37-958c-4b2ca7097a3e";
+
+export default function MainContent() {
+  return (
+    <div className="relative size-full" data-node-id="5:1040" data-name="MainContent">
+      <p className="absolute font-['Inter:Bold',sans-serif] font-bold leading-[normal] left-[36px] not-italic text-[#f1f5ff] text-[34px] top-[24px] whitespace-nowrap" data-node-id="5:1041">
+        Libraries
+      </p>
+      <p className="absolute font-['Inter:Regular',sans-serif] font-normal leading-[normal] left-[36px] not-italic text-[#454d6d] text-[14px] top-[64px] whitespace-nowrap" data-node-id="5:1042">
+        Manage all your audio content
+      </p>
+      <div className="absolute bg-[#1e1535] h-[26px] left-[36px] rounded-[7px] top-[90px] w-[86px]" data-node-id="5:1043" data-name="Rectangle" />
+      <p className="absolute font-['Inter:Medium',sans-serif] font-medium leading-[normal] left-[44px] not-italic text-[#a78bfa] text-[10px] top-[95px] whitespace-nowrap" data-node-id="5:1044">
+        6 Libraries
+      </p>
+      <div className="absolute bg-[#052e16] h-[26px] left-[130px] rounded-[7px] top-[90px] w-[96px]" data-node-id="5:1045" data-name="Rectangle" />
+      <div className="absolute left-[138px] size-[8px] top-[101px]" data-node-id="5:1046" data-name="Ellipse">
+        <img alt="" className="absolute block inset-0 max-w-none size-full" src={imgEllipse} />
+      </div>
+      <p className="absolute font-['Inter:Medium',sans-serif] font-medium leading-[normal] left-[150px] not-italic text-[#10b981] text-[10px] top-[95px] whitespace-nowrap" data-node-id="5:1047">
+        System OK
+      </p>
+      <div className="absolute bg-[#131626] h-[30px] left-[1300px] rounded-[8px] top-[24px] w-[116px]" data-node-id="5:1048" data-name="Rectangle" />
+      <div className="absolute left-[1310px] size-[8px] top-[37px]" data-node-id="5:1049" data-name="Ellipse">
+        <img alt="" className="absolute block inset-0 max-w-none size-full" src={imgEllipse} />
+      </div>
+      <p className="absolute font-['Inter:Bold',sans-serif] font-bold leading-[normal] left-[1322px] not-italic text-[#10b981] text-[9px] top-[29px] whitespace-nowrap" data-node-id="5:1050">
+        LIVE
+      </p>
+      <p className="absolute font-['Roboto_Mono:Bold',sans-serif] font-bold leading-[normal] left-[1340px] text-[#f1f5ff] text-[16px] top-[27px] whitespace-nowrap" data-node-id="5:1051">
+        21:56:15
+      </p>
+      <div className="absolute bg-[#131626] h-[70px] left-[36px] rounded-[14px] top-[128px] w-[1368px]" data-node-id="5:1052" data-name="Rectangle" />
+      <div className="absolute bg-[#8b5cf6] h-[3px] left-[36px] top-[128px] w-[1368px]" data-node-id="5:1053" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(30,21,53,0.7)] h-[70px] left-[36px] top-[128px] w-[240px]" data-node-id="5:1054" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] h-[4px] left-[300px] rounded-[2px] top-[161px] w-[6px]" data-node-id="5:1055" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] h-[13px] left-[309px] rounded-[2px] top-[157px] w-[6px]" data-node-id="5:1056" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] h-[21px] left-[318px] rounded-[2px] top-[153px] w-[6px]" data-node-id="5:1057" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] h-[25px] left-[327px] rounded-[2px] top-[151px] w-[6px]" data-node-id="5:1058" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] h-[24px] left-[336px] rounded-[2px] top-[151px] w-[6px]" data-node-id="5:1059" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] h-[20px] left-[345px] rounded-[2px] top-[153px] w-[6px]" data-node-id="5:1060" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] h-[14px] left-[354px] rounded-[2px] top-[156px] w-[6px]" data-node-id="5:1061" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] h-[8px] left-[363px] rounded-[2px] top-[159px] w-[6px]" data-node-id="5:1062" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] h-[4px] left-[372px] rounded-[2px] top-[161px] w-[6px]" data-node-id="5:1063" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] h-[4px] left-[381px] rounded-[2px] top-[161px] w-[6px]" data-node-id="5:1064" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] left-[390px] rounded-[2px] size-[6px] top-[160px]" data-node-id="5:1065" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] h-[12px] left-[399px] rounded-[2px] top-[157px] w-[6px]" data-node-id="5:1066" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] h-[18px] left-[408px] rounded-[2px] top-[154px] w-[6px]" data-node-id="5:1067" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] h-[23px] left-[417px] rounded-[2px] top-[152px] w-[6px]" data-node-id="5:1068" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] h-[25px] left-[426px] rounded-[2px] top-[151px] w-[6px]" data-node-id="5:1069" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] h-[23px] left-[435px] rounded-[2px] top-[152px] w-[6px]" data-node-id="5:1070" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] h-[17px] left-[444px] rounded-[2px] top-[155px] w-[6px]" data-node-id="5:1071" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] h-[8px] left-[453px] rounded-[2px] top-[159px] w-[6px]" data-node-id="5:1072" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] h-[9px] left-[462px] rounded-[2px] top-[159px] w-[6px]" data-node-id="5:1073" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] h-[18px] left-[471px] rounded-[2px] top-[154px] w-[6px]" data-node-id="5:1074" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] h-[23px] left-[480px] rounded-[2px] top-[152px] w-[6px]" data-node-id="5:1075" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] h-[25px] left-[489px] rounded-[2px] top-[151px] w-[6px]" data-node-id="5:1076" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] h-[23px] left-[498px] rounded-[2px] top-[152px] w-[6px]" data-node-id="5:1077" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] h-[17px] left-[507px] rounded-[2px] top-[155px] w-[6px]" data-node-id="5:1078" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] h-[11px] left-[516px] rounded-[2px] top-[158px] w-[6px]" data-node-id="5:1079" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] left-[525px] rounded-[2px] size-[6px] top-[160px]" data-node-id="5:1080" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] h-[4px] left-[534px] rounded-[2px] top-[161px] w-[6px]" data-node-id="5:1081" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] h-[5px] left-[543px] rounded-[2px] top-[161px] w-[6px]" data-node-id="5:1082" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] h-[9px] left-[552px] rounded-[2px] top-[159px] w-[6px]" data-node-id="5:1083" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] h-[15px] left-[561px] rounded-[2px] top-[156px] w-[6px]" data-node-id="5:1084" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] h-[21px] left-[570px] rounded-[2px] top-[153px] w-[6px]" data-node-id="5:1085" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] h-[25px] left-[579px] rounded-[2px] top-[151px] w-[6px]" data-node-id="5:1086" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] h-[24px] left-[588px] rounded-[2px] top-[151px] w-[6px]" data-node-id="5:1087" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] h-[20px] left-[597px] rounded-[2px] top-[153px] w-[6px]" data-node-id="5:1088" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] h-[12px] left-[606px] rounded-[2px] top-[157px] w-[6px]" data-node-id="5:1089" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] h-[4px] left-[615px] rounded-[2px] top-[161px] w-[6px]" data-node-id="5:1090" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] h-[14px] left-[624px] rounded-[2px] top-[156px] w-[6px]" data-node-id="5:1091" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] h-[21px] left-[633px] rounded-[2px] top-[153px] w-[6px]" data-node-id="5:1092" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] h-[25px] left-[642px] rounded-[2px] top-[151px] w-[6px]" data-node-id="5:1093" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] h-[24px] left-[651px] rounded-[2px] top-[151px] w-[6px]" data-node-id="5:1094" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] h-[20px] left-[660px] rounded-[2px] top-[153px] w-[6px]" data-node-id="5:1095" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] h-[14px] left-[669px] rounded-[2px] top-[156px] w-[6px]" data-node-id="5:1096" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] h-[8px] left-[678px] rounded-[2px] top-[159px] w-[6px]" data-node-id="5:1097" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] h-[4px] left-[687px] rounded-[2px] top-[161px] w-[6px]" data-node-id="5:1098" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.72)] h-[4px] left-[696px] rounded-[2px] top-[161px] w-[6px]" data-node-id="5:1099" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] h-[7px] left-[705px] rounded-[2px] top-[160px] w-[6px]" data-node-id="5:1100" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] h-[12px] left-[714px] rounded-[2px] top-[157px] w-[6px]" data-node-id="5:1101" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] h-[18px] left-[723px] rounded-[2px] top-[154px] w-[6px]" data-node-id="5:1102" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] h-[23px] left-[732px] rounded-[2px] top-[152px] w-[6px]" data-node-id="5:1103" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] h-[25px] left-[741px] rounded-[2px] top-[151px] w-[6px]" data-node-id="5:1104" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] h-[23px] left-[750px] rounded-[2px] top-[152px] w-[6px]" data-node-id="5:1105" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] h-[16px] left-[759px] rounded-[2px] top-[155px] w-[6px]" data-node-id="5:1106" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] h-[7px] left-[768px] rounded-[2px] top-[160px] w-[6px]" data-node-id="5:1107" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] h-[10px] left-[777px] rounded-[2px] top-[158px] w-[6px]" data-node-id="5:1108" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] h-[18px] left-[786px] rounded-[2px] top-[154px] w-[6px]" data-node-id="5:1109" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] h-[24px] left-[795px] rounded-[2px] top-[151px] w-[6px]" data-node-id="5:1110" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] h-[25px] left-[804px] rounded-[2px] top-[151px] w-[6px]" data-node-id="5:1111" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] h-[22px] left-[813px] rounded-[2px] top-[152px] w-[6px]" data-node-id="5:1112" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] h-[17px] left-[822px] rounded-[2px] top-[155px] w-[6px]" data-node-id="5:1113" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] h-[11px] left-[831px] rounded-[2px] top-[158px] w-[6px]" data-node-id="5:1114" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] left-[840px] rounded-[2px] size-[6px] top-[160px]" data-node-id="5:1115" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] h-[4px] left-[849px] rounded-[2px] top-[161px] w-[6px]" data-node-id="5:1116" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] h-[5px] left-[858px] rounded-[2px] top-[161px] w-[6px]" data-node-id="5:1117" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] h-[10px] left-[867px] rounded-[2px] top-[158px] w-[6px]" data-node-id="5:1118" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] h-[16px] left-[876px] rounded-[2px] top-[155px] w-[6px]" data-node-id="5:1119" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] h-[21px] left-[885px] rounded-[2px] top-[153px] w-[6px]" data-node-id="5:1120" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] h-[25px] left-[894px] rounded-[2px] top-[151px] w-[6px]" data-node-id="5:1121" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] h-[24px] left-[903px] rounded-[2px] top-[151px] w-[6px]" data-node-id="5:1122" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] h-[20px] left-[912px] rounded-[2px] top-[153px] w-[6px]" data-node-id="5:1123" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] h-[11px] left-[921px] rounded-[2px] top-[158px] w-[6px]" data-node-id="5:1124" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] h-[5px] left-[930px] rounded-[2px] top-[161px] w-[6px]" data-node-id="5:1125" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] h-[15px] left-[939px] rounded-[2px] top-[156px] w-[6px]" data-node-id="5:1126" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] h-[22px] left-[948px] rounded-[2px] top-[152px] w-[6px]" data-node-id="5:1127" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] h-[25px] left-[957px] rounded-[2px] top-[151px] w-[6px]" data-node-id="5:1128" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] h-[24px] left-[966px] rounded-[2px] top-[151px] w-[6px]" data-node-id="5:1129" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] h-[19px] left-[975px] rounded-[2px] top-[154px] w-[6px]" data-node-id="5:1130" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] h-[13px] left-[984px] rounded-[2px] top-[157px] w-[6px]" data-node-id="5:1131" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] h-[8px] left-[993px] rounded-[2px] top-[159px] w-[6px]" data-node-id="5:1132" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] h-[4px] left-[1002px] rounded-[2px] top-[161px] w-[6px]" data-node-id="5:1133" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] h-[4px] left-[1011px] rounded-[2px] top-[161px] w-[6px]" data-node-id="5:1134" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] h-[7px] left-[1020px] rounded-[2px] top-[160px] w-[6px]" data-node-id="5:1135" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] h-[13px] left-[1029px] rounded-[2px] top-[157px] w-[6px]" data-node-id="5:1136" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] h-[19px] left-[1038px] rounded-[2px] top-[154px] w-[6px]" data-node-id="5:1137" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] h-[24px] left-[1047px] rounded-[2px] top-[151px] w-[6px]" data-node-id="5:1138" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] h-[25px] left-[1056px] rounded-[2px] top-[151px] w-[6px]" data-node-id="5:1139" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] h-[22px] left-[1065px] rounded-[2px] top-[152px] w-[6px]" data-node-id="5:1140" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] h-[16px] left-[1074px] rounded-[2px] top-[155px] w-[6px]" data-node-id="5:1141" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] left-[1083px] rounded-[2px] size-[6px] top-[160px]" data-node-id="5:1142" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] h-[11px] left-[1092px] rounded-[2px] top-[158px] w-[6px]" data-node-id="5:1143" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.3)] h-[19px] left-[1101px] rounded-[2px] top-[154px] w-[6px]" data-node-id="5:1144" data-name="Rectangle" />
+      <div className="absolute left-[46px] size-[10px] top-[158px]" data-node-id="5:1145" data-name="Ellipse">
+        <img alt="" className="absolute block inset-0 max-w-none size-full" src={imgEllipse1} />
+      </div>
+      <p className="absolute font-['Inter:Bold',sans-serif] font-bold leading-[normal] left-[62px] not-italic text-[#10b981] text-[9px] top-[138px] whitespace-nowrap" data-node-id="5:1146">
+        NOW ON AIR
+      </p>
+      <p className="absolute font-['Inter:Semi_Bold',sans-serif] font-semibold leading-[normal] left-[46px] not-italic text-[#f1f5ff] text-[18px] top-[152px] whitespace-nowrap" data-node-id="5:1147">
+        Harry Styles — As It Was
+      </p>
+      <p className="absolute font-['Inter:Regular',sans-serif] font-normal leading-[normal] left-[46px] not-italic text-[#454d6d] text-[10px] top-[176px] whitespace-pre" data-node-id="5:1148">{`Pop  •  HOT CURRENTS  •  AIR CURRENTS A  •  2020  •  88 BPM`}</p>
+      <p className="absolute font-['Roboto_Mono:Bold',sans-serif] font-bold leading-[normal] left-[1210px] text-[#a78bfa] text-[32px] top-[142px] whitespace-nowrap" data-node-id="5:1149">
+        02:18
+      </p>
+      <p className="absolute font-['Inter:Regular',sans-serif] font-normal leading-[normal] left-[1220px] not-italic text-[#454d6d] text-[9px] top-[178px] whitespace-nowrap" data-node-id="5:1150">
+        remaining
+      </p>
+      <div className="absolute bg-[#131626] h-[198px] left-[36px] rounded-[14px] top-[216px] w-[444px]" data-node-id="5:1151" data-name="Rectangle" />
+      <div className="absolute bg-[#8b5cf6] h-[4px] left-[36px] top-[216px] w-[444px]" data-node-id="5:1152" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.05)] h-[56px] left-[36px] top-[220px] w-[444px]" data-node-id="5:1153" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.55)] h-[198px] left-[36px] top-[216px] w-[3px]" data-node-id="5:1154" data-name="Rectangle" />
+      <div className="absolute border border-[rgba(139,92,246,0.22)] border-solid h-[198px] left-[36px] rounded-[14px] top-[216px] w-[444px]" data-node-id="5:1155" data-name="Rectangle" />
+      <div className="absolute bg-[#1e1535] left-[52px] rounded-[10px] size-[46px] top-[234px]" data-node-id="5:1156" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.1)] left-[52px] rounded-[10px] size-[46px] top-[234px]" data-node-id="5:1157" data-name="Rectangle" />
+      <p className="absolute font-['Inter:Bold','Noto_Sans:Bold',sans-serif] font-bold leading-[normal] left-[61px] not-italic text-[#8b5cf6] text-[22px] top-[240px] whitespace-nowrap" data-node-id="5:1158">
+        ♪
+      </p>
+      <div className="absolute bg-[#1e1535] h-[20px] left-[386px] rounded-[10px] top-[234px] w-[88px]" data-node-id="5:1159" data-name="Rectangle" />
+      <p className="absolute font-['Inter:Bold',sans-serif] font-bold leading-[normal] left-[394px] not-italic text-[#8b5cf6] text-[8px] top-[237px] whitespace-nowrap" data-node-id="5:1160">
+        MAIN LIBRARY
+      </p>
+      <p className="absolute font-['Inter:Bold',sans-serif] font-bold leading-[normal] left-[108px] not-italic text-[#f1f5ff] text-[17px] top-[234px] whitespace-nowrap" data-node-id="5:1161">
+        Songs
+      </p>
+      <p className="absolute font-['Inter:Medium',sans-serif] font-medium leading-[normal] left-[108px] not-italic text-[#8b5cf6] text-[10px] top-[256px] whitespace-nowrap" data-node-id="5:1162">{`Categories & Smart Rotation`}</p>
+      <div className="absolute bg-[#1e1535] h-[22px] left-[108px] rounded-[6px] top-[272px] w-[122px]" data-node-id="5:1163" data-name="Rectangle" />
+      <p className="absolute font-['Inter:Semi_Bold',sans-serif] font-semibold leading-[normal] left-[115px] not-italic text-[#8b5cf6] text-[9px] top-[275px] whitespace-nowrap" data-node-id="5:1164">
+        25 Songs Available
+      </p>
+      <p className="absolute font-['Inter:Regular',sans-serif] font-normal leading-[normal] left-[52px] not-italic text-[#454d6d] text-[10px] top-[312px] whitespace-nowrap" data-node-id="5:1165">
+        Full music library with AI-powered rotation,
+      </p>
+      <p className="absolute font-['Inter:Regular',sans-serif] font-normal leading-[normal] left-[52px] not-italic text-[#454d6d] text-[10px] top-[326px] whitespace-nowrap" data-node-id="5:1166">
+        play history analytics and category rules.
+      </p>
+      <div className="absolute bg-[#1c1f38] h-px left-[52px] top-[362px] w-[412px]" data-node-id="5:1167" data-name="Rectangle" />
+      <div className="absolute bg-[#1e1535] h-[22px] left-[52px] rounded-[6px] top-[376px] w-[88px]" data-node-id="5:1168" data-name="Rectangle" />
+      <p className="absolute font-['Inter:Medium',sans-serif] font-medium leading-[normal] left-[60px] not-italic text-[#8b5cf6] text-[9px] top-[379px] whitespace-nowrap" data-node-id="5:1169">
+        3 Categories
+      </p>
+      <div className="absolute bg-[#1c1f38] h-[22px] left-[148px] rounded-[6px] top-[376px] w-[76px]" data-node-id="5:1170" data-name="Rectangle" />
+      <p className="absolute font-['Inter:Medium',sans-serif] font-medium leading-[normal] left-[156px] not-italic text-[#8891b8] text-[9px] top-[379px] whitespace-nowrap" data-node-id="5:1171">
+        87% Health
+      </p>
+      <p className="absolute font-['Inter:Semi_Bold',sans-serif] font-semibold leading-[normal] left-[404px] not-italic text-[#8b5cf6] text-[12px] top-[379px] whitespace-nowrap" data-node-id="5:1172">
+        Open →
+      </p>
+      <div className="absolute bg-[#131626] h-[198px] left-[498px] rounded-[14px] top-[216px] w-[444px]" data-node-id="5:1173" data-name="Rectangle" />
+      <div className="absolute bg-[#06b6d4] h-[4px] left-[498px] top-[216px] w-[444px]" data-node-id="5:1174" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(6,182,212,0.05)] h-[56px] left-[498px] top-[220px] w-[444px]" data-node-id="5:1175" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(6,182,212,0.55)] h-[198px] left-[498px] top-[216px] w-[3px]" data-node-id="5:1176" data-name="Rectangle" />
+      <div className="absolute border border-[rgba(6,182,212,0.22)] border-solid h-[198px] left-[498px] rounded-[14px] top-[216px] w-[444px]" data-node-id="5:1177" data-name="Rectangle" />
+      <div className="absolute bg-[#083344] left-[514px] rounded-[10px] size-[46px] top-[234px]" data-node-id="5:1178" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(6,182,212,0.1)] left-[514px] rounded-[10px] size-[46px] top-[234px]" data-node-id="5:1179" data-name="Rectangle" />
+      <p className="absolute font-['Inter:Bold',sans-serif] font-bold leading-[normal] left-[523px] not-italic text-[#06b6d4] text-[22px] top-[240px] whitespace-nowrap" data-node-id="5:1180">
+        ⚡
+      </p>
+      <div className="absolute bg-[#083344] h-[20px] left-[860px] rounded-[10px] top-[234px] w-[76px]" data-node-id="5:1181" data-name="Rectangle" />
+      <p className="absolute font-['Inter:Bold',sans-serif] font-bold leading-[normal] left-[868px] not-italic text-[#06b6d4] text-[8px] top-[237px] whitespace-nowrap" data-node-id="5:1182">
+        LIVE TOOLS
+      </p>
+      <p className="absolute font-['Inter:Bold',sans-serif] font-bold leading-[normal] left-[570px] not-italic text-[#f1f5ff] text-[17px] top-[234px] whitespace-nowrap" data-node-id="5:1183">
+        Instant Jingles
+      </p>
+      <p className="absolute font-['Inter:Medium',sans-serif] font-medium leading-[normal] left-[570px] not-italic text-[#06b6d4] text-[10px] top-[256px] whitespace-nowrap" data-node-id="5:1184">
+        Live Broadcast Pads
+      </p>
+      <div className="absolute bg-[#083344] h-[22px] left-[570px] rounded-[6px] top-[272px] w-[146px]" data-node-id="5:1185" data-name="Rectangle" />
+      <p className="absolute font-['Inter:Semi_Bold',sans-serif] font-semibold leading-[normal] left-[577px] not-italic text-[#06b6d4] text-[9px] top-[275px] whitespace-pre" data-node-id="5:1186">{`9 Jingles  •  1 Pallet`}</p>
+      <p className="absolute font-['Inter:Regular',sans-serif] font-normal leading-[normal] left-[514px] not-italic text-[#454d6d] text-[10px] top-[312px] whitespace-nowrap" data-node-id="5:1187">
+        Quick-fire jingle pallets for live broadcast.
+      </p>
+      <p className="absolute font-['Inter:Regular',sans-serif] font-normal leading-[normal] left-[514px] not-italic text-[#454d6d] text-[10px] top-[326px] whitespace-nowrap" data-node-id="5:1188">
+        Per-producer pallets, separate audio output.
+      </p>
+      <div className="absolute bg-[#1c1f38] h-px left-[514px] top-[362px] w-[412px]" data-node-id="5:1189" data-name="Rectangle" />
+      <div className="absolute bg-[#083344] h-[22px] left-[514px] rounded-[6px] top-[376px] w-[64px]" data-node-id="5:1190" data-name="Rectangle" />
+      <p className="absolute font-['Inter:Medium',sans-serif] font-medium leading-[normal] left-[522px] not-italic text-[#06b6d4] text-[9px] top-[379px] whitespace-nowrap" data-node-id="5:1191">
+        1 Pallet
+      </p>
+      <div className="absolute bg-[#1c1f38] h-[22px] left-[586px] rounded-[6px] top-[376px] w-[76px]" data-node-id="5:1192" data-name="Rectangle" />
+      <p className="absolute font-['Inter:Medium',sans-serif] font-medium leading-[normal] left-[594px] not-italic text-[#8891b8] text-[9px] top-[379px] whitespace-nowrap" data-node-id="5:1193">
+        Live Ready
+      </p>
+      <p className="absolute font-['Inter:Semi_Bold',sans-serif] font-semibold leading-[normal] left-[866px] not-italic text-[#06b6d4] text-[12px] top-[379px] whitespace-nowrap" data-node-id="5:1194">
+        Open →
+      </p>
+      <div className="absolute bg-[#131626] h-[198px] left-[960px] rounded-[14px] top-[216px] w-[444px]" data-node-id="5:1195" data-name="Rectangle" />
+      <div className="absolute bg-[#10b981] h-[4px] left-[960px] top-[216px] w-[444px]" data-node-id="5:1196" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(16,185,129,0.05)] h-[56px] left-[960px] top-[220px] w-[444px]" data-node-id="5:1197" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(16,185,129,0.55)] h-[198px] left-[960px] top-[216px] w-[3px]" data-node-id="5:1198" data-name="Rectangle" />
+      <div className="absolute border border-[rgba(16,185,129,0.22)] border-solid h-[198px] left-[960px] rounded-[14px] top-[216px] w-[444px]" data-node-id="5:1199" data-name="Rectangle" />
+      <div className="absolute bg-[#052e16] left-[976px] rounded-[10px] size-[46px] top-[234px]" data-node-id="5:1200" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(16,185,129,0.1)] left-[976px] rounded-[10px] size-[46px] top-[234px]" data-node-id="5:1201" data-name="Rectangle" />
+      <p className="absolute font-['Inter:Bold',sans-serif] font-bold leading-[normal] left-[985px] not-italic text-[#10b981] text-[22px] top-[240px] whitespace-nowrap" data-node-id="5:1202">
+        $
+      </p>
+      <div className="absolute bg-[#052e16] h-[20px] left-[1340px] rounded-[10px] top-[234px] w-[58px]" data-node-id="5:1203" data-name="Rectangle" />
+      <p className="absolute font-['Inter:Bold',sans-serif] font-bold leading-[normal] left-[1348px] not-italic text-[#10b981] text-[8px] top-[237px] whitespace-nowrap" data-node-id="5:1204">
+        REVENUE
+      </p>
+      <p className="absolute font-['Inter:Bold',sans-serif] font-bold leading-[normal] left-[1032px] not-italic text-[#f1f5ff] text-[17px] top-[234px] whitespace-nowrap" data-node-id="5:1205">{`Spots & Commercials`}</p>
+      <p className="absolute font-['Inter:Medium',sans-serif] font-medium leading-[normal] left-[1032px] not-italic text-[#10b981] text-[10px] top-[256px] whitespace-nowrap" data-node-id="5:1206">{`Ad Breaks & Priority System`}</p>
+      <div className="absolute bg-[#052e16] h-[22px] left-[1032px] rounded-[6px] top-[272px] w-[122px]" data-node-id="5:1207" data-name="Rectangle" />
+      <p className="absolute font-['Inter:Semi_Bold',sans-serif] font-semibold leading-[normal] left-[1039px] not-italic text-[#10b981] text-[9px] top-[275px] whitespace-nowrap" data-node-id="5:1208">
+        4 Active Campaigns
+      </p>
+      <p className="absolute font-['Inter:Regular',sans-serif] font-normal leading-[normal] left-[976px] not-italic text-[#454d6d] text-[10px] top-[312px] whitespace-nowrap" data-node-id="5:1209">
+        Campaign management with break times,
+      </p>
+      <p className="absolute font-['Inter:Regular',sans-serif] font-normal leading-[normal] left-[976px] not-italic text-[#454d6d] text-[10px] top-[326px] whitespace-nowrap" data-node-id="5:1210">{`priorities, optional play & traffic sync.`}</p>
+      <div className="absolute bg-[#1c1f38] h-px left-[976px] top-[362px] w-[412px]" data-node-id="5:1211" data-name="Rectangle" />
+      <div className="absolute bg-[#052e16] h-[22px] left-[976px] rounded-[6px] top-[376px] w-[64px]" data-node-id="5:1212" data-name="Rectangle" />
+      <p className="absolute font-['Inter:Medium',sans-serif] font-medium leading-[normal] left-[984px] not-italic text-[#10b981] text-[9px] top-[379px] whitespace-nowrap" data-node-id="5:1213">
+        4 Active
+      </p>
+      <div className="absolute bg-[#1c1f38] h-[22px] left-[1048px] rounded-[6px] top-[376px] w-[82px]" data-node-id="5:1214" data-name="Rectangle" />
+      <p className="absolute font-['Inter:Medium',sans-serif] font-medium leading-[normal] left-[1056px] not-italic text-[#8891b8] text-[9px] top-[379px] whitespace-nowrap" data-node-id="5:1215">
+        Next: 22:00
+      </p>
+      <p className="absolute font-['Inter:Semi_Bold',sans-serif] font-semibold leading-[normal] left-[1328px] not-italic text-[#10b981] text-[12px] top-[379px] whitespace-nowrap" data-node-id="5:1216">
+        Open →
+      </p>
+      <div className="absolute bg-[#131626] h-[198px] left-[36px] rounded-[14px] top-[432px] w-[444px]" data-node-id="5:1217" data-name="Rectangle" />
+      <div className="absolute bg-[#f59e0b] h-[4px] left-[36px] top-[432px] w-[444px]" data-node-id="5:1218" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(245,158,11,0.05)] h-[56px] left-[36px] top-[436px] w-[444px]" data-node-id="5:1219" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(245,158,11,0.55)] h-[198px] left-[36px] top-[432px] w-[3px]" data-node-id="5:1220" data-name="Rectangle" />
+      <div className="absolute border border-[rgba(245,158,11,0.22)] border-solid h-[198px] left-[36px] rounded-[14px] top-[432px] w-[444px]" data-node-id="5:1221" data-name="Rectangle" />
+      <div className="absolute bg-[#2d1a00] left-[52px] rounded-[10px] size-[46px] top-[450px]" data-node-id="5:1222" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(245,158,11,0.1)] left-[52px] rounded-[10px] size-[46px] top-[450px]" data-node-id="5:1223" data-name="Rectangle" />
+      <p className="absolute font-['Inter:Bold',sans-serif] font-bold leading-[normal] left-[61px] not-italic text-[#f59e0b] text-[22px] top-[456px] whitespace-nowrap" data-node-id="5:1224">
+        🔔
+      </p>
+      <div className="absolute bg-[#2d1a00] h-[20px] left-[410px] rounded-[10px] top-[450px] w-[64px]" data-node-id="5:1225" data-name="Rectangle" />
+      <p className="absolute font-['Inter:Bold',sans-serif] font-bold leading-[normal] left-[418px] not-italic text-[#f59e0b] text-[8px] top-[453px] whitespace-nowrap" data-node-id="5:1226">
+        BRANDING
+      </p>
+      <p className="absolute font-['Inter:Bold',sans-serif] font-bold leading-[normal] left-[108px] not-italic text-[#f1f5ff] text-[17px] top-[450px] whitespace-nowrap" data-node-id="5:1227">
+        Jingles
+      </p>
+      <p className="absolute font-['Inter:Medium',sans-serif] font-medium leading-[normal] left-[108px] not-italic text-[#f59e0b] text-[10px] top-[472px] whitespace-nowrap" data-node-id="5:1228">
+        Station Identity Audio
+      </p>
+      <div className="absolute bg-[#2d1a00] h-[22px] left-[108px] rounded-[6px] top-[488px] w-[134px]" data-node-id="5:1229" data-name="Rectangle" />
+      <p className="absolute font-['Inter:Semi_Bold',sans-serif] font-semibold leading-[normal] left-[115px] not-italic text-[#f59e0b] text-[9px] top-[491px] whitespace-nowrap" data-node-id="5:1230">
+        16 Jingles Available
+      </p>
+      <p className="absolute font-['Inter:Regular',sans-serif] font-normal leading-[normal] left-[52px] not-italic text-[#454d6d] text-[10px] top-[528px] whitespace-nowrap" data-node-id="5:1231">
+        Branding jingles organized by category.
+      </p>
+      <p className="absolute font-['Inter:Regular',sans-serif] font-normal leading-[normal] left-[52px] not-italic text-[#454d6d] text-[10px] top-[542px] whitespace-nowrap" data-node-id="5:1232">
+        Schedule via clocks or playlists.
+      </p>
+      <div className="absolute bg-[#1c1f38] h-px left-[52px] top-[578px] w-[412px]" data-node-id="5:1233" data-name="Rectangle" />
+      <div className="absolute bg-[#2d1a00] h-[22px] left-[52px] rounded-[6px] top-[592px] w-[88px]" data-node-id="5:1234" data-name="Rectangle" />
+      <p className="absolute font-['Inter:Medium',sans-serif] font-medium leading-[normal] left-[60px] not-italic text-[#f59e0b] text-[9px] top-[595px] whitespace-nowrap" data-node-id="5:1235">
+        4 Categories
+      </p>
+      <div className="absolute bg-[#1c1f38] h-[22px] left-[148px] rounded-[6px] top-[592px] w-[70px]" data-node-id="5:1236" data-name="Rectangle" />
+      <p className="absolute font-['Inter:Medium',sans-serif] font-medium leading-[normal] left-[156px] not-italic text-[#8891b8] text-[9px] top-[595px] whitespace-nowrap" data-node-id="5:1237">
+        Auto-Play
+      </p>
+      <p className="absolute font-['Inter:Semi_Bold',sans-serif] font-semibold leading-[normal] left-[404px] not-italic text-[#f59e0b] text-[12px] top-[595px] whitespace-nowrap" data-node-id="5:1238">
+        Open →
+      </p>
+      <div className="absolute bg-[#131626] h-[198px] left-[498px] rounded-[14px] top-[432px] w-[444px]" data-node-id="5:1239" data-name="Rectangle" />
+      <div className="absolute bg-[#f43f5e] h-[4px] left-[498px] top-[432px] w-[444px]" data-node-id="5:1240" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(244,63,94,0.05)] h-[56px] left-[498px] top-[436px] w-[444px]" data-node-id="5:1241" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(244,63,94,0.55)] h-[198px] left-[498px] top-[432px] w-[3px]" data-node-id="5:1242" data-name="Rectangle" />
+      <div className="absolute border border-[rgba(244,63,94,0.22)] border-solid h-[198px] left-[498px] rounded-[14px] top-[432px] w-[444px]" data-node-id="5:1243" data-name="Rectangle" />
+      <div className="absolute bg-[#1f0a12] left-[514px] rounded-[10px] size-[46px] top-[450px]" data-node-id="5:1244" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(244,63,94,0.1)] left-[514px] rounded-[10px] size-[46px] top-[450px]" data-node-id="5:1245" data-name="Rectangle" />
+      <p className="absolute font-['Inter:Bold','Noto_Sans_JP:Bold',sans-serif] font-bold leading-[normal] left-[523px] not-italic text-[#f43f5e] text-[22px] top-[456px] whitespace-nowrap" data-node-id="5:1246">
+        〜
+      </p>
+      <div className="absolute bg-[#1f0a12] h-[20px] left-[860px] rounded-[10px] top-[450px] w-[76px]" data-node-id="5:1247" data-name="Rectangle" />
+      <p className="absolute font-['Inter:Bold',sans-serif] font-bold leading-[normal] left-[868px] not-italic text-[#f43f5e] text-[8px] top-[453px] whitespace-nowrap" data-node-id="5:1248">
+        PRODUCTION
+      </p>
+      <p className="absolute font-['Inter:Bold',sans-serif] font-bold leading-[normal] left-[570px] not-italic text-[#f1f5ff] text-[17px] top-[450px] whitespace-nowrap" data-node-id="5:1249">
+        Sweepers
+      </p>
+      <p className="absolute font-['Inter:Medium',sans-serif] font-medium leading-[normal] left-[570px] not-italic text-[#f43f5e] text-[10px] top-[472px] whitespace-nowrap" data-node-id="5:1250">
+        Audio Overlays on Songs
+      </p>
+      <div className="absolute bg-[#1f0a12] h-[22px] left-[570px] rounded-[6px] top-[488px] w-[134px]" data-node-id="5:1251" data-name="Rectangle" />
+      <p className="absolute font-['Inter:Semi_Bold',sans-serif] font-semibold leading-[normal] left-[577px] not-italic text-[#f43f5e] text-[9px] top-[491px] whitespace-nowrap" data-node-id="5:1252">
+        3 Sweepers Available
+      </p>
+      <p className="absolute font-['Inter:Regular',sans-serif] font-normal leading-[normal] left-[514px] not-italic text-[#454d6d] text-[10px] top-[528px] whitespace-nowrap" data-node-id="5:1253">
+        Play over songs at defined positions:
+      </p>
+      <p className="absolute font-['Inter:Regular',sans-serif] font-normal leading-[normal] left-[514px] not-italic text-[#454d6d] text-[10px] top-[542px] whitespace-nowrap" data-node-id="5:1254">
+        start, before intro, before end, bridge.
+      </p>
+      <div className="absolute bg-[#1c1f38] h-px left-[514px] top-[578px] w-[412px]" data-node-id="5:1255" data-name="Rectangle" />
+      <div className="absolute bg-[#1f0a12] h-[22px] left-[514px] rounded-[6px] top-[592px] w-[82px]" data-node-id="5:1256" data-name="Rectangle" />
+      <p className="absolute font-['Inter:Medium',sans-serif] font-medium leading-[normal] left-[522px] not-italic text-[#f43f5e] text-[9px] top-[595px] whitespace-nowrap" data-node-id="5:1257">
+        3 Positions
+      </p>
+      <div className="absolute bg-[#1c1f38] h-[22px] left-[604px] rounded-[6px] top-[592px] w-[52px]" data-node-id="5:1258" data-name="Rectangle" />
+      <p className="absolute font-['Inter:Medium',sans-serif] font-medium leading-[normal] left-[612px] not-italic text-[#8891b8] text-[9px] top-[595px] whitespace-nowrap" data-node-id="5:1259">
+        Synced
+      </p>
+      <p className="absolute font-['Inter:Semi_Bold',sans-serif] font-semibold leading-[normal] left-[866px] not-italic text-[#f43f5e] text-[12px] top-[595px] whitespace-nowrap" data-node-id="5:1260">
+        Open →
+      </p>
+      <div className="absolute bg-[#131626] h-[198px] left-[960px] rounded-[14px] top-[432px] w-[444px]" data-node-id="5:1261" data-name="Rectangle" />
+      <div className="absolute bg-[#14b8a6] h-[4px] left-[960px] top-[432px] w-[444px]" data-node-id="5:1262" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(20,184,166,0.05)] h-[56px] left-[960px] top-[436px] w-[444px]" data-node-id="5:1263" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(20,184,166,0.55)] h-[198px] left-[960px] top-[432px] w-[3px]" data-node-id="5:1264" data-name="Rectangle" />
+      <div className="absolute border border-[rgba(20,184,166,0.22)] border-solid h-[198px] left-[960px] rounded-[14px] top-[432px] w-[444px]" data-node-id="5:1265" data-name="Rectangle" />
+      <div className="absolute bg-[#042f2a] left-[976px] rounded-[10px] size-[46px] top-[450px]" data-node-id="5:1266" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(20,184,166,0.1)] left-[976px] rounded-[10px] size-[46px] top-[450px]" data-node-id="5:1267" data-name="Rectangle" />
+      <p className="absolute font-['Inter:Bold','Noto_Sans:Bold',sans-serif] font-bold leading-[normal] left-[985px] not-italic text-[#14b8a6] text-[22px] top-[456px] whitespace-nowrap" data-node-id="5:1268">
+        ✦
+      </p>
+      <div className="absolute bg-[#042f2a] h-[20px] left-[1322px] rounded-[10px] top-[450px] w-[76px]" data-node-id="5:1269" data-name="Rectangle" />
+      <p className="absolute font-['Inter:Bold',sans-serif] font-bold leading-[normal] left-[1330px] not-italic text-[#14b8a6] text-[8px] top-[453px] whitespace-nowrap" data-node-id="5:1270">
+        AI POWERED
+      </p>
+      <p className="absolute font-['Inter:Bold',sans-serif] font-bold leading-[normal] left-[1032px] not-italic text-[#f1f5ff] text-[17px] top-[450px] whitespace-nowrap" data-node-id="5:1271">
+        The Stitcher
+      </p>
+      <p className="absolute font-['Inter:Medium',sans-serif] font-medium leading-[normal] left-[1032px] not-italic text-[#14b8a6] text-[10px] top-[472px] whitespace-nowrap" data-node-id="5:1272">
+        Automated Audio Assembly
+      </p>
+      <div className="absolute bg-[#042f2a] h-[22px] left-[1032px] rounded-[6px] top-[488px] w-[110px]" data-node-id="5:1273" data-name="Rectangle" />
+      <p className="absolute font-['Inter:Semi_Bold',sans-serif] font-semibold leading-[normal] left-[1039px] not-italic text-[#14b8a6] text-[9px] top-[491px] whitespace-nowrap" data-node-id="5:1274">
+        3 Active Modules
+      </p>
+      <p className="absolute font-['Inter:Regular',sans-serif] font-normal leading-[normal] left-[976px] not-italic text-[#454d6d] text-[10px] top-[528px] whitespace-nowrap" data-node-id="5:1275">
+        Auto-builds hooks, time announcements
+      </p>
+      <p className="absolute font-['Inter:Regular',sans-serif] font-normal leading-[normal] left-[976px] not-italic text-[#454d6d] text-[10px] top-[542px] whitespace-nowrap" data-node-id="5:1276">
+        and news from prerecorded audio parts.
+      </p>
+      <div className="absolute bg-[#1c1f38] h-px left-[976px] top-[578px] w-[412px]" data-node-id="5:1277" data-name="Rectangle" />
+      <div className="absolute bg-[#042f2a] h-[22px] left-[976px] rounded-[6px] top-[592px] w-[76px]" data-node-id="5:1278" data-name="Rectangle" />
+      <p className="absolute font-['Inter:Medium',sans-serif] font-medium leading-[normal] left-[984px] not-italic text-[#14b8a6] text-[9px] top-[595px] whitespace-nowrap" data-node-id="5:1279">
+        Hooks+Time
+      </p>
+      <div className="absolute bg-[#1c1f38] h-[22px] left-[1060px] rounded-[6px] top-[592px] w-[52px]" data-node-id="5:1280" data-name="Rectangle" />
+      <p className="absolute font-['Inter:Medium',sans-serif] font-medium leading-[normal] left-[1068px] not-italic text-[#8891b8] text-[9px] top-[595px] whitespace-nowrap" data-node-id="5:1281">
+        + News
+      </p>
+      <p className="absolute font-['Inter:Semi_Bold',sans-serif] font-semibold leading-[normal] left-[1328px] not-italic text-[#14b8a6] text-[12px] top-[595px] whitespace-nowrap" data-node-id="5:1282">
+        Open →
+      </p>
+      <div className="absolute bg-[rgba(15,17,32,0.96)] h-[50px] left-0 top-[764px] w-[1440px]" data-node-id="5:1283" data-name="Rectangle" />
+      <div className="absolute bg-[#1c1f38] h-px left-0 top-[764px] w-[1440px]" data-node-id="5:1284" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.18)] h-px left-0 top-[764px] w-[1440px]" data-node-id="5:1285" data-name="Rectangle" />
+      <div className="absolute bg-[#1e1535] h-[26px] left-[20px] rounded-[7px] top-[776px] w-[97px]" data-node-id="5:1286" data-name="Rectangle" />
+      <p className="absolute font-['Inter:Semi_Bold','Noto_Sans:Bold',sans-serif] font-semibold leading-[normal] left-[29px] not-italic text-[#8b5cf6] text-[9px] top-[779px] whitespace-nowrap" data-node-id="5:1287">
+        ⬤ AUTO MODE
+      </p>
+      <div className="absolute bg-[#052e16] h-[26px] left-[127px] rounded-[7px] top-[776px] w-[97px]" data-node-id="5:1288" data-name="Rectangle" />
+      <p className="absolute font-['Inter:Semi_Bold','Noto_Sans:Bold',sans-serif] font-semibold leading-[normal] left-[136px] not-italic text-[#10b981] text-[9px] top-[779px] whitespace-nowrap" data-node-id="5:1289">
+        ⬤ AI Active
+      </p>
+      <div className="absolute bg-[#083344] h-[26px] left-[234px] rounded-[7px] top-[776px] w-[83px]" data-node-id="5:1290" data-name="Rectangle" />
+      <p className="absolute font-['Inter:Semi_Bold','Noto_Sans:Bold',sans-serif] font-semibold leading-[normal] left-[243px] not-italic text-[#06b6d4] text-[9px] top-[779px] whitespace-nowrap" data-node-id="5:1291">
+        ⬤ Sync OK
+      </p>
+      <div className="absolute bg-[#2d1a00] h-[26px] left-[327px] rounded-[7px] top-[776px] w-[111px]" data-node-id="5:1292" data-name="Rectangle" />
+      <p className="absolute font-['Inter:Semi_Bold','Noto_Sans:Bold',sans-serif] font-semibold leading-[normal] left-[336px] not-italic text-[#f59e0b] text-[9px] top-[779px] whitespace-nowrap" data-node-id="5:1293">
+        ⬤ No Problems
+      </p>
+      <p className="absolute font-['Inter:Regular',sans-serif] font-normal leading-[normal] left-[1040px] not-italic text-[#252840] text-[10px] top-[779px] whitespace-pre" data-node-id="5:1294">{`Program running: 1 minute  •  RadioAI Studio v1.0.0`}</p>
+      <div className="absolute bg-[#1e1535] h-[32px] left-[1324px] rounded-[8px] top-[772px] w-[96px]" data-node-id="5:1295" data-name="Rectangle" />
+      <p className="absolute font-['Inter:Medium',sans-serif] font-medium leading-[normal] left-[1332px] not-italic text-[#a78bfa] text-[11px] top-[778px] whitespace-nowrap" data-node-id="5:1296">
+        ⚙ Settings
+      </p>
+      <div className="absolute bg-[#0a0c1a] h-[108px] left-[36px] rounded-[16px] top-[652px] w-[1368px]" data-node-id="8:2" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(30,21,53,0.9)] h-[108px] left-[36px] top-[652px] w-[380px]" data-node-id="8:3" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(30,21,53,0.9)] h-[108px] left-[36px] top-[652px] w-[380px]" data-node-id="8:4" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.6)] h-[2px] left-[36px] rounded-[2px] top-[652px] w-[1368px]" data-node-id="8:5" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.3)] h-[2px] left-[36px] rounded-[2px] top-[758px] w-[1368px]" data-node-id="8:6" data-name="Rectangle" />
+      <div className="absolute bg-[#8b5cf6] h-[108px] left-[36px] rounded-[3px] top-[652px] w-[6px]" data-node-id="8:7" data-name="Rectangle" />
+      <div className="absolute h-[188px] left-[6px] top-[612px] w-[300px]" data-node-id="8:8" data-name="Ellipse">
+        <img alt="" className="absolute block inset-0 max-w-none size-full" src={imgEllipse2} />
+      </div>
+      <div className="absolute border-[1.5px] border-[rgba(139,92,246,0.45)] border-solid h-[108px] left-[36px] rounded-[16px] top-[652px] w-[1368px]" data-node-id="8:9" data-name="Rectangle" />
+      <div className="absolute left-[62px] size-[80px] top-[662px]" data-node-id="8:10" data-name="Ellipse">
+        <img alt="" className="absolute block inset-0 max-w-none size-full" src={imgEllipse3} />
+      </div>
+      <div className="absolute left-[70px] size-[64px] top-[670px]" data-node-id="8:11" data-name="Ellipse">
+        <img alt="" className="absolute block inset-0 max-w-none size-full" src={imgEllipse4} />
+      </div>
+      <div className="absolute left-[78px] size-[48px] top-[678px]" data-node-id="8:12" data-name="Ellipse">
+        <img alt="" className="absolute block inset-0 max-w-none size-full" src={imgEllipse5} />
+      </div>
+      <div className="absolute bg-[#1e1535] left-[56px] rounded-[40px] size-[80px] top-[666px]" data-node-id="8:13" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.15)] left-[56px] rounded-[40px] size-[80px] top-[666px]" data-node-id="8:14" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(167,139,250,0.9)] h-[6px] left-[76px] rounded-[2px] top-[703px] w-[5px]" data-node-id="8:15" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(167,139,250,0.9)] h-[12px] left-[84px] rounded-[2px] top-[700px] w-[5px]" data-node-id="8:16" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(167,139,250,0.9)] h-[20px] left-[92px] rounded-[2px] top-[696px] w-[5px]" data-node-id="8:17" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(167,139,250,0.9)] h-[28px] left-[100px] rounded-[2px] top-[692px] w-[5px]" data-node-id="8:18" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(167,139,250,0.9)] h-[22px] left-[108px] rounded-[2px] top-[695px] w-[5px]" data-node-id="8:19" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(167,139,250,0.9)] h-[34px] left-[116px] rounded-[2px] top-[689px] w-[5px]" data-node-id="8:20" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(167,139,250,0.9)] h-[26px] left-[124px] rounded-[2px] top-[693px] w-[5px]" data-node-id="8:21" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(167,139,250,0.9)] h-[18px] left-[132px] rounded-[2px] top-[697px] w-[5px]" data-node-id="8:22" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(167,139,250,0.9)] h-[10px] left-[140px] rounded-[2px] top-[701px] w-[5px]" data-node-id="8:23" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(167,139,250,0.9)] h-[8px] left-[148px] rounded-[2px] top-[702px] w-[5px]" data-node-id="8:24" data-name="Rectangle" />
+      <p className="absolute font-['Inter:Bold',sans-serif] font-bold leading-[normal] left-[62px] not-italic text-[#a78bfa] text-[9px] top-[734px] whitespace-nowrap" data-node-id="8:25">
+        STUDIO
+      </p>
+      <p className="absolute font-['Inter:Bold',sans-serif] font-bold leading-[normal] left-[158px] not-italic text-[#f1f5ff] text-[36px] top-[668px] whitespace-nowrap" data-node-id="8:26">
+        Studio
+      </p>
+      <div className="absolute left-[158px] size-[12px] top-[714px]" data-node-id="8:27" data-name="Ellipse">
+        <img alt="" className="absolute block inset-0 max-w-none size-full" src={imgEllipse6} />
+      </div>
+      <div className="absolute bg-[rgba(16,185,129,0.15)] left-[161px] rounded-[6px] size-[12px] top-[710px]" data-node-id="8:28" data-name="Rectangle" />
+      <p className="absolute font-['Inter:Bold',sans-serif] font-bold leading-[normal] left-[176px] not-italic text-[#10b981] text-[10px] top-[715px] whitespace-nowrap" data-node-id="8:29">
+        LIVE NOW
+      </p>
+      <p className="absolute font-['Inter:Regular',sans-serif] font-normal leading-[normal] left-[242px] not-italic text-[#8891b8] text-[12px] top-[713px] whitespace-nowrap" data-node-id="8:30">
+        Billie Eilish — Bury A Friend
+      </p>
+      <div className="absolute bg-[#252848] h-[72px] left-[436px] top-[670px] w-px" data-node-id="8:31" data-name="Rectangle" />
+      <p className="absolute font-['Inter:Semi_Bold',sans-serif] font-semibold leading-[normal] left-[456px] not-italic text-[#454d6d] text-[9px] top-[668px] whitespace-nowrap" data-node-id="8:32">
+        NOW PLAYING
+      </p>
+      <p className="absolute font-['Inter:Semi_Bold',sans-serif] font-semibold leading-[normal] left-[456px] not-italic text-[#f1f5ff] text-[20px] top-[686px] whitespace-nowrap" data-node-id="8:33">
+        Billie Eilish
+      </p>
+      <p className="absolute font-['Inter:Regular',sans-serif] font-normal leading-[normal] left-[456px] not-italic text-[#a78bfa] text-[14px] top-[712px] whitespace-nowrap" data-node-id="8:34">
+        Bury A Friend
+      </p>
+      <p className="absolute font-['Inter:Regular',sans-serif] font-normal leading-[normal] left-[456px] not-italic text-[#454d6d] text-[10px] top-[732px] whitespace-pre" data-node-id="8:35">{`Pop  •  Happier Than Ever  •  2021`}</p>
+      <div className="absolute bg-[rgba(139,92,246,0.8)] h-[4px] left-[716px] rounded-[2px] top-[706px] w-[7px]" data-node-id="8:36" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.8)] h-[16px] left-[726px] rounded-[2px] top-[700px] w-[7px]" data-node-id="8:37" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.8)] h-[25px] left-[736px] rounded-[2px] top-[696px] w-[7px]" data-node-id="8:38" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.8)] h-[28px] left-[746px] rounded-[2px] top-[694px] w-[7px]" data-node-id="8:39" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.8)] h-[25px] left-[756px] rounded-[2px] top-[696px] w-[7px]" data-node-id="8:40" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.8)] h-[17px] left-[766px] rounded-[2px] top-[700px] w-[7px]" data-node-id="8:41" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.8)] h-[9px] left-[776px] rounded-[2px] top-[704px] w-[7px]" data-node-id="8:42" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.8)] h-[4px] left-[786px] rounded-[2px] top-[706px] w-[7px]" data-node-id="8:43" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.8)] h-[4px] left-[796px] rounded-[2px] top-[706px] w-[7px]" data-node-id="8:44" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.8)] h-[9px] left-[806px] rounded-[2px] top-[704px] w-[7px]" data-node-id="8:45" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.8)] h-[18px] left-[816px] rounded-[2px] top-[699px] w-[7px]" data-node-id="8:46" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.8)] h-[25px] left-[826px] rounded-[2px] top-[696px] w-[7px]" data-node-id="8:47" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.8)] h-[28px] left-[836px] rounded-[2px] top-[694px] w-[7px]" data-node-id="8:48" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.8)] h-[25px] left-[846px] rounded-[2px] top-[696px] w-[7px]" data-node-id="8:49" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.8)] h-[16px] left-[856px] rounded-[2px] top-[700px] w-[7px]" data-node-id="8:50" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.8)] h-[4px] left-[866px] rounded-[2px] top-[706px] w-[7px]" data-node-id="8:51" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.8)] h-[17px] left-[876px] rounded-[2px] top-[700px] w-[7px]" data-node-id="8:52" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.8)] h-[25px] left-[886px] rounded-[2px] top-[696px] w-[7px]" data-node-id="8:53" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.8)] h-[28px] left-[896px] rounded-[2px] top-[694px] w-[7px]" data-node-id="8:54" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.8)] h-[24px] left-[906px] rounded-[2px] top-[696px] w-[7px]" data-node-id="8:55" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.8)] h-[17px] left-[916px] rounded-[2px] top-[700px] w-[7px]" data-node-id="8:56" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.8)] h-[9px] left-[926px] rounded-[2px] top-[704px] w-[7px]" data-node-id="8:57" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.8)] h-[4px] left-[936px] rounded-[2px] top-[706px] w-[7px]" data-node-id="8:58" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(139,92,246,0.8)] h-[4px] left-[946px] rounded-[2px] top-[706px] w-[7px]" data-node-id="8:59" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.35)] h-[10px] left-[956px] rounded-[2px] top-[703px] w-[7px]" data-node-id="8:60" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.35)] h-[18px] left-[966px] rounded-[2px] top-[699px] w-[7px]" data-node-id="8:61" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.35)] h-[25px] left-[976px] rounded-[2px] top-[696px] w-[7px]" data-node-id="8:62" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.35)] h-[28px] left-[986px] rounded-[2px] top-[694px] w-[7px]" data-node-id="8:63" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.35)] h-[25px] left-[996px] rounded-[2px] top-[696px] w-[7px]" data-node-id="8:64" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.35)] h-[15px] left-[1006px] rounded-[2px] top-[701px] w-[7px]" data-node-id="8:65" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.35)] h-[5px] left-[1016px] rounded-[2px] top-[706px] w-[7px]" data-node-id="8:66" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.35)] h-[17px] left-[1026px] rounded-[2px] top-[700px] w-[7px]" data-node-id="8:67" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.35)] h-[26px] left-[1036px] rounded-[2px] top-[695px] w-[7px]" data-node-id="8:68" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.35)] h-[28px] left-[1046px] rounded-[2px] top-[694px] w-[7px]" data-node-id="8:69" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.35)] h-[24px] left-[1056px] rounded-[2px] top-[696px] w-[7px]" data-node-id="8:70" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.35)] h-[17px] left-[1066px] rounded-[2px] top-[700px] w-[7px]" data-node-id="8:71" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.35)] h-[9px] left-[1076px] rounded-[2px] top-[704px] w-[7px]" data-node-id="8:72" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.35)] h-[4px] left-[1086px] rounded-[2px] top-[706px] w-[7px]" data-node-id="8:73" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.35)] h-[5px] left-[1096px] rounded-[2px] top-[706px] w-[7px]" data-node-id="8:74" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.35)] h-[10px] left-[1106px] rounded-[2px] top-[703px] w-[7px]" data-node-id="8:75" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.35)] h-[18px] left-[1116px] rounded-[2px] top-[699px] w-[7px]" data-node-id="8:76" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.35)] h-[25px] left-[1126px] rounded-[2px] top-[696px] w-[7px]" data-node-id="8:77" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.35)] h-[28px] left-[1136px] rounded-[2px] top-[694px] w-[7px]" data-node-id="8:78" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.35)] h-[24px] left-[1146px] rounded-[2px] top-[696px] w-[7px]" data-node-id="8:79" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.35)] h-[15px] left-[1156px] rounded-[2px] top-[701px] w-[7px]" data-node-id="8:80" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.35)] h-[5px] left-[1166px] rounded-[2px] top-[706px] w-[7px]" data-node-id="8:81" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.35)] h-[18px] left-[1176px] rounded-[2px] top-[699px] w-[7px]" data-node-id="8:82" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(37,40,72,0.35)] h-[26px] left-[1186px] rounded-[2px] top-[695px] w-[7px]" data-node-id="8:83" data-name="Rectangle" />
+      <div className="absolute bg-[#252848] h-[72px] left-[1124px] top-[670px] w-px" data-node-id="8:84" data-name="Rectangle" />
+      <p className="absolute font-['Inter:Semi_Bold',sans-serif] font-semibold leading-[normal] left-[1144px] not-italic text-[#454d6d] text-[9px] top-[668px] whitespace-nowrap" data-node-id="8:85">
+        NEXT BREAK
+      </p>
+      <p className="absolute font-['Roboto_Mono:Bold',sans-serif] font-bold leading-[normal] left-[1144px] text-[#f59e0b] text-[32px] top-[682px] whitespace-nowrap" data-node-id="8:86">
+        22:00
+      </p>
+      <p className="absolute font-['Inter:Regular',sans-serif] font-normal leading-[normal] left-[1144px] not-italic text-[#8891b8] text-[12px] top-[720px] whitespace-nowrap" data-node-id="8:87">
+        in 04:12
+      </p>
+      <div className="absolute bg-[#8b5cf6] h-[68px] left-[1246px] rounded-[10px] top-[672px] w-[140px]" data-node-id="8:88" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(109,40,217,0.3)] h-[68px] left-[1246px] rounded-[10px] top-[672px] w-[140px]" data-node-id="8:89" data-name="Rectangle" />
+      <div className="absolute h-[88px] left-[1236px] top-[662px] w-[160px]" data-node-id="8:90" data-name="Ellipse">
+        <img alt="" className="absolute block inset-0 max-w-none size-full" src={imgEllipse7} />
+      </div>
+      <p className="absolute font-['Inter:Bold',sans-serif] font-bold leading-[normal] left-[1264px] not-italic text-[#f1f5ff] text-[26px] top-[684px] whitespace-nowrap" data-node-id="8:91">
+        ▶
+      </p>
+      <p className="absolute font-['Inter:Bold',sans-serif] font-bold leading-[normal] left-[1298px] not-italic text-[#f1f5ff] text-[18px] top-[682px] whitespace-nowrap" data-node-id="8:92">
+        Open
+      </p>
+      <p className="absolute font-['Inter:Medium',sans-serif] font-medium leading-[normal] left-[1298px] not-italic text-[#a78bfa] text-[14px] top-[704px] whitespace-nowrap" data-node-id="8:93">
+        Studio
+      </p>
+      <div className="absolute border-[1.5px] border-[rgba(167,139,250,0.6)] border-solid h-[68px] left-[1246px] rounded-[10px] top-[672px] w-[140px]" data-node-id="8:94" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(252,211,77,0.5)] h-[14px] left-[146px] rounded-[1px] top-[651px] w-[2px]" data-node-id="8:95" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(252,211,77,0.5)] h-[2px] left-[139px] rounded-[1px] top-[658px] w-[14px]" data-node-id="8:96" data-name="Rectangle" />
+      <div className="absolute left-[143px] size-[6px] top-[655px]" data-node-id="8:97" data-name="Ellipse">
+        <img alt="" className="absolute block inset-0 max-w-none size-full" src={imgEllipse8} />
+      </div>
+      <div className="absolute bg-[rgba(252,211,77,0.5)] h-[14px] left-[416px] rounded-[1px] top-[649px] w-[2px]" data-node-id="8:98" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(252,211,77,0.5)] h-[2px] left-[409px] rounded-[1px] top-[656px] w-[14px]" data-node-id="8:99" data-name="Rectangle" />
+      <div className="absolute left-[413px] size-[6px] top-[653px]" data-node-id="8:100" data-name="Ellipse">
+        <img alt="" className="absolute block inset-0 max-w-none size-full" src={imgEllipse8} />
+      </div>
+      <div className="absolute bg-[rgba(252,211,77,0.5)] h-[14px] left-[1104px] rounded-[1px] top-[653px] w-[2px]" data-node-id="8:101" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(252,211,77,0.5)] h-[2px] left-[1097px] rounded-[1px] top-[660px] w-[14px]" data-node-id="8:102" data-name="Rectangle" />
+      <div className="absolute left-[1101px] size-[6px] top-[657px]" data-node-id="8:103" data-name="Ellipse">
+        <img alt="" className="absolute block inset-0 max-w-none size-full" src={imgEllipse8} />
+      </div>
+      <div className="absolute bg-[rgba(252,211,77,0.5)] h-[14px] left-[1374px] rounded-[1px] top-[651px] w-[2px]" data-node-id="8:104" data-name="Rectangle" />
+      <div className="absolute bg-[rgba(252,211,77,0.5)] h-[2px] left-[1367px] rounded-[1px] top-[658px] w-[14px]" data-node-id="8:105" data-name="Rectangle" />
+      <div className="absolute left-[1371px] size-[6px] top-[655px]" data-node-id="8:106" data-name="Ellipse">
+        <img alt="" className="absolute block inset-0 max-w-none size-full" src={imgEllipse8} />
+      </div>
+    </div>
+  );
+}

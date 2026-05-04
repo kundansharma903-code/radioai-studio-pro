@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.env
+.venv
+venv/
+env/
+
+# PyQt6 / Qt
+*.qmlc
+*.jsc
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# IDE
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Logs
+logs/
+*.log
+
+# Database (do NOT commit production DB)
+*.db
+*.db-wal
+*.db-shm
+
+# Temp / stitcher output
+stitcher_*.wav
+*.tmp
+
+# Distribution
+*.spec
+figma_5-2.png
+figma_192-2.png
+figma_212-2.png
+figma_28-2.png
+figma_218-2.png
+figma_218-46.png
+figma_112-2.png
+figma_32-2.png
