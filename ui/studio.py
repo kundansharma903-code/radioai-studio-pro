@@ -1400,6 +1400,10 @@ class Studio(QWidget):
         # ("deck" = manual-played song; "spot" = scheduler-triggered ad)
         self._playback_kind: Optional[str] = None
         self._playback_campaign_id: Optional[int] = None  # set when kind=='spot'
+        # Phase D5: when a spot interrupts the deck, remember which song
+        # was playing so that on spot EOS we can advance to the NEXT
+        # queue item (Q1 — Jazler convention: spot replaces a slot)
+        self._pre_spot_song_id: Optional[int] = None
 
         # Real-DB queue (D5 will replace this with proper queue logic)
         self._queue_songs: list[dict] = self._load_queue_from_db()
@@ -1803,19 +1807,108 @@ class Studio(QWidget):
                 self._fmt_remaining(dur - position_ms))
 
     def _on_engine_playback_ended(self, channel_id: int) -> None:
+        """Phase D5: branch on _playback_kind to drive auto-advance.
+
+        Four paths:
+          (a) kind == 'spot'  → advance queue from _pre_spot_song_id
+              anchor (Q1: Jazler — spot replaces a slot)
+          (b) kind == 'deck' + _stop_after_current → idle, reset flag
+              (Q5: auto-reset after consume)
+          (c) kind == 'deck' + _loop_enabled → replay same song
+              (Q3: same-song single loop)
+          (d) kind == 'deck' otherwise → auto-advance to next queue item
+              (Q4: Studio handles internally; song_auto_advance signal
+              stays declared but unused, reserved for Phase E)
+
+        On queue exhaustion → idle. Loop replay treated as a fresh play
+        on the SAME song dict (engine load_file gives a new channel id —
+        never-reused contract holds)."""
         if channel_id != self._playback_cid:
             return
         kind = self._playback_kind
+        pre_track = self._current_track
         log.info(f"[studio] EOS on ch={channel_id} (kind={kind})")
-        # D2/D4: cleanup + idle. D5 will check loop / stop_after_current /
-        # auto-advance for kind=='deck' EOS, and kind=='spot' EOS will
-        # resume the deck queue.
-        self._engine.cleanup(channel_id)
+
+        # Cleanup channel + clear deck state (decision logic below uses
+        # captured locals, not the cleared instance state)
+        try:
+            self._engine.cleanup(channel_id)
+        except Exception as exc:
+            log.debug(f"[studio] EOS cleanup: {exc}")
         self._playback_cid = None
         self._playback_kind = None
         self._playback_campaign_id = None
+
+        # Path (a): spot ended → advance queue from pre-spot anchor
+        if kind == "spot":
+            anchor_id = self._pre_spot_song_id
+            self._pre_spot_song_id = None
+            next_song = self._compute_next_song(after_id=anchor_id)
+            if next_song is not None:
+                log.info(
+                    f"[studio] spot EOS → resume queue: "
+                    f"{next_song.get('title')!r}")
+                self._on_queue_song_play(next_song)
+                return
+            log.info("[studio] spot EOS → queue exhausted, idle")
+            self._current_track = None
+            self._apply_idle_state()
+            return
+
+        # Path (b): stop-next flag wins over loop and auto-advance
+        if kind == "deck" and self._stop_after_current:
+            self._stop_after_current = False        # Q5: auto-reset
+            self._current_track = None
+            log.info("[studio] stop-next consumed → idle")
+            self._apply_idle_state()
+            return
+
+        # Path (c): loop replays the same song (Q3 — single-song loop)
+        if (kind == "deck" and self._loop_enabled
+                and pre_track is not None):
+            log.info(f"[studio] loop replay → {pre_track.get('title')!r}")
+            self._on_queue_song_play(pre_track)
+            return
+
+        # Path (d): auto-advance to the next queue item
+        if kind == "deck":
+            cur_id = (pre_track or {}).get("id")
+            next_song = self._compute_next_song(after_id=cur_id)
+            if next_song is not None:
+                log.info(
+                    f"[studio] auto-advance → {next_song.get('title')!r}")
+                self._on_queue_song_play(next_song)
+                return
+            log.info("[studio] queue exhausted — idle")
+            self._current_track = None
+            self._apply_idle_state()
+            return
+
+        # Unknown kind (defensive — shouldn't happen)
         self._current_track = None
         self._apply_idle_state()
+
+    def _compute_next_song(self, after_id: Optional[int]) -> Optional[dict]:
+        """Phase D5: locate the next playable song after `after_id` in
+        the in-memory queue (Q2 — D5 uses the queue loaded at init;
+        dynamic refresh deferred to D6/Phase E).
+
+        Returns the full song dict (id, title, artist, file_path,
+        duration_ms, ...) or None if the queue is empty or `after_id`
+        is the last item.
+
+        If `after_id` is None, returns the first song (used by spot
+        EOS when the spot fired before any deck song was loaded)."""
+        if not self._queue_songs:
+            return None
+        if after_id is None:
+            return self._queue_songs[0]
+        idx = next((i for i, s in enumerate(self._queue_songs)
+                    if s.get("id") == after_id), -1)
+        nxt = idx + 1
+        if 0 <= nxt < len(self._queue_songs):
+            return self._queue_songs[nxt]
+        return None
 
     def _on_engine_error(self, channel_id: int, message: str) -> None:
         if channel_id != self._playback_cid:
@@ -1865,8 +1958,12 @@ class Studio(QWidget):
                 f"[studio] campaign {campaign_id} has no playable spot file")
             return
 
-        # Stop the deck (if active) — spot replaces music
+        # Stop the deck (if active) — spot replaces music. Phase D5: if
+        # the deck was playing, remember which song was airing so that
+        # post-spot we advance to the NEXT queue item (Q1 — Jazler).
         if self._playback_cid is not None:
+            if (self._playback_kind == "deck" and self._current_track):
+                self._pre_spot_song_id = self._current_track.get("id")
             try:
                 self._engine.cleanup(self._playback_cid)
             except Exception as exc:
