@@ -71,6 +71,13 @@ class AudioEngine(QObject):
     Up to MAX_CHANNELS streams can be loaded concurrently. Channel ids are
     monotonic and never reused — once a channel is cleaned up its id is
     permanently retired, which prevents stale-id confusion in UI consumers.
+
+    Lifecycle contract (A5):
+      - Caller MUST invoke cleanup_all() before BASS_Free / app shutdown.
+      - The engine intentionally does NOT implement __del__ — Python GC
+        ordering is unreliable with Qt teardown (BASS_Free may already
+        have been called by the time the GC fires).
+      - In Qt apps: hook MainWindow.closeEvent → engine.cleanup_all().
     """
 
     # ── Public signals ────────────────────────────────────────────────────
@@ -294,7 +301,11 @@ class AudioEngine(QObject):
         Emits position_changed immediately so UI scrubbers snap without
         waiting for the next 100ms poll tick. BASS-level seek failures
         surface via error_occurred (does NOT raise — UI shouldn't crash
-        on an unsupported-format seek)."""
+        on an unsupported-format seek).
+
+        Raises ChannelError if `channel_id` is invalid (channel not loaded
+        or already cleaned up). UI consumers should disconnect signals on
+        cleanup to prevent post-cleanup races (Phase A5 / Q2)."""
         ch = self._require_channel(channel_id)
         target_ms = max(0, int(position_ms))
         # Clamp to duration if known
@@ -401,6 +412,58 @@ class AudioEngine(QObject):
             ids = list(self._channels.keys())
         for cid in ids:
             self.cleanup(cid)
+
+    # ── Public API: diagnostics (Phase A5) ────────────────────────────────
+
+    def is_fading(self, channel_id: int) -> bool:
+        """True while a BASS_ChannelSlideAttribute is active for this
+        channel's volume. Phase B UIs use this to dim transport controls
+        during a fade."""
+        ch = self._channels.get(channel_id)
+        if ch is None:
+            return False
+        try:
+            # BASS_ChannelIsSliding is in the legacy DLL declaration; the
+            # new _bass.py omitted it. Declare on demand here so the
+            # query path can run without a full DLL re-init.
+            if not hasattr(self._dll.BASS_ChannelIsSliding, "argtypes") or \
+                    self._dll.BASS_ChannelIsSliding.argtypes is None:
+                self._dll.BASS_ChannelIsSliding.argtypes = [
+                    ctypes.c_ulong, ctypes.c_ulong
+                ]
+                self._dll.BASS_ChannelIsSliding.restype = ctypes.c_bool
+            return bool(self._dll.BASS_ChannelIsSliding(
+                ch.handle, BASS_ATTRIB_VOL))
+        except Exception:
+            return False
+
+    def get_channel_info(self, channel_id: int) -> dict:
+        """Read-only diagnostic snapshot for Phase B debug overlays.
+        Returns {} for unknown channels."""
+        ch = self._channels.get(channel_id)
+        if ch is None:
+            return {}
+        return {
+            "id":          ch.id,
+            "file_path":   ch.file_path,
+            "state":       ch.state,
+            "volume":      ch.volume,
+            "position_ms": self._read_position_ms(ch.handle),
+            "duration_ms": self._read_duration_ms(ch.handle),
+            "is_fading":   self.is_fading(ch.id),
+        }
+
+    def get_active_channels(self) -> list[int]:
+        """Channel ids currently in 'playing' or 'paused' state. Useful
+        for Phase B "currently playing" panels and debug overlays.
+
+        Note vs `active_channels()`: that method returns ALL loaded
+        channels (any state); this one filters to only the audibly-engaged
+        ones. Different semantic by design."""
+        return [
+            cid for cid, ch in self._channels.items()
+            if ch.state in ("playing", "paused")
+        ]
 
     # ── Internals ─────────────────────────────────────────────────────────
 

@@ -1,0 +1,12 @@
+# Development-only dependencies. Production runs from requirements.txt.
+#
+# Install:  py -m pip install -r requirements-dev.txt
+#
+# Test runner:
+#   pytest                  # runs all tests
+#   pytest -m "not slow"    # skips long-running soak tests
+
+-r requirements.txt
+
+pytest>=8.0
+pytest-qt>=4.4
