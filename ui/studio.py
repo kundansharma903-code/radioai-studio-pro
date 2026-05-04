@@ -1067,14 +1067,25 @@ class _JinglePadTile(QFrame):
 # ════════════════════════════════════════════════════════════════════════════
 
 class _HistoryRow(QFrame):
-    def __init__(self, time_str: str, title: str, artist: str, dur: str, parent=None):
+    """Phase D6: state-driven via set_data(). Studio refreshes from
+    db.get_history() on init + after every spot/song play."""
+
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self._time  = time_str
-        self._title = title
-        self._artist= artist
-        self._dur   = dur
+        self._time   = "—"
+        self._title  = "—"
+        self._artist = ""
+        self._dur    = ""
         self.setFixedHeight(34)
         self.setStyleSheet("background: transparent;")
+
+    def set_data(self, time_str: str, title: str,
+                 artist: str, dur: str) -> None:
+        self._time   = time_str or "—"
+        self._title  = title or "—"
+        self._artist = artist or ""
+        self._dur    = dur or ""
+        self.update()
 
     def paintEvent(self, _e):
         p = QPainter(self)
@@ -1232,6 +1243,14 @@ class _AIInsightsList(QFrame):
         v.addWidget(title)
         for kind, text in AI_INSIGHTS_PLACEHOLDER:
             v.addWidget(_AIInsightRow(kind, text))
+        # Phase D6: honest stub marker — keeps demos from misreading
+        # this panel as a working AI feature.
+        marker = QLabel("(placeholder — Phase E AI integration)")
+        marker.setFont(inter(7, QFont.Weight.Medium))
+        marker.setStyleSheet(
+            f"color: {TEXT_DIM}; background: transparent; "
+            f"padding-top: 4px;")
+        v.addWidget(marker)
 
 
 class _AIInsightRow(QFrame):
@@ -1292,6 +1311,15 @@ class _RDSCard(QFrame):
 # ════════════════════════════════════════════════════════════════════════════
 
 class _StudioStatusBar(QFrame):
+    """Phase D6: state-driven pills.
+
+      ON AIR     — solid red when deck/spot is playing, dim when idle
+      AUTO MODE  — solid purple when scheduler is running, dim when stopped
+      AI Active  — stays dim with placeholder marker (Phase E will wire it)
+
+    The other three pills (Log Ready / 7 Clocks / SOHO Auto) stay at
+    their original tinted state — they're informational only."""
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedHeight(STATUS_H)
@@ -1299,33 +1327,53 @@ class _StudioStatusBar(QFrame):
             f"QFrame {{ background: {BG_PANEL}; "
             f"border-top: 1px solid {rgba('#ffffff', 0.06)}; }}"
         )
+        self._on_air = False
+        self._auto_mode = False
+
+    def set_on_air(self, on: bool) -> None:
+        if self._on_air == on:
+            return
+        self._on_air = on
+        self.update()
+
+    def set_auto_mode(self, on: bool) -> None:
+        if self._auto_mode == on:
+            return
+        self._auto_mode = on
+        self.update()
 
     def paintEvent(self, _e):
         super().paintEvent(_e)
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        # Left-side pills
+        # Pill spec: (label, color, alpha_when_active, alpha_when_inactive)
+        # AI Active stays at the dim alpha — Phase E will populate it.
+        pills = [
+            ("AUTO MODE",   PURPLE_LIGHT, 0.32, 0.10,
+             self._auto_mode),
+            ("AI Active",   GREEN,         0.10, 0.10, False),  # always dim
+            ("● ON AIR",   RED,           0.40, 0.10,
+             self._on_air),
+            ("Log Ready",   AMBER,         0.18, 0.18, True),
+            ("7 Clocks",    CYAN,          0.18, 0.18, True),
+            ("● SOHO Auto", PURPLE,        0.18, 0.18, True),
+        ]
+
         x = 12
-        for label, color in [
-            ("AUTO MODE", PURPLE_LIGHT),
-            ("AI Active", GREEN),
-            ("● ON AIR", RED),
-            ("Log Ready", AMBER),
-            ("7 Clocks",  CYAN),
-            ("● SOHO Auto", PURPLE),
-        ]:
-            fm_text = label
-            tw = p.fontMetrics().horizontalAdvance(fm_text) if False else 0
-            # Compute width manually
+        for label, color, alpha_on, alpha_off, active in pills:
             p.setFont(inter(8, QFont.Weight.Bold, letter_spacing=0.6))
-            tw = p.fontMetrics().horizontalAdvance(fm_text) + 16
+            tw = p.fontMetrics().horizontalAdvance(label) + 16
             pill = QRectF(x, (STATUS_H - 18) / 2, tw, 18)
-            bg = QColor(color); bg.setAlphaF(0.18)
+            bg = QColor(color)
+            bg.setAlphaF(alpha_on if active else alpha_off)
             p.setBrush(bg); p.setPen(Qt.PenStyle.NoPen)
             p.drawRoundedRect(pill, 8, 8)
-            p.setPen(QColor(color))
-            p.drawText(pill, Qt.AlignmentFlag.AlignCenter, fm_text)
+            text_color = QColor(color)
+            if not active and label not in ("Log Ready", "7 Clocks", "● SOHO Auto"):
+                text_color.setAlphaF(0.55)
+            p.setPen(text_color)
+            p.drawText(pill, Qt.AlignmentFlag.AlignCenter, label)
             x += tw + 6
 
         # Center text
@@ -1429,6 +1477,13 @@ class Studio(QWidget):
                 self._on_scheduler_break_warn)
             self._scheduler.next_break_in.connect(
                 self._on_scheduler_next_break_in)
+            # Phase D6: scheduler lifecycle drives the AUTO MODE pill
+            self._scheduler.started.connect(self._update_status_pills)
+            self._scheduler.stopped.connect(self._update_status_pills)
+
+        # Phase D6: initial polish state (history + pills)
+        self._refresh_history()
+        self._update_status_pills()
 
         # Wire transport + master vol + queue
         self._transport.restart_clicked.connect(self._on_restart_clicked)
@@ -1562,10 +1617,14 @@ class Studio(QWidget):
         history_hdr.setStyleSheet(f"color: {TEXT_MUTED}; background: transparent;")
         y += 22
 
-        # History list
-        for time_str, title, artist, dur in HISTORY_PLACEHOLDER:
-            row = _HistoryRow(time_str, title, artist, dur, self)
+        # History list — Phase D6: state-driven, populated from
+        # db.get_history(). Build 6 empty rows; _refresh_history fills
+        # them in.
+        self._history_rows: list[_HistoryRow] = []
+        for _ in range(6):
+            row = _HistoryRow(self)
             row.setGeometry(RIGHT_X + right_pad, y, RIGHT_W - 2 * right_pad, 34)
+            self._history_rows.append(row)
             y += 36
         y += 8
 
@@ -1716,6 +1775,7 @@ class Studio(QWidget):
             int(song.get("duration_ms", 0))
         self._stop_after_current = False
         self._apply_playing_state(song)
+        self._update_status_pills()
 
         log.info(
             f"[studio] deck play ch={cid} song_id={song.get('id')} "
@@ -1781,6 +1841,7 @@ class Studio(QWidget):
         self._playback_campaign_id = None
         self._current_track = None
         self._apply_idle_state()
+        self._update_status_pills()
         log.info("[studio] fade out complete — deck idle")
 
     def _on_loop_toggled(self, on: bool) -> None:
@@ -1843,6 +1904,8 @@ class Studio(QWidget):
         if kind == "spot":
             anchor_id = self._pre_spot_song_id
             self._pre_spot_song_id = None
+            # Phase D6: history just gained a row; refresh
+            self._refresh_history()
             next_song = self._compute_next_song(after_id=anchor_id)
             if next_song is not None:
                 log.info(
@@ -1853,6 +1916,7 @@ class Studio(QWidget):
             log.info("[studio] spot EOS → queue exhausted, idle")
             self._current_track = None
             self._apply_idle_state()
+            self._update_status_pills()
             return
 
         # Path (b): stop-next flag wins over loop and auto-advance
@@ -1861,6 +1925,7 @@ class Studio(QWidget):
             self._current_track = None
             log.info("[studio] stop-next consumed → idle")
             self._apply_idle_state()
+            self._update_status_pills()
             return
 
         # Path (c): loop replays the same song (Q3 — single-song loop)
@@ -1882,11 +1947,13 @@ class Studio(QWidget):
             log.info("[studio] queue exhausted — idle")
             self._current_track = None
             self._apply_idle_state()
+            self._update_status_pills()
             return
 
         # Unknown kind (defensive — shouldn't happen)
         self._current_track = None
         self._apply_idle_state()
+        self._update_status_pills()
 
     def _compute_next_song(self, after_id: Optional[int]) -> Optional[dict]:
         """Phase D5: locate the next playable song after `after_id` in
@@ -2034,6 +2101,10 @@ class Studio(QWidget):
             f"file={os.path.basename(path)} dur={self._current_duration_ms}ms"
             f" — broadcast_log written")
 
+        # Phase D6: refresh history panel + ON AIR pill
+        self._update_status_pills()
+        self._refresh_history()
+
     def _on_scheduler_song_advance(self) -> None:
         """D5 will wire this to load the next queue item on the deck.
         For D4, still no-op."""
@@ -2048,6 +2119,65 @@ class Studio(QWidget):
         """Per-tick countdown driver for _NextBreakCard."""
         if hasattr(self, "_next_break") and self._next_break is not None:
             self._next_break.set_countdown(seconds)
+
+    # ── Phase D6 polish helpers ──────────────────────────────────────────
+
+    def _refresh_history(self) -> None:
+        """Pull recent broadcast_log entries into the history panel.
+        Called on init + after every spot/song state transition that
+        could have written a log row."""
+        if not getattr(self, "_history_rows", None):
+            return
+        try:
+            rows = self._db.get_history(limit=len(self._history_rows))
+        except Exception as exc:
+            log.debug(f"[studio] history refresh failed: {exc}")
+            return
+
+        for i, row_widget in enumerate(self._history_rows):
+            if i < len(rows):
+                r = rows[i]
+                time_str = self._fmt_history_time(r["played_at"])
+                entry_type = (r["entry_type"]
+                              if "entry_type" in r.keys() else "song")
+                if entry_type == "spot":
+                    title = (r["campaign_name"]
+                             if "campaign_name" in r.keys()
+                             and r["campaign_name"] else "—")
+                    artist = "(spot)"
+                else:
+                    title = (r["title"] if "title" in r.keys()
+                             and r["title"] else "—")
+                    artist = (r["artist"] if "artist" in r.keys()
+                              and r["artist"] else "")
+                dur_ms = (r["duration_ms"] if "duration_ms" in r.keys()
+                          and r["duration_ms"] else 0)
+                row_widget.set_data(
+                    time_str, title, artist, _fmt_duration(int(dur_ms or 0)))
+            else:
+                row_widget.set_data("—", "—", "", "")
+
+    @staticmethod
+    def _fmt_history_time(played_at) -> str:
+        """Convert sqlite TEXT timestamp 'YYYY-MM-DD HH:MM:SS' → 'HH:MM'."""
+        if not played_at:
+            return "—"
+        s = str(played_at)
+        # Standard format from datetime('now', 'localtime')
+        if len(s) >= 16 and s[10] == " ":
+            return s[11:16]
+        return "—"
+
+    def _update_status_pills(self) -> None:
+        """Reflect current deck + scheduler state in the status bar pills."""
+        if not hasattr(self, "_status_bar") or self._status_bar is None:
+            return
+        on_air = (self._playback_cid is not None
+                  and self._playback_kind in ("deck", "spot"))
+        auto_mode = (self._scheduler is not None
+                     and self._scheduler.is_running())
+        self._status_bar.set_on_air(on_air)
+        self._status_bar.set_auto_mode(auto_mode)
 
     # ── Lifecycle: stop on hide / navigate-away ──────────────────────────
 

@@ -267,19 +267,28 @@ class Database:
         )
         conn.commit()
 
-    def get_history(self, limit: int = 20) -> List[sqlite3.Row]:
+    def get_history(self, limit: int = 20,
+                    entry_types: tuple = ("song", "spot")) -> List[sqlite3.Row]:
+        """Recent broadcast log entries for the Studio history panel.
+
+        Phase D6: defaults to including BOTH songs and spots so the
+        scheduler-triggered spot entries from Phase D4 surface in the
+        UI. Pass `entry_types=('song',)` to restrict to songs only."""
+        placeholders = ",".join("?" * len(entry_types))
         return self._conn().execute(
-            """
-            SELECT bl.*, s.title, s.artist, s.duration_ms,
-                   c.name AS cat_name, c.color AS cat_color
+            f"""
+            SELECT bl.*, s.title, s.artist, s.duration_ms AS song_duration_ms,
+                   c.name  AS cat_name,  c.color AS cat_color,
+                   cmp.name AS campaign_name
             FROM   broadcast_log bl
-            LEFT JOIN songs s ON bl.song_id = s.id
-            LEFT JOIN categories c ON s.category_id = c.id
-            WHERE  bl.entry_type = 'song'
+            LEFT JOIN songs      s   ON bl.song_id     = s.id
+            LEFT JOIN categories c   ON s.category_id  = c.id
+            LEFT JOIN campaigns  cmp ON bl.campaign_id = cmp.id
+            WHERE  bl.entry_type IN ({placeholders})
             ORDER  BY bl.played_at DESC
             LIMIT  ?
             """,
-            [limit],
+            [*entry_types, limit],
         ).fetchall()
 
     # ── Clocks ────────────────────────────────────────────────────────────────
