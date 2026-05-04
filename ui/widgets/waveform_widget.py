@@ -69,8 +69,25 @@ class WaveformWidget(QWidget):
         self._light  = QColor(light_color)
         self.update()
 
-    def set_animated(self, animated: bool):
-        self._auto_animate = animated
+    def set_auto_animate(self, enabled: bool) -> None:
+        """Toggle the decorative internal animation.
+
+        - True  (default at construction): widget runs an internal 30fps
+          progress animation for visual filler.
+        - False: animation timer stops; external code drives progress via
+          set_progress(fraction). Use this when wiring a real audio
+          playhead (Phase B).
+
+        Restarting auto-animation re-arms the QTimer; progress continues
+        from its current value (caller can call set_progress(0) first to
+        reset)."""
+        if self._auto_animate == enabled:
+            return
+        self._auto_animate = enabled
+        if enabled:
+            self._timer.start()
+        else:
+            self._timer.stop()
 
     # ── Paint ─────────────────────────────────────────────────────────────
 

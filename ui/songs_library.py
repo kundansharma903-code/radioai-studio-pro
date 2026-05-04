@@ -16,6 +16,7 @@ form fields, and table rows since those patterns are screen-specific.
 """
 
 import logging
+import os
 from datetime import datetime
 from typing import Optional
 
@@ -426,7 +427,12 @@ class _CategoryPill(QLabel):
 
 
 class _PlayButton(QPushButton):
-    """Small purple play button in table rows — 26×18."""
+    """Small purple play button in table rows — 26×18.
+
+    Phase B2: toggles ▶ ↔ ■ via set_playing(bool) when this row's preview
+    is active. Click during ▶ starts preview; click during ■ stops it.
+    Visual state is set externally by SongsLibrary (which tracks the
+    currently-previewing song id)."""
 
     def __init__(self, parent=None):
         super().__init__("", parent)
@@ -434,6 +440,13 @@ class _PlayButton(QPushButton):
         self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self.setFlat(True)
         self.setStyleSheet("background: transparent; border: none;")
+        self._playing = False
+
+    def set_playing(self, playing: bool) -> None:
+        if self._playing == playing:
+            return
+        self._playing = playing
+        self.update()
 
     def paintEvent(self, _e):
         p = QPainter(self)
@@ -442,16 +455,20 @@ class _PlayButton(QPushButton):
         path = QPainterPath()
         path.addRoundedRect(rect, 4, 4)
         p.setClipPath(path)
-        c = QColor(PURPLE); c.setAlphaF(0.18)
-        p.fillRect(QRectF(0, 0, 26, 18), c)
+        # Tinted bg — brighter when playing
+        bg = QColor(PURPLE)
+        bg.setAlphaF(0.30 if self._playing else 0.18)
+        p.fillRect(QRectF(0, 0, 26, 18), bg)
         p.setClipping(False)
-        bc = QColor(PURPLE); bc.setAlphaF(0.30)
+        bc = QColor(PURPLE)
+        bc.setAlphaF(0.55 if self._playing else 0.30)
         p.setPen(QPen(bc, 1))
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawRoundedRect(rect, 4, 4)
         p.setPen(QColor(PURPLE_LIGHT))
         p.setFont(inter(9, QFont.Weight.Bold))
-        p.drawText(QRectF(0, 0, 26, 18), Qt.AlignmentFlag.AlignCenter, "▶")
+        p.drawText(QRectF(0, 0, 26, 18), Qt.AlignmentFlag.AlignCenter,
+                   "■" if self._playing else "▶")
 
 
 class _SongRow(QFrame):
@@ -508,10 +525,17 @@ class _SongRow(QFrame):
         lp.setFont(inter(10))
         lp.setStyleSheet(f"color: {TEXT_MUTED}; background: transparent;")
 
-        # Play button
+        # Play button — referenced by parent so it can toggle ▶ ↔ ■ when
+        # this row's preview is active (Phase B2).
         pb = _PlayButton(self)
         pb.move(660, 5)
         pb.clicked.connect(lambda: self.play_clicked.emit(self._song.get("id", 0)))
+        self.play_btn = pb
+
+    def set_playing(self, playing: bool) -> None:
+        """Drive the row's play button visual state from outside (parent
+        SongsLibrary tracks which song is currently being previewed)."""
+        self.play_btn.set_playing(playing)
 
     def _update_title_style(self):
         if self._selected:
@@ -731,11 +755,26 @@ class SongsLibrary(QWidget):
     report_clicked          = pyqtSignal(str)
     play_song_clicked       = pyqtSignal(int)
 
+    PREVIEW_DURATION_MS = 15_000   # Phase B2: 15s row-preview cap
+
     def __init__(self, db, parent=None, engine=None):
         super().__init__(parent)
         self._db = db
         self._engine = engine     # shared AudioEngine (Phase B Option C)
         self.setFixedSize(WINDOW_W, WINDOW_H)
+
+        # Phase B2 row-preview state
+        self._preview_song_id: Optional[int] = None
+        self._preview_cid: Optional[int] = None
+        self._preview_duration_ms: int = 0   # cached for waveform fraction calc
+        self._preview_timer: Optional[QTimer] = None
+
+        # Connect engine signals once at construction. Handlers filter by
+        # cid so they ignore other dialogs' channels (cue editor etc.).
+        if self._engine is not None:
+            self._engine.position_changed.connect(self._on_engine_position)
+            self._engine.playback_ended.connect(self._on_engine_playback_ended)
+            self._engine.error_occurred.connect(self._on_engine_error)
         self.setStyleSheet(
             f"background: qlineargradient("
             f"x1:0,y1:0,x2:1,y2:1, stop:0 #0a0d1a, stop:0.5 #06080f, stop:1 #020308);"
@@ -1141,6 +1180,149 @@ class SongsLibrary(QWidget):
         # waveform/labels show. For 5-A this is a no-op since the
         # detail panel doesn't yet display per-cue numbers.
 
+    # ── Phase B2: row preview wiring ──────────────────────────────────────
+
+    def _on_row_play_clicked(self, song_id: int) -> None:
+        """Row's ▶/■ button clicked. Toggles preview state per Q2 contract:
+          - same row → stop the in-flight preview
+          - different row → stop current, start new
+          - no current preview → start
+
+        Also re-emits play_song_clicked so external listeners (future
+        Studio integration) see the user's intent. Preview is audition
+        only — no broadcast_log entry (Q4)."""
+        # External signal preserved for future Studio integration.
+        self.play_song_clicked.emit(song_id)
+
+        if self._engine is None:
+            log.warning("[library] no engine — preview unavailable")
+            return
+
+        if self._preview_song_id == song_id:
+            # Same row → toggle off
+            self._stop_preview()
+            return
+
+        # Different or first preview
+        self._stop_preview()
+        self._start_preview(song_id)
+
+    def _start_preview(self, song_id: int) -> None:
+        song = self._db.get_song(song_id)
+        if song is None:
+            return
+        path = song["file_path"] if "file_path" in song.keys() else None
+        if not path or not os.path.exists(path):
+            log.warning(f"[library] preview skipped — file missing: {path!r}")
+            return
+
+        try:
+            cid = self._engine.load_file(path)
+        except Exception as exc:
+            log.warning(f"[library] preview load_file failed: {exc}")
+            return
+
+        # Optional: seek to intro point if known so preview lands on the hook
+        intro_ms = 0
+        try:
+            intro_ms = int(song["intro_point_ms"] or 0)
+        except (KeyError, TypeError, ValueError):
+            pass
+        if intro_ms > 0:
+            self._engine.seek_to_ms(cid, intro_ms)
+
+        self._engine.play(cid)
+
+        # Cache duration for the waveform fraction calc
+        self._preview_duration_ms = self._engine.get_duration_ms(cid) or 0
+        self._preview_song_id = song_id
+        self._preview_cid = cid
+
+        # 15s auto-stop timer
+        if self._preview_timer is None:
+            self._preview_timer = QTimer(self)
+            self._preview_timer.setSingleShot(True)
+            self._preview_timer.timeout.connect(self._stop_preview)
+        self._preview_timer.stop()
+        self._preview_timer.start(self.PREVIEW_DURATION_MS)
+
+        # UI: row button → ■, big waveform stops decorative animation
+        self._set_row_button_playing(song_id, True)
+        if self._waveform is not None:
+            self._waveform.set_auto_animate(False)
+            self._waveform.set_progress(0.0)
+
+        log.info(
+            f"[library] preview started ch={cid} song={song_id} "
+            f"intro_ms={intro_ms} dur_ms={self._preview_duration_ms} "
+            f"(15s cap)"
+        )
+
+    def _stop_preview(self) -> None:
+        """End the current preview and reset all visual state. Idempotent
+        — safe to call when no preview is active."""
+        if self._preview_cid is None:
+            return
+
+        cid = self._preview_cid
+        old_song_id = self._preview_song_id
+
+        if self._preview_timer is not None:
+            self._preview_timer.stop()
+
+        try:
+            self._engine.cleanup(cid)   # stop + free + drop from active map
+        except Exception as exc:
+            log.debug(f"[library] preview cleanup error: {exc}")
+
+        self._preview_cid = None
+        self._preview_song_id = None
+        self._preview_duration_ms = 0
+
+        if old_song_id is not None:
+            self._set_row_button_playing(old_song_id, False)
+
+        if self._waveform is not None:
+            self._waveform.set_progress(0.0)
+            self._waveform.set_auto_animate(True)
+
+        log.info(f"[library] preview stopped (was ch={cid} song={old_song_id})")
+
+    def _set_row_button_playing(self, song_id: int, playing: bool) -> None:
+        """Find the row matching `song_id` and toggle its play button."""
+        for row in self._row_widgets:
+            if row._song.get("id") == song_id:
+                row.set_playing(playing)
+                return
+
+    # ── Engine signal handlers (filtered to OUR channel) ─────────────────
+
+    def _on_engine_position(self, channel_id: int, position_ms: int) -> None:
+        if channel_id != self._preview_cid or self._waveform is None:
+            return
+        if self._preview_duration_ms > 0:
+            self._waveform.set_progress(position_ms / self._preview_duration_ms)
+
+    def _on_engine_playback_ended(self, channel_id: int) -> None:
+        if channel_id == self._preview_cid:
+            self._stop_preview()
+
+    def _on_engine_error(self, channel_id: int, message: str) -> None:
+        if channel_id == self._preview_cid:
+            log.warning(f"[library] preview engine error: {message}")
+            self._stop_preview()
+
+    # ── Lifecycle: stop preview on hide / navigate-away ──────────────────
+
+    def hideEvent(self, event):
+        """When the user navigates to another screen (Spots/Jingles/etc.),
+        stop the preview to avoid orphan channels."""
+        try:
+            self._stop_preview()
+        except Exception:
+            pass
+        super().hideEvent(event)
+
     # ── STATUS BAR (y=868..900) ───────────────────────────────────────────
 
     def _build_status_bar(self):
@@ -1245,7 +1427,11 @@ class SongsLibrary(QWidget):
         for i, song in enumerate(self._all_songs):
             row = _SongRow(song, i)
             row.clicked.connect(self._select_song)
-            row.play_clicked.connect(self.play_song_clicked.emit)
+            # Phase B2: route through our preview handler. We still emit
+            # play_song_clicked so any external listener (future Studio
+            # screen) sees the click; preview is a side-effect handled
+            # locally.
+            row.play_clicked.connect(self._on_row_play_clicked)
             self._table_layout.insertWidget(self._table_layout.count() - 1, row)
             self._row_widgets.append(row)
 
