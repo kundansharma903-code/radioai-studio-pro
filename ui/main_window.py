@@ -190,6 +190,15 @@ class MainWindow(QMainWindow):
             self.studio.breadcrumb_clicked.connect(self._on_breadcrumb)
             self._stack.addWidget(self.studio)
 
+            # Clock Editor — broadcast clock template builder (Figma 165:2)
+            # Phase F2.1 — entry point through Control Panel "Scheduling" card.
+            # Phase F3 will replace direct routing with the Hub screen.
+            from ui.clock_editor import ClockEditor
+            self.clock_editor = ClockEditor(self._db, parent=None)
+            self.clock_editor.breadcrumb_clicked.connect(self._on_breadcrumb)
+            self.clock_editor.studio_clicked.connect(self._on_studio_clicked)
+            self._stack.addWidget(self.clock_editor)
+
             # F9 shortcut → open Studio (broadcast convention; Jazler precedent)
             from PyQt6.QtGui import QShortcut, QKeySequence
             self._studio_shortcut = QShortcut(QKeySequence("F9"), self)
@@ -207,6 +216,9 @@ class MainWindow(QMainWindow):
             self._stack.setCurrentWidget(self.instant_jingles)
         elif screen == "spots" and hasattr(self, "spots_commercials"):
             self._stack.setCurrentWidget(self.spots_commercials)
+        elif screen == "scheduling" and hasattr(self, "clock_editor"):
+            # F2.1: direct route to Clock Editor. F3 will wire to Hub.
+            self._stack.setCurrentWidget(self.clock_editor)
 
     def _on_breadcrumb(self, where: str) -> None:
         log.info(f"Breadcrumb → {where}")

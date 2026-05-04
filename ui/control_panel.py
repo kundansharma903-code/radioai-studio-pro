@@ -91,6 +91,16 @@ CARD_SPECS = [
         main=RED, light=RED_LIGHT, mid="#e11d48", dark="#be123c",
         stat_text=RED_LIGHT,
     ),
+    # Phase F2.1 — entry point to Clock Editor (F3 Hub will replace this
+    # link with a routing card once built).
+    dict(
+        key="scheduling", x=56, y=634, icon=IconType.SONGS,
+        title="Scheduling", stat="26 Clocks · 88 Hour Slots",
+        desc="Build clocks · assign to days/hours · force overrides",
+        badge="SCHEDULER",
+        main=CYAN, light=CYAN_LIGHT, mid="#0891b2", dark="#0e7490",
+        stat_text=CYAN_LIGHT,
+    ),
 ]
 
 
@@ -830,10 +840,16 @@ class ControlPanel(QWidget):
             "jingles":         f"{stats.get('jingles_total', 0)} Jingles Available",
             "sweepers":        f"{stats.get('sweepers_total', 0)} Sweepers Available",
             "stitcher":        "3 Active Modules",
+            "scheduling":      f"{stats.get('clocks_total', 0)} Clocks · "
+                               f"{stats.get('auto_schedule_set', 0)} Hour Slots",
         }
 
-        # Find each card's stat QLabel (second text label inside the frame, geom 109,55)
+        # Find each card's stat QLabel (second text label inside the frame,
+        # geom 109,55). Skip cards whose key isn't in live_stats (defensive
+        # for new card additions).
         for key, card in self._cards.items():
+            if key not in live_stats:
+                continue
             for child in card.findChildren(QLabel):
                 g = child.geometry()
                 if g.x() == 109 and g.y() == 55:

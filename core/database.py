@@ -338,6 +338,65 @@ class Database:
             """,
         ).fetchall()
 
+    # ── Clock CRUD (Phase F2 — Clock Editor) ──────────────────────────────────
+
+    def get_clock(self, clock_id: int) -> Optional[sqlite3.Row]:
+        """Single clock row by id. Returns None if not found."""
+        return self._conn().execute(
+            "SELECT * FROM clocks WHERE id = ?", [int(clock_id)]
+        ).fetchone()
+
+    def save_clock(self, clock_id: int, data: dict) -> None:
+        """Update top-level clock fields. Slots are saved separately via
+        save_clock_slots — same transaction is the caller's job (Studio
+        F2 wraps both in one BEGIN/COMMIT for atomic clock-edit save)."""
+        conn = self._conn()
+        cols_present = {r[1] for r in conn.execute(
+            "PRAGMA table_info(clocks)").fetchall()}
+        sets, values = [], []
+        for k in ("name", "time_start", "time_end", "day_mask",
+                  "description", "is_active"):
+            if k in cols_present and k in data:
+                sets.append(f"{k} = ?")
+                values.append(data[k])
+        if not sets:
+            return
+        values.append(int(clock_id))
+        conn.execute(
+            f"UPDATE clocks SET {', '.join(sets)} WHERE id = ?", values
+        )
+        conn.commit()
+
+    def save_clock_slots(self, clock_id: int, slots: list) -> None:
+        """Replace this clock's slot list with `slots`. DELETE+INSERT
+        within a transaction. Per CLAUDE.md guardrail: WHERE clock_id = ?
+        is exact-match on a known id, not a LIKE pattern — safe."""
+        conn = self._conn()
+        cols_present = {r[1] for r in conn.execute(
+            "PRAGMA table_info(clock_slots)").fetchall()}
+        cid = int(clock_id)
+        try:
+            conn.execute("BEGIN")
+            conn.execute("DELETE FROM clock_slots WHERE clock_id = ?", [cid])
+            for i, slot in enumerate(slots or []):
+                payload: dict = {"clock_id": cid, "slot_order": i + 1}
+                for k in ("slot_type", "category_id", "energy_pref",
+                         "vocal_pref", "priority_pref",
+                         "separation_override", "position_minutes",
+                         "is_break", "sweeper_position", "item_id"):
+                    if k in cols_present and k in slot:
+                        payload[k] = slot[k]
+                cols = ", ".join(payload.keys())
+                ph   = ", ".join(["?"] * len(payload))
+                conn.execute(
+                    f"INSERT INTO clock_slots ({cols}) VALUES ({ph})",
+                    list(payload.values()),
+                )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
     # ── AI Schedule ───────────────────────────────────────────────────────────
 
     def get_ai_schedule(self, date, hour: int) -> List[sqlite3.Row]:
