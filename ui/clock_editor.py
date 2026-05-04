@@ -740,6 +740,12 @@ class ClockEditor(QWidget):
         self._slots: list[dict] = []        # working copy
         self._selected_slot_idx: Optional[int] = None
         self._slot_rows: list[_SlotRow] = []
+        # Phase F2.2: dirty tracking — set by mutations + name/time edits;
+        # reset by Save / Load. Used for the discard-confirmation dialog.
+        self._is_dirty: bool = False
+        self._original_clock_name: str = ""
+        self._original_time_start: str = ""
+        self._original_time_end: str = ""
 
         # Pre-load reference data
         try:
@@ -815,6 +821,7 @@ class ClockEditor(QWidget):
         self._name_input.setFont(inter(11, QFont.Weight.Bold))
         self._name_input.setStyleSheet(self._lineedit_qss())
         self._name_input.setPlaceholderText("(no clock loaded)")
+        self._name_input.textEdited.connect(self._on_field_edited)
         nv.addWidget(self._name_input)
         nh.addWidget(name_frame, stretch=2)
 
@@ -832,6 +839,7 @@ class ClockEditor(QWidget):
         self._time_start_input.setFont(mono(10, bold=True))
         self._time_start_input.setStyleSheet(self._lineedit_qss())
         self._time_start_input.setPlaceholderText("06:00")
+        self._time_start_input.textEdited.connect(self._on_field_edited)
         ti.addWidget(self._time_start_input)
         arrow = QLabel("→"); arrow.setFont(inter(12, QFont.Weight.Bold))
         arrow.setStyleSheet(f"color: {TEXT_MUTED}; background: transparent;")
@@ -841,6 +849,7 @@ class ClockEditor(QWidget):
         self._time_end_input.setFont(mono(10, bold=True))
         self._time_end_input.setStyleSheet(self._lineedit_qss())
         self._time_end_input.setPlaceholderText("10:00")
+        self._time_end_input.textEdited.connect(self._on_field_edited)
         ti.addWidget(self._time_end_input)
         ti.addStretch()
         tv.addWidget(time_inputs)
@@ -865,11 +874,11 @@ class ClockEditor(QWidget):
         self._action_buttons: dict[str, QPushButton] = {}
         actions = [
             ("change",      "↻  Change",       CYAN,    self._on_change_clock),
-            ("delete",      "✕  Delete",       RED,     self._on_delete_stub),
-            ("add",         "+  Add",          GREEN,   self._on_add_stub),
-            ("insert",      "↳  Insert",       AMBER,   self._on_insert_stub),
-            ("up",          "↑  Move Up",      AMBER,   self._on_move_up_stub),
-            ("down",        "↓  Move Down",    AMBER,   self._on_move_down_stub),
+            ("delete",      "✕  Delete",       RED,     self._on_delete_clock_stub),
+            ("add",         "+  Add",          GREEN,   self._on_add_slot),
+            ("insert",      "↳  Insert",       AMBER,   self._on_insert_slot),
+            ("up",          "↑  Move Up",      AMBER,   self._on_move_up),
+            ("down",        "↓  Move Down",    AMBER,   self._on_move_down),
             ("ai_optimise", "✦  AI Optimise",  PURPLE,  self._on_ai_optimise_stub),
             ("preview",     "▶  Preview",      GREEN,   self._on_preview_stub),
             ("validate",    "✓  Validate",     CYAN,    self._on_validate_stub),
@@ -943,7 +952,7 @@ class ClockEditor(QWidget):
 
         self._props_panel = _SlotPropertiesPanel(self._categories)
         self._props_panel.apply_clicked.connect(self._on_apply_slot_changes)
-        self._props_panel.remove_clicked.connect(self._on_remove_slot_stub)
+        self._props_panel.remove_clicked.connect(self._on_remove_selected_slot)
         v.addWidget(self._props_panel)
 
     def _build_status_bar(self):
@@ -997,9 +1006,18 @@ class ClockEditor(QWidget):
         self._slots = [dict(r) for r in slot_rows]
         self._selected_slot_idx = None
 
-        self._name_input.setText(clock.get("name") or "")
-        self._time_start_input.setText(clock.get("time_start") or "")
-        self._time_end_input.setText(clock.get("time_end") or "")
+        name = clock.get("name") or ""
+        time_start = clock.get("time_start") or ""
+        time_end = clock.get("time_end") or ""
+        self._name_input.setText(name)
+        self._time_start_input.setText(time_start)
+        self._time_end_input.setText(time_end)
+
+        # Phase F2.2: capture originals for dirty comparison
+        self._original_clock_name = name
+        self._original_time_start = time_start
+        self._original_time_end = time_end
+        self._is_dirty = False
 
         self._rebuild_slot_rows()
         self._refresh_counters()
@@ -1008,6 +1026,31 @@ class ClockEditor(QWidget):
         log.info(
             f"[clock-editor] loaded clock id={clock_id} "
             f"name={clock.get('name')!r} slots={len(self._slots)}")
+
+    def _on_field_edited(self, _text: str = "") -> None:
+        """Called on any name/time input edit. Marks dirty."""
+        self._is_dirty = True
+
+    def _confirm_discard_if_dirty(self, action_label: str = "continue") -> bool:
+        """Phase F2.2 / Q4: if working copy has unsaved changes, prompt
+        the user to confirm discarding before action_label proceeds.
+        Returns True to continue, False to cancel."""
+        if not self._is_dirty:
+            return True
+        # Use QMessageBox for the confirmation — simpler than a custom
+        # dialog for a yes/no prompt
+        from PyQt6.QtWidgets import QMessageBox
+        box = QMessageBox(self)
+        box.setWindowTitle("Discard unsaved changes?")
+        box.setText(
+            "This clock has unsaved changes.\n\n"
+            f"{action_label.capitalize()} will discard them.")
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setStandardButtons(
+            QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        return box.exec() == QMessageBox.StandardButton.Discard
 
     def _show_no_clocks_state(self) -> None:
         self._name_input.setPlaceholderText("(no clocks in DB — create one in F6)")
@@ -1059,29 +1102,18 @@ class ClockEditor(QWidget):
             row.set_data(self._slots[i], is_selected=(i == idx))
         self._props_panel.set_slot(self._slots[idx], slot_index=idx)
 
-    def _on_apply_slot_changes(self, data: dict) -> None:
-        if self._selected_slot_idx is None:
-            return
-        self._slots[self._selected_slot_idx].update(data)
-        # Refresh row visual
-        row = self._slot_rows[self._selected_slot_idx]
-        row.set_data(self._slots[self._selected_slot_idx], is_selected=True)
-        self._refresh_counters()
-        log.info(
-            f"[clock-editor] slot {self._selected_slot_idx + 1} updated: {data}")
-
     def _on_change_clock(self) -> None:
-        # F2.1: cycle to next clock in the DB list (simple stub).
-        # F2.2 will add a proper picker dialog.
-        if not self._all_clocks:
+        """Phase F2.2 / Q3 + Q4: open the modal clock picker. If the
+        working copy is dirty, prompt the user to confirm discarding
+        first."""
+        if not self._confirm_discard_if_dirty("Switching clocks"):
             return
-        ids = [c["id"] for c in self._all_clocks]
-        if self._current_clock_id in ids:
-            i = ids.index(self._current_clock_id)
-            next_id = ids[(i + 1) % len(ids)]
-        else:
-            next_id = ids[0]
-        self._load_clock(int(next_id))
+        from ui.dialogs.clock_picker_dialog import ClockPickerDialog
+        dlg = ClockPickerDialog(
+            db=self._db, current_clock_id=self._current_clock_id,
+            parent=self.window())
+        dlg.clock_picked.connect(lambda cid: self._load_clock(int(cid)))
+        dlg.exec()
 
     def _on_save_clock(self) -> None:
         if self._current_clock_id is None:
@@ -1097,24 +1129,156 @@ class ClockEditor(QWidget):
             log.info(
                 f"[clock-editor] saved clock id={self._current_clock_id} "
                 f"({len(self._slots)} slots)")
-            # Refresh in-memory clocks list (for Change cycling)
+            # Reset dirty after successful persistence
+            self._original_clock_name = self._name_input.text()
+            self._original_time_start = self._time_start_input.text()
+            self._original_time_end = self._time_end_input.text()
+            self._is_dirty = False
+            # Refresh in-memory clocks list (for picker)
             self._all_clocks = [dict(r) for r in self._db.get_all_clocks()]
         except Exception as exc:
             log.warning(f"[clock-editor] save failed: {exc}")
 
-    # ── Stubs (F2.3 will wire) ───────────────────────────────────────────
+    # ── Phase F2.2: Slot mutations (working-copy only; persists on Save) ──
 
-    def _on_delete_stub(self):       log.info("[clock-editor] Delete (F2.3 stub)")
-    def _on_add_stub(self):          log.info("[clock-editor] Add slot (F2.3 stub)")
-    def _on_insert_stub(self):       log.info("[clock-editor] Insert slot (F2.3 stub)")
-    def _on_move_up_stub(self):      log.info("[clock-editor] Move Up (F2.3 stub)")
-    def _on_move_down_stub(self):    log.info("[clock-editor] Move Down (F2.3 stub)")
-    def _on_remove_slot_stub(self):  log.info("[clock-editor] Remove Slot (F2.3 stub)")
-    def _on_ai_optimise_stub(self):  log.info(
-        "[clock-editor] AI Optimise will run in Phase E (Anthropic API)")
-    def _on_preview_stub(self):      log.info("[clock-editor] Preview (F2.4 stub)")
-    def _on_validate_stub(self):     log.info(
-        "[clock-editor] Validate: all checks passed (validation impl: Phase E)")
+    @staticmethod
+    def _new_song_slot() -> dict:
+        """Fresh slot template — Q1 default: Song with 'Any' filters."""
+        return {
+            "slot_type":           "Song",
+            "category_id":         None,
+            "energy_pref":         "Any",
+            "vocal_pref":          "Any",
+            "priority_pref":       "Normal",
+            "separation_override": 0,
+            "is_break":            0,
+            "sweeper_position":    "START_OF_SONG",
+            "item_id":             0,
+            "cat_name":            None,
+            "cat_color":           None,
+        }
+
+    def _on_add_slot(self) -> None:
+        """Append a new Song slot at the end of the working copy."""
+        slot = self._new_song_slot()
+        self._slots.append(slot)
+        self._selected_slot_idx = len(self._slots) - 1
+        self._is_dirty = True
+        self._rebuild_slot_rows()
+        self._refresh_counters()
+        self._props_panel.set_slot(slot, slot_index=self._selected_slot_idx)
+        log.info(f"[clock-editor] +Add → slot {self._selected_slot_idx + 1}")
+
+    def _on_insert_slot(self) -> None:
+        """Q2: insert AT the current selection (push others down).
+        If no selection, append at end (same behavior as Add)."""
+        slot = self._new_song_slot()
+        if self._selected_slot_idx is None:
+            self._slots.append(slot)
+            self._selected_slot_idx = len(self._slots) - 1
+        else:
+            insert_at = self._selected_slot_idx
+            self._slots.insert(insert_at, slot)
+            self._selected_slot_idx = insert_at
+        self._is_dirty = True
+        self._rebuild_slot_rows()
+        self._refresh_counters()
+        self._props_panel.set_slot(slot, slot_index=self._selected_slot_idx)
+        log.info(f"[clock-editor] Insert → slot {self._selected_slot_idx + 1}")
+
+    def _on_delete_slot(self) -> None:
+        """Remove the selected slot. Picks the previous neighbor (or
+        next if removed slot was at index 0) as the new selection."""
+        if self._selected_slot_idx is None:
+            return
+        idx = self._selected_slot_idx
+        del self._slots[idx]
+        self._is_dirty = True
+        if not self._slots:
+            self._selected_slot_idx = None
+            self._props_panel.set_slot(None)
+        else:
+            new_idx = max(0, idx - 1)
+            self._selected_slot_idx = new_idx
+            self._props_panel.set_slot(self._slots[new_idx], slot_index=new_idx)
+        self._rebuild_slot_rows()
+        self._refresh_counters()
+        log.info(f"[clock-editor] Delete slot {idx + 1}")
+
+    def _on_remove_selected_slot(self) -> None:
+        """Right-panel "Remove Slot" button — same behavior as Delete."""
+        self._on_delete_slot()
+
+    def _on_move_up(self) -> None:
+        """Swap selected slot with previous. No-op at index 0."""
+        if self._selected_slot_idx is None or self._selected_slot_idx == 0:
+            return
+        i = self._selected_slot_idx
+        self._slots[i - 1], self._slots[i] = self._slots[i], self._slots[i - 1]
+        self._selected_slot_idx = i - 1
+        self._is_dirty = True
+        self._rebuild_slot_rows()
+        self._refresh_counters()
+        self._props_panel.set_slot(
+            self._slots[self._selected_slot_idx],
+            slot_index=self._selected_slot_idx)
+        log.info(f"[clock-editor] Move Up: {i + 1} → {i}")
+
+    def _on_move_down(self) -> None:
+        """Swap selected slot with next. No-op at last index."""
+        if self._selected_slot_idx is None:
+            return
+        i = self._selected_slot_idx
+        if i >= len(self._slots) - 1:
+            return
+        self._slots[i + 1], self._slots[i] = self._slots[i], self._slots[i + 1]
+        self._selected_slot_idx = i + 1
+        self._is_dirty = True
+        self._rebuild_slot_rows()
+        self._refresh_counters()
+        self._props_panel.set_slot(
+            self._slots[self._selected_slot_idx],
+            slot_index=self._selected_slot_idx)
+        log.info(f"[clock-editor] Move Down: {i + 1} → {i + 2}")
+
+    # Apply Changes from properties panel — also marks dirty
+    def _on_apply_slot_changes(self, data: dict) -> None:
+        if self._selected_slot_idx is None:
+            return
+        # Resolve cat_name/cat_color from category_id for visual row update
+        cat_id = data.get("category_id")
+        for c in self._categories:
+            if c.get("id") == cat_id:
+                data["cat_name"]  = c.get("name")
+                data["cat_color"] = c.get("color")
+                break
+        else:
+            data["cat_name"] = None
+            data["cat_color"] = None
+        self._slots[self._selected_slot_idx].update(data)
+        self._is_dirty = True
+        row = self._slot_rows[self._selected_slot_idx]
+        row.set_data(self._slots[self._selected_slot_idx], is_selected=True)
+        self._refresh_counters()
+        log.info(
+            f"[clock-editor] slot {self._selected_slot_idx + 1} updated: {data}")
+
+    # ── Stubs (F2.4 polish — real impl is Phase E) ────────────────────────
+
+    def _on_delete_clock_stub(self):
+        log.info("[clock-editor] Delete-Clock stub (F4 / Phase E)")
+
+    def _on_ai_optimise_stub(self):
+        log.info(
+            "[clock-editor] AI Optimise will run in Phase E (Anthropic API)")
+
+    def _on_preview_stub(self):
+        log.info("[clock-editor] Preview (F2.4 stub)")
+
+    def _on_validate_stub(self):
+        log.info(
+            "[clock-editor] Validate: all checks passed "
+            "(validation impl: Phase E)")
 
 
 # ════════════════════════════════════════════════════════════════════════════
