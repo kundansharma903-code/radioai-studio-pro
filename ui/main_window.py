@@ -30,10 +30,19 @@ class MainWindow(QMainWindow):
 
         # Shared AudioEngine instance (Phase B Option C: singleton + DI).
         # Created lazily — bass_init() is owned by main.py per the engine
-        # lifecycle contract. closeEvent() invokes engine.cleanup_all()
+        # lifecycle contract. closeEvent() AND QApplication.aboutToQuit
+        # both invoke _cleanup_engine() (idempotent belt-and-suspenders)
         # before main.py runs bass_free().
         from core.audio import AudioEngine
         self._engine = AudioEngine(parent=self)
+
+        # Phase B5: aboutToQuit safety net. Fires on app force-quit, OS
+        # shutdown, or any path that bypasses closeEvent. cleanup_all is
+        # idempotent so the dual-hook is cheap.
+        from PyQt6.QtCore import QCoreApplication
+        _app = QCoreApplication.instance()
+        if _app is not None:
+            _app.aboutToQuit.connect(self._on_about_to_quit)
 
         # Adaptive sizing: never exceed 95% × 92% of available screen.
         # On a 1920×1080 we get the full 1440×900 design. On a 1366×768
@@ -202,14 +211,27 @@ class MainWindow(QMainWindow):
         log.info("Settings →")
 
     def closeEvent(self, event):
+        """Primary cleanup path — fires when the user closes the window
+        via the title-bar X or via app.quit() during normal operation."""
         log.info("MainWindow closing")
-        # Phase B5 partial: cleanup audio engine channels before BASS_Free
-        # runs in main.py. Engine constructor was side-effect-free; the
-        # only resource we own is per-channel BASS streams.
-        try:
-            if hasattr(self, "_engine") and self._engine is not None:
-                self._engine.cleanup_all()
-                log.info("AudioEngine.cleanup_all done")
-        except Exception as exc:
-            log.warning(f"engine cleanup_all on close failed: {exc}")
+        self._cleanup_engine()
         super().closeEvent(event)
+
+    def _on_about_to_quit(self):
+        """Safety net — fires AFTER all windows close but BEFORE the
+        Qt event loop ends. Catches force-quit / OS-shutdown paths that
+        bypass closeEvent. Idempotent with closeEvent's cleanup."""
+        log.info("MainWindow aboutToQuit — defensive cleanup")
+        self._cleanup_engine()
+
+    def _cleanup_engine(self):
+        """Idempotent engine cleanup. Both closeEvent and aboutToQuit
+        call this; the second call is a no-op once the engine has no
+        active channels."""
+        if not hasattr(self, "_engine") or self._engine is None:
+            return
+        try:
+            self._engine.cleanup_all()
+            log.info("AudioEngine cleanup_all done")
+        except Exception as exc:
+            log.warning(f"engine cleanup_all failed: {exc}")

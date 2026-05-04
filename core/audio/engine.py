@@ -421,11 +421,25 @@ class AudioEngine(QObject):
         log.info(f"[ch {channel_id}] cleaned up")
 
     def cleanup_all(self) -> None:
-        """Cleanup every active channel. Safe to call at shutdown."""
+        """Cleanup every active channel. Safe to call at shutdown.
+
+        Phase B5: per-channel error isolation. cleanup() already wraps
+        its BASS calls in try/except, but this outer guard catches any
+        unexpected exception so a single bad channel can't prevent the
+        rest from being cleaned up. Errors are counted + logged; the
+        method always returns normally."""
         with self._lock:
             ids = list(self._channels.keys())
+        errors = 0
         for cid in ids:
-            self.cleanup(cid)
+            try:
+                self.cleanup(cid)
+            except Exception as exc:
+                errors += 1
+                log.warning(f"cleanup_all: channel {cid} cleanup raised: {exc}")
+        if errors:
+            log.warning(
+                f"cleanup_all completed with {errors}/{len(ids)} errors")
 
     # ── Public API: diagnostics (Phase A5) ────────────────────────────────
 
