@@ -731,9 +731,10 @@ class SongsLibrary(QWidget):
     report_clicked          = pyqtSignal(str)
     play_song_clicked       = pyqtSignal(int)
 
-    def __init__(self, db, parent=None):
+    def __init__(self, db, parent=None, engine=None):
         super().__init__(parent)
         self._db = db
+        self._engine = engine     # shared AudioEngine (Phase B Option C)
         self.setFixedSize(WINDOW_W, WINDOW_H)
         self.setStyleSheet(
             f"background: qlineargradient("
@@ -1129,7 +1130,8 @@ class SongsLibrary(QWidget):
             return
         from ui.dialogs.audio_cue_editor_dialog import AudioCueEditorDialog
         dlg = AudioCueEditorDialog(
-            db=self._db, song_id=self._selected_id, parent=self.window())
+            db=self._db, song_id=self._selected_id,
+            parent=self.window(), engine=self._engine)
         dlg.cues_saved.connect(self._on_cues_saved)
         dlg.exec()
 

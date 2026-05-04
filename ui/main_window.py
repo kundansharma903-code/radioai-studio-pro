@@ -28,6 +28,13 @@ class MainWindow(QMainWindow):
         self._db = db
         self.setWindowTitle(f"{APP_NAME} v{APP_VERSION}")
 
+        # Shared AudioEngine instance (Phase B Option C: singleton + DI).
+        # Created lazily — bass_init() is owned by main.py per the engine
+        # lifecycle contract. closeEvent() invokes engine.cleanup_all()
+        # before main.py runs bass_free().
+        from core.audio import AudioEngine
+        self._engine = AudioEngine(parent=self)
+
         # Adaptive sizing: never exceed 95% × 92% of available screen.
         # On a 1920×1080 we get the full 1440×900 design. On a 1366×768
         # laptop we get ≈1300×700 and the central widget scrolls if needed.
@@ -134,7 +141,7 @@ class MainWindow(QMainWindow):
 
             # Mount Songs Library lazily — it's heavy because it loads all songs
             from ui.songs_library import SongsLibrary
-            self.songs_library = SongsLibrary(self._db)
+            self.songs_library = SongsLibrary(self._db, engine=self._engine)
             self.songs_library.breadcrumb_clicked.connect(self._on_breadcrumb)
             self.songs_library.studio_clicked.connect(self._on_studio_clicked)
             self.songs_library.song_selected.connect(self._on_song_selected)
@@ -194,4 +201,13 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         log.info("MainWindow closing")
+        # Phase B5 partial: cleanup audio engine channels before BASS_Free
+        # runs in main.py. Engine constructor was side-effect-free; the
+        # only resource we own is per-channel BASS streams.
+        try:
+            if hasattr(self, "_engine") and self._engine is not None:
+                self._engine.cleanup_all()
+                log.info("AudioEngine.cleanup_all done")
+        except Exception as exc:
+            log.warning(f"engine cleanup_all on close failed: {exc}")
         super().closeEvent(event)

@@ -246,6 +246,9 @@ class _CueWaveformWidget(QFrame):
         self._drag_marker: Optional[str] = None   # marker_id during drag
         self._hover_marker: Optional[str] = None  # marker_id under cursor
 
+        # Playhead overlay (Phase B1) — None = hidden, int = ms position
+        self._playhead_ms: Optional[int] = None
+
         # Mouse tracking is required so the cursor changes on hover. The
         # mouseMoveEvent stays cheap because we only repaint when the
         # hovered marker actually changes (or during an active drag).
@@ -296,6 +299,35 @@ class _CueWaveformWidget(QFrame):
         self.update()
         self.marker_changed.emit(marker_id, new_ms)
         return new_ms
+
+    def set_playhead_ms(self, ms: int) -> None:
+        """Show/move the playback position indicator (Phase B1).
+
+        Repaints only the dirty rect spanning old + new positions, per
+        the file-header performance invariants — at 100ms emit cadence
+        this becomes ~5 px-wide repaints, not full-widget."""
+        new_ms = max(0, min(self._duration_ms, int(ms)))
+        old_ms = self._playhead_ms
+        if old_ms == new_ms:
+            return
+        self._playhead_ms = new_ms
+        # Compute dirty rect (with margin for the line stroke)
+        old_x = self._ms_to_x(old_ms) if old_ms is not None else None
+        new_x = self._ms_to_x(new_ms)
+        if old_x is None:
+            self.update(QRect(new_x - 4, 0, 8, self.height()))
+        else:
+            lo_x = min(old_x, new_x) - 4
+            hi_x = max(old_x, new_x) + 4
+            self.update(QRect(lo_x, 0, hi_x - lo_x, self.height()))
+
+    def clear_playhead(self) -> None:
+        """Hide the playback position indicator."""
+        if self._playhead_ms is None:
+            return
+        old_x = self._ms_to_x(self._playhead_ms)
+        self._playhead_ms = None
+        self.update(QRect(old_x - 4, 0, 8, self.height()))
 
     # ── Internals ─────────────────────────────────────────────────────────
 
@@ -560,15 +592,25 @@ class _CueWaveformWidget(QFrame):
             p.setPen(QColor("#0a0c14"))
             p.drawText(flag_rect, Qt.AlignmentFlag.AlignCenter, label)
 
+        # ── Playhead (Phase B1 — drawn on top so it's visible over markers)
+        if self._playhead_ms is not None:
+            ph_x = plot_left + int(plot_w * (self._playhead_ms / self._duration_ms))
+            ph_color = QColor("#ffffff")
+            p.setPen(QPen(ph_color, 2))
+            p.drawLine(ph_x, plot_top, ph_x, plot_bot)
+            # Small bright dot at top + bottom for emphasis
+            p.setBrush(ph_color); p.setPen(Qt.PenStyle.NoPen)
+            p.drawEllipse(QRectF(ph_x - 3, plot_top - 1, 6, 6))
+
         # ── Bottom labels — current time / total ─────────────────────────
         p.setPen(QColor(TEXT_MUTED))
         p.setFont(mono(8, bold=False))
-        # Show first non-zero marker time on left ("09.4s") and end time
-        # right-side. Placeholder for now — full play position comes in 5-B.
-        first_label = _fmt_ms_decimal(self._positions.get("start", 0))
+        # Show current playhead time on left if active, else first marker
+        left_label_ms = self._playhead_ms if self._playhead_ms is not None \
+            else self._positions.get('intro', 0)
         p.drawText(QRect(margin_x, plot_bot + 4, 120, 18),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                   f"{_fmt_ms_decimal(self._positions.get('intro', 0))} / "
+                   f"{_fmt_ms_decimal(left_label_ms)} / "
                    f"{_fmt_ms_decimal(self._duration_ms)}")
 
 
@@ -1215,9 +1257,11 @@ class AudioCueEditorDialog(BaseDialog):
     HEADER_H = 64
     FOOTER_H = 60
 
-    def __init__(self, db, song_id: int, parent=None):
+    def __init__(self, db, song_id: int, parent=None, engine=None):
         self._db = db
         self._song_id = int(song_id)
+        self._engine = engine    # shared AudioEngine (Phase B Option C)
+
         # Load song + cue data
         try:
             self._db._ensure_song_cue_columns()
@@ -1240,8 +1284,22 @@ class AudioCueEditorDialog(BaseDialog):
         self._footer_msg_default = (
             "Tip: Use << >> buttons to adjust by 0.1 second increments")
 
+        # Phase B1 playback state — single channel per dialog. None = no
+        # channel currently allocated. The engine survives the dialog;
+        # cleanup() runs only on this channel id when the dialog closes.
+        self._playback_cid: Optional[int] = None
+        self._preview_stop_timer: Optional[QTimer] = None
+        self._play_btn: Optional[QPushButton] = None
+        self._stop_btn: Optional[QPushButton] = None
+
         super().__init__(target_size=(920, 740), parent=parent)
         self._populate_from_db()
+
+        # Phase B1: connect AudioEngine signals after the UI exists
+        if self._engine is not None:
+            self._engine.position_changed.connect(self._on_engine_position)
+            self._engine.playback_ended.connect(self._on_engine_playback_ended)
+            self._engine.error_occurred.connect(self._on_engine_error)
 
     # ── Header ────────────────────────────────────────────────────────────
 
@@ -1369,16 +1427,14 @@ class AudioCueEditorDialog(BaseDialog):
         row = QHBoxLayout()
         row.setContentsMargins(0, 4, 0, 4); row.setSpacing(8)
 
-        # Play / Stop column (visual stub per Q3 — no audio in Phase 5)
+        # Play / Stop column — Phase B1 wired to AudioEngine
         ps = QVBoxLayout(); ps.setSpacing(6); ps.setContentsMargins(0, 0, 0, 0)
-        play_btn = self._make_transport_button("▶", GREEN, "Play")
-        play_btn.clicked.connect(
-            lambda: log.info("[cue-editor] play (stub — wired in audio phase)"))
-        ps.addWidget(play_btn)
-        stop_btn = self._make_transport_button("■", RED, "Stop")
-        stop_btn.clicked.connect(
-            lambda: log.info("[cue-editor] stop (stub)"))
-        ps.addWidget(stop_btn)
+        self._play_btn = self._make_transport_button("▶", GREEN, "Play")
+        self._play_btn.clicked.connect(self._on_play_clicked)
+        ps.addWidget(self._play_btn)
+        self._stop_btn = self._make_transport_button("■", RED, "Stop")
+        self._stop_btn.clicked.connect(self._on_stop_clicked)
+        ps.addWidget(self._stop_btn)
         ps_w = QWidget(); ps_w.setStyleSheet("background: transparent;")
         ps_w.setFixedWidth(56); ps_w.setLayout(ps)
         row.addWidget(ps_w)
@@ -1447,10 +1503,126 @@ class AudioCueEditorDialog(BaseDialog):
             self._waveform.reset_marker(marker_id)
 
     def _on_card_preview(self, marker_id: str):
-        # Stub per Q3 — log + button already flashed green inside the card
-        ms = self._waveform.get_positions().get(marker_id, 0) if self._waveform else 0
-        log.info(f"[cue-editor] preview {marker_id} at {ms}ms "
-                 f"(audio wiring deferred to follow-up phase)")
+        """Phase B1: load file (lazy), seek to marker, play, auto-stop in 5s."""
+        if not self._waveform:
+            return
+        ms = self._waveform.get_positions().get(marker_id, 0)
+
+        if not self._ensure_playback_channel():
+            log.warning(
+                f"[cue-editor] preview {marker_id} skipped — no playback channel")
+            return
+
+        self._engine.seek_to_ms(self._playback_cid, ms)
+        self._engine.play(self._playback_cid)
+        self._start_preview_auto_stop_timer(5_000)
+        log.info(f"[cue-editor] preview {marker_id} at {ms}ms (5s auto-stop)")
+
+    # ── Phase B1 playback wiring ─────────────────────────────────────────
+
+    def _ensure_playback_channel(self) -> bool:
+        """Allocate the dialog's BASS channel on first use. Returns False
+        if the file is missing or unsupported (UI surface stays usable —
+        preview / play just become no-ops with a warning)."""
+        if self._playback_cid is not None:
+            return True
+        if self._engine is None:
+            return False
+        path = (self._cue_data or {}).get("file_path")
+        if not path or not os.path.exists(path):
+            log.warning(f"[cue-editor] audio file missing: {path!r}")
+            return False
+        try:
+            self._playback_cid = self._engine.load_file(path)
+            log.info(f"[cue-editor] playback channel ready: ch {self._playback_cid}")
+            return True
+        except Exception as exc:
+            log.warning(f"[cue-editor] load_file failed: {exc}")
+            self._playback_cid = None
+            return False
+
+    def _start_preview_auto_stop_timer(self, ms: int) -> None:
+        """5-second preview cap. Restarts on each PREVIEW click so a fresh
+        preview gets its full window."""
+        if self._preview_stop_timer is None:
+            self._preview_stop_timer = QTimer(self)
+            self._preview_stop_timer.setSingleShot(True)
+            self._preview_stop_timer.timeout.connect(self._on_preview_timeout)
+        self._preview_stop_timer.stop()
+        self._preview_stop_timer.start(ms)
+
+    def _on_preview_timeout(self) -> None:
+        if self._playback_cid is not None and self._engine is not None:
+            try:
+                self._engine.stop(self._playback_cid)
+            except Exception:
+                pass
+
+    def _on_play_clicked(self) -> None:
+        """Main Play transport: play full track from current position
+        (or from start marker if at 0)."""
+        if not self._ensure_playback_channel():
+            return
+        # Cancel any active preview auto-stop — main Play wants full track
+        if self._preview_stop_timer is not None:
+            self._preview_stop_timer.stop()
+        self._engine.play(self._playback_cid)
+        log.info(f"[cue-editor] main play → ch {self._playback_cid}")
+
+    def _on_stop_clicked(self) -> None:
+        """Main Stop transport: stop the dialog's channel (BASS resets
+        position to 0 per Phase A2 contract)."""
+        if self._playback_cid is None or self._engine is None:
+            return
+        if self._preview_stop_timer is not None:
+            self._preview_stop_timer.stop()
+        try:
+            self._engine.stop(self._playback_cid)
+        except Exception as exc:
+            log.debug(f"[cue-editor] stop failed: {exc}")
+        log.info(f"[cue-editor] main stop → ch {self._playback_cid}")
+
+    # ── Engine signal handlers ───────────────────────────────────────────
+
+    def _on_engine_position(self, channel_id: int, position_ms: int) -> None:
+        """Drive the waveform playhead. Filtered to OUR channel — engine
+        is shared, may have other channels active."""
+        if channel_id != self._playback_cid or self._waveform is None:
+            return
+        self._waveform.set_playhead_ms(position_ms)
+
+    def _on_engine_playback_ended(self, channel_id: int) -> None:
+        """Reset playhead when our channel reaches natural EOS."""
+        if channel_id != self._playback_cid:
+            return
+        if self._waveform is not None:
+            self._waveform.clear_playhead()
+        log.info(f"[cue-editor] playback ended on ch {channel_id}")
+
+    def _on_engine_error(self, channel_id: int, message: str) -> None:
+        """Surface engine errors as a footer warning. Doesn't block the
+        dialog — UI must stay usable."""
+        if channel_id != self._playback_cid:
+            return
+        log.warning(f"[cue-editor] engine error: {message}")
+        if self._footer_msg_lbl:
+            self._footer_msg_lbl.setText(f"⚠  Audio: {message}")
+            self._footer_msg_lbl.setStyleSheet(
+                f"color: {RED_LIGHT}; background: transparent;")
+
+    def done(self, result: int) -> None:
+        """QDialog teardown — fires for accept(), reject(), and the ✕
+        button. Releases the dialog's BASS channel back to the engine
+        (the engine itself survives — it's a MainWindow-level singleton)."""
+        try:
+            if self._preview_stop_timer is not None:
+                self._preview_stop_timer.stop()
+            if self._playback_cid is not None and self._engine is not None:
+                self._engine.cleanup(self._playback_cid)
+                self._playback_cid = None
+        except Exception as exc:
+            log.debug(f"[cue-editor] dialog cleanup error: {exc}")
+        super().done(result)
 
     # ── Validation ────────────────────────────────────────────────────────
 
