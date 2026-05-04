@@ -19,8 +19,10 @@ from core.audio.engine import AudioEngine
 from core.audio.exceptions import (
     AudioEngineError, ChannelError, FormatError,
 )
+from core.audio.tags import Tags, TagReader, read_tags
 
 __all__ = [
     "AudioEngine",
     "AudioEngineError", "ChannelError", "FormatError",
+    "Tags", "TagReader", "read_tags",
 ]
