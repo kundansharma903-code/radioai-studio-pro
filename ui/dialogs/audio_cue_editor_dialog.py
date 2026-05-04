@@ -8,8 +8,8 @@ Custom waveform widget with 5 priority-coloured zones + 6 cue markers:
 
 Phase 5 build status:
   [✓] 5-A — skeleton + waveform widget + 6 stationary markers
-  [ ] 5-B — marker drag interaction + cue cards + fade sliders + validation
-  [ ] 5-C — options bar + metadata + AI banner + integration + DB save
+  [✓] 5-B — marker drag interaction + cue cards + fade sliders + validation
+  [✓] 5-C — options bar + metadata + AI banner + DB save flow
 
 ═════════════════════════════════════════════════════════════════════════════
 PERFORMANCE NOTES — DO NOT VIOLATE  (Spot Programming grid lessons)
@@ -32,14 +32,14 @@ import os
 import random
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QRect, QRectF, pyqtSignal
+from PyQt6.QtCore import Qt, QRect, QRectF, QTimer, pyqtSignal
 from PyQt6.QtGui import (
     QPainter, QColor, QPen, QPainterPath, QFont, QCursor, QLinearGradient,
     QBrush,
 )
 from PyQt6.QtWidgets import (
     QWidget, QFrame, QLabel, QPushButton, QLineEdit, QHBoxLayout, QVBoxLayout,
-    QMessageBox, QSizePolicy,
+    QMessageBox, QSizePolicy, QSlider, QComboBox, QGraphicsOpacityEffect,
 )
 
 from ui.widgets._tokens import (
@@ -228,7 +228,7 @@ class _CueWaveformWidget(QFrame):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumHeight(220)
+        self.setMinimumHeight(180)
         self.setStyleSheet(
             f"QFrame {{ background: #0a0c14; "
             f"border: 1px solid {rgba('#ffffff', 0.04)}; "
@@ -734,7 +734,7 @@ class _VerticalFadeSlider(QFrame):
         super().__init__(parent)
         self._label_text = label
         self._accent = accent
-        self.setFixedSize(50, 220)
+        self.setFixedSize(50, 180)
         self.setStyleSheet("background: transparent;")
 
         v = QVBoxLayout(self)
@@ -804,6 +804,407 @@ class _VerticalFadeSlider(QFrame):
 
 
 # ════════════════════════════════════════════════════════════════════════════
+# Options bar — Variable Length / Reset / AutoCue / Volume / Normalize / 32-bit
+# ════════════════════════════════════════════════════════════════════════════
+
+def _toggle_button_qss(accent: str) -> str:
+    """QSS for a checkable pill-style toggle. Off = muted, on = accent-tinted."""
+    return (
+        f"QPushButton {{ background: {rgba('#ffffff', 0.04)}; "
+        f"color: {TEXT_SEC}; "
+        f"border: 1px solid {rgba('#ffffff', 0.06)}; "
+        f"border-radius: 5px; padding: 0 10px; }}"
+        f"QPushButton:hover {{ background: {rgba(accent, 0.14)}; "
+        f"color: {accent}; "
+        f"border-color: {rgba(accent, 0.30)}; }}"
+        f"QPushButton:checked {{ background: {rgba(accent, 0.22)}; "
+        f"color: {accent}; "
+        f"border: 1px solid {rgba(accent, 0.55)}; }}"
+        f"QPushButton:checked:hover {{ background: {rgba(accent, 0.30)}; }}"
+    )
+
+
+class _OptionsBar(QFrame):
+    """Variable Length / Reset / AutoCue / Volume slider / Normalize / 32-bit.
+
+    Holds toggle state; emits `changed` whenever any control flips so the
+    parent dialog can re-validate / mark dirty. `reset_clicked` is the
+    sidebar Reset button (orange) — resets the option toggles + volume only,
+    not the cue points.
+    """
+
+    changed       = pyqtSignal()
+    reset_clicked = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(40)
+        self.setStyleSheet(
+            f"QFrame {{ background: {rgba('#ffffff', 0.02)}; "
+            f"border: 1px solid {rgba('#ffffff', 0.06)}; "
+            f"border-radius: 6px; }}"
+        )
+
+        h = QHBoxLayout(self)
+        h.setContentsMargins(10, 4, 10, 4); h.setSpacing(10)
+
+        # Variable Length toggle
+        self._var_btn = self._make_toggle("Variable Length", RED, "✕")
+        h.addWidget(self._var_btn)
+
+        # Reset button (orange)
+        reset = QPushButton("↻  Reset")
+        reset.setFixedHeight(30)
+        reset.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        reset.setFont(inter(9, QFont.Weight.DemiBold, letter_spacing=0.4))
+        reset.setStyleSheet(
+            f"QPushButton {{ background: {rgba(AMBER, 0.16)}; "
+            f"color: {AMBER_LIGHT}; "
+            f"border: 1px solid {rgba(AMBER, 0.40)}; "
+            f"border-radius: 5px; padding: 0 12px; }}"
+            f"QPushButton:hover {{ background: {rgba(AMBER, 0.26)}; }}"
+        )
+        reset.clicked.connect(self.reset_clicked.emit)
+        h.addWidget(reset)
+
+        # AutoCue toggle (amber)
+        self._autocue_btn = self._make_toggle("AutoCue", AMBER, "●")
+        h.addWidget(self._autocue_btn)
+
+        # Volume label + slider + percentage display
+        vol_lbl = QLabel("Volume:")
+        vol_lbl.setFont(inter(9, QFont.Weight.DemiBold, letter_spacing=0.4))
+        vol_lbl.setStyleSheet(f"color: {TEXT_SEC}; background: transparent;")
+        h.addWidget(vol_lbl)
+
+        self._vol_slider = QSlider(Qt.Orientation.Horizontal)
+        self._vol_slider.setRange(0, 100)
+        self._vol_slider.setValue(100)
+        self._vol_slider.setFixedWidth(140)
+        self._vol_slider.setStyleSheet(self._vol_slider_qss())
+        self._vol_slider.valueChanged.connect(self._on_vol_changed)
+        h.addWidget(self._vol_slider)
+
+        self._vol_lbl = QLabel("100%")
+        self._vol_lbl.setFont(mono(10, bold=True))
+        self._vol_lbl.setStyleSheet(
+            f"color: {AMBER_LIGHT}; background: transparent;")
+        self._vol_lbl.setFixedWidth(42)
+        h.addWidget(self._vol_lbl)
+
+        # Normalize toggle (cyan)
+        self._norm_btn = self._make_toggle("Normalize", CYAN, "≈")
+        h.addWidget(self._norm_btn)
+
+        # 32-bit toggle (cyan)
+        self._bit32_btn = self._make_toggle("32-bit", CYAN, "✓")
+        h.addWidget(self._bit32_btn)
+
+        h.addStretch()
+
+    def _vol_slider_qss(self) -> str:
+        return (
+            f"QSlider::groove:horizontal {{ background: {rgba('#ffffff', 0.06)}; "
+            f"height: 4px; border-radius: 2px; }}"
+            f"QSlider::handle:horizontal {{ background: {AMBER}; "
+            f"width: 12px; margin: -5px 0; border-radius: 4px; "
+            f"border: 1px solid {rgba('#ffffff', 0.25)}; }}"
+            f"QSlider::handle:horizontal:hover {{ border: 1px solid #ffffff; }}"
+            f"QSlider::sub-page:horizontal {{ background: {rgba(AMBER, 0.55)}; "
+            f"border-radius: 2px; }}"
+            f"QSlider::add-page:horizontal {{ background: {rgba('#ffffff', 0.06)}; "
+            f"border-radius: 2px; }}"
+        )
+
+    def _make_toggle(self, label: str, accent: str, glyph: str) -> QPushButton:
+        b = QPushButton(f"{glyph}  {label}")
+        b.setCheckable(True)
+        b.setChecked(False)
+        b.setFixedHeight(30)
+        b.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        b.setFont(inter(9, QFont.Weight.DemiBold, letter_spacing=0.4))
+        b.setStyleSheet(_toggle_button_qss(accent))
+        b.toggled.connect(lambda _on: self.changed.emit())
+        return b
+
+    def _on_vol_changed(self, v: int):
+        self._vol_lbl.setText(f"{int(v)}%")
+        self.changed.emit()
+
+    # ── Public API ────────────────────────────────────────────────────────
+
+    def set_state(self, *, variable_length: int, auto_cue: int,
+                  normalize: int, bit_depth_32: int, volume: int):
+        # Block signals so loading doesn't fire `changed` six times
+        for w in (self._var_btn, self._autocue_btn,
+                  self._norm_btn, self._bit32_btn, self._vol_slider):
+            w.blockSignals(True)
+        self._var_btn.setChecked(bool(variable_length))
+        self._autocue_btn.setChecked(bool(auto_cue))
+        self._norm_btn.setChecked(bool(normalize))
+        self._bit32_btn.setChecked(bool(bit_depth_32))
+        v = int(volume) if volume is not None else 100
+        self._vol_slider.setValue(max(0, min(100, v)))
+        self._vol_lbl.setText(f"{int(self._vol_slider.value())}%")
+        for w in (self._var_btn, self._autocue_btn,
+                  self._norm_btn, self._bit32_btn, self._vol_slider):
+            w.blockSignals(False)
+
+    def get_state(self) -> dict:
+        return {
+            "variable_length": int(self._var_btn.isChecked()),
+            "auto_cue":        int(self._autocue_btn.isChecked()),
+            "normalize":       int(self._norm_btn.isChecked()),
+            "bit_depth_32":    int(self._bit32_btn.isChecked()),
+            "volume_level":    int(self._vol_slider.value()),
+        }
+
+    def reset_to_defaults(self):
+        """Reset toggles + volume — does NOT touch cue points."""
+        self.set_state(
+            variable_length=0, auto_cue=0,
+            normalize=0, bit_depth_32=0, volume=100,
+        )
+        self.changed.emit()
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Public Announcement Metadata
+# ════════════════════════════════════════════════════════════════════════════
+
+class _MetadataSection(QFrame):
+    """Cyan-accented section: header + Update on Play dropdown + 2 inputs.
+
+    Stores its own state internally; the dialog reads via `get_state` on
+    save, and writes via `set_state` on load.
+    """
+
+    changed = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(74)
+        self.setStyleSheet(
+            f"QFrame {{ background: {rgba('#ffffff', 0.02)}; "
+            f"border: 1px solid {rgba(CYAN, 0.20)}; "
+            f"border-left: 3px solid {CYAN}; "
+            f"border-radius: 6px; }}"
+        )
+
+        v = QVBoxLayout(self)
+        v.setContentsMargins(12, 6, 12, 6); v.setSpacing(4)
+
+        # ── Header row ───────────────────────────────────────────────────
+        hdr_row = QHBoxLayout(); hdr_row.setSpacing(8); hdr_row.setContentsMargins(0, 0, 0, 0)
+
+        title = QLabel("PUBLIC ANNOUNCEMENT METADATA")
+        title.setFont(inter(9, QFont.Weight.Black, letter_spacing=1.2))
+        title.setStyleSheet(
+            f"color: {CYAN_LIGHT}; background: transparent; border: none;")
+        hdr_row.addWidget(title)
+        hdr_row.addStretch()
+
+        upd_lbl = QLabel("Update on Play:")
+        upd_lbl.setFont(inter(9, QFont.Weight.Medium))
+        upd_lbl.setStyleSheet(
+            f"color: {TEXT_SEC}; background: transparent; border: none;")
+        hdr_row.addWidget(upd_lbl)
+
+        self._upd_combo = QComboBox()
+        self._upd_combo.addItems(["Yes", "No", "On Track Change"])
+        self._upd_combo.setFixedSize(150, 24)
+        self._upd_combo.setFont(inter(9, QFont.Weight.DemiBold))
+        self._upd_combo.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self._upd_combo.setStyleSheet(self._combo_qss())
+        self._upd_combo.currentIndexChanged.connect(
+            lambda _i: self.changed.emit())
+        hdr_row.addWidget(self._upd_combo)
+        v.addLayout(hdr_row)
+
+        # ── Field row — Title + Artist inputs ────────────────────────────
+        fields_row = QHBoxLayout(); fields_row.setSpacing(10)
+        fields_row.setContentsMargins(0, 0, 0, 0)
+
+        title_box = QVBoxLayout(); title_box.setSpacing(2); title_box.setContentsMargins(0, 0, 0, 0)
+        tlbl = QLabel("Title Field")
+        tlbl.setFont(inter(8, QFont.Weight.Bold, letter_spacing=0.6))
+        tlbl.setStyleSheet(
+            f"color: {TEXT_MUTED}; background: transparent; border: none;")
+        title_box.addWidget(tlbl)
+        self._title_input = QLineEdit("AUTO")
+        self._title_input.setFixedHeight(26)
+        self._title_input.setFont(inter(9))
+        self._title_input.setStyleSheet(self._lineedit_qss())
+        self._title_input.textChanged.connect(lambda _t: self.changed.emit())
+        title_box.addWidget(self._title_input)
+        fields_row.addLayout(title_box, stretch=1)
+
+        artist_box = QVBoxLayout(); artist_box.setSpacing(2); artist_box.setContentsMargins(0, 0, 0, 0)
+        albl = QLabel("Artist Field")
+        albl.setFont(inter(8, QFont.Weight.Bold, letter_spacing=0.6))
+        albl.setStyleSheet(
+            f"color: {TEXT_MUTED}; background: transparent; border: none;")
+        artist_box.addWidget(albl)
+        self._artist_input = QLineEdit("AUTO")
+        self._artist_input.setFixedHeight(26)
+        self._artist_input.setFont(inter(9))
+        self._artist_input.setStyleSheet(self._lineedit_qss())
+        self._artist_input.textChanged.connect(lambda _t: self.changed.emit())
+        artist_box.addWidget(self._artist_input)
+        fields_row.addLayout(artist_box, stretch=1)
+
+        v.addLayout(fields_row)
+
+    def _lineedit_qss(self) -> str:
+        return (
+            f"QLineEdit {{ background: #0e1020; color: {TEXT_PRI}; "
+            f"border: 1px solid {rgba('#ffffff', 0.06)}; border-radius: 4px; "
+            f"padding: 0 8px; "
+            f"selection-background-color: {rgba(CYAN, 0.25)}; }}"
+            f"QLineEdit:focus {{ border: 1px solid {rgba(CYAN, 0.50)}; }}"
+        )
+
+    def _combo_qss(self) -> str:
+        return (
+            f"QComboBox {{ background: #0e1020; color: {TEXT_PRI}; "
+            f"border: 1px solid {rgba('#ffffff', 0.06)}; border-radius: 4px; "
+            f"padding: 0 8px; }}"
+            f"QComboBox:hover {{ border: 1px solid {rgba(CYAN, 0.40)}; }}"
+            f"QComboBox::drop-down {{ width: 18px; border: none; }}"
+            f"QComboBox::down-arrow {{ image: none; width: 0; height: 0; "
+            f"border-left: 4px solid transparent; "
+            f"border-right: 4px solid transparent; "
+            f"border-top: 5px solid {TEXT_SEC}; "
+            f"margin-right: 6px; }}"
+            f"QComboBox QAbstractItemView {{ background: #0e1020; "
+            f"color: {TEXT_PRI}; selection-background-color: {rgba(CYAN, 0.25)}; "
+            f"border: 1px solid {rgba('#ffffff', 0.10)}; }}"
+        )
+
+    # ── Public API ────────────────────────────────────────────────────────
+
+    def set_state(self, *, title_field_mode: str, artist_field_mode: str,
+                  update_on_play: str):
+        for w in (self._title_input, self._artist_input, self._upd_combo):
+            w.blockSignals(True)
+        self._title_input.setText(title_field_mode or "AUTO")
+        self._artist_input.setText(artist_field_mode or "AUTO")
+        idx = self._upd_combo.findText(update_on_play or "Yes")
+        self._upd_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        for w in (self._title_input, self._artist_input, self._upd_combo):
+            w.blockSignals(False)
+
+    def get_state(self) -> dict:
+        return {
+            "title_field_mode":  (self._title_input.text() or "AUTO").strip(),
+            "artist_field_mode": (self._artist_input.text() or "AUTO").strip(),
+            "update_on_play":    self._upd_combo.currentText(),
+        }
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# AI auto-fill banner — purely decorative
+# ════════════════════════════════════════════════════════════════════════════
+
+class _AIBanner(QFrame):
+    """Purple gradient banner with sparkle icon + tagline.
+
+    No interactive surface; paint event renders the gradient + glyph + text.
+    Sized for a 40px row.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(38)
+
+    def paintEvent(self, _e):
+        super().paintEvent(_e)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(0, 0, self.width(), self.height())
+
+        path = QPainterPath(); path.addRoundedRect(rect, 6, 6)
+        p.setClipPath(path)
+
+        grad = QLinearGradient(0, 0, self.width(), 0)
+        grad.setColorAt(0.0, QColor(PURPLE_DARK))
+        grad.setColorAt(0.6, QColor(PURPLE))
+        grad.setColorAt(1.0, QColor(PURPLE_LIGHT))
+        p.fillRect(rect, QBrush(grad))
+
+        # Soft top highlight
+        hl = QColor(255, 255, 255, 18)
+        p.fillRect(QRectF(0, 0, self.width(), 1), hl)
+
+        p.setClipping(False)
+        # Subtle border
+        bc = QColor(PURPLE_LIGHT); bc.setAlphaF(0.35)
+        p.setPen(QPen(bc, 1)); p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), 6, 6)
+
+        # Sparkle glyph
+        glyph_x = 14
+        p.setPen(QColor("#ffffff"))
+        p.setFont(inter(15, QFont.Weight.Bold))
+        p.drawText(QRectF(glyph_x, 0, 22, self.height()),
+                   Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                   "✦")
+
+        # Main text
+        text_x = 40
+        text_w = self.width() - text_x - 12
+        p.setPen(QColor("#ffffff"))
+        p.setFont(inter(10, QFont.Weight.DemiBold, letter_spacing=0.2))
+        p.drawText(QRectF(text_x, 2, text_w, 17),
+                   Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                   "AI will auto-detect and fill metadata from audio file tags on import")
+
+        # Subtitle (lighter)
+        sub_color = QColor("#ffffff"); sub_color.setAlphaF(0.78)
+        p.setPen(sub_color)
+        p.setFont(inter(8))
+        p.drawText(QRectF(text_x, 19, text_w, 17),
+                   Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                   "Artist, Title, Album, BPM, Energy, Genre — all detected automatically")
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Floating success toast
+# ════════════════════════════════════════════════════════════════════════════
+
+class _Toast(QLabel):
+    """Brief overlay shown after a successful save. Auto-fades after `dwell_ms`.
+
+    Created as a child of the dialog and positioned above the footer. Uses
+    QGraphicsOpacityEffect for the fade so we don't fight Qt's window
+    lifecycle.
+    """
+
+    def __init__(self, message: str, parent: QWidget):
+        super().__init__(message, parent)
+        self.setFont(inter(10, QFont.Weight.DemiBold, letter_spacing=0.4))
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setStyleSheet(
+            f"QLabel {{ background: {rgba(GREEN, 0.92)}; "
+            f"color: white; "
+            f"border: 1px solid {rgba(GREEN_LIGHT, 0.6)}; "
+            f"border-radius: 6px; "
+            f"padding: 6px 16px; }}"
+        )
+        self.adjustSize()
+        # Center horizontally near the bottom of the parent
+        pw = parent.width()
+        ph = parent.height()
+        self.move((pw - self.width()) // 2, ph - 110)
+        self.raise_()
+        self.show()
+
+    def schedule_close(self, on_done, dwell_ms: int = 700):
+        """Hold visible for `dwell_ms`, then call `on_done`."""
+        QTimer.singleShot(dwell_ms, on_done)
+
+
+# ════════════════════════════════════════════════════════════════════════════
 # Main dialog
 # ════════════════════════════════════════════════════════════════════════════
 
@@ -833,11 +1234,13 @@ class AudioCueEditorDialog(BaseDialog):
         self._cue_cards: dict[str, _CueCard] = {}
         self._fade_in_slider: Optional[_VerticalFadeSlider] = None
         self._fade_out_slider: Optional[_VerticalFadeSlider] = None
+        self._options_bar: Optional[_OptionsBar] = None
+        self._metadata: Optional[_MetadataSection] = None
         self._footer_msg_lbl: Optional[QLabel] = None
         self._footer_msg_default = (
             "Tip: Use << >> buttons to adjust by 0.1 second increments")
 
-        super().__init__(target_size=(920, 680), parent=parent)
+        super().__init__(target_size=(920, 740), parent=parent)
         self._populate_from_db()
 
     # ── Header ────────────────────────────────────────────────────────────
@@ -890,7 +1293,7 @@ class AudioCueEditorDialog(BaseDialog):
     def _build_content(self) -> QWidget:
         c = QFrame(); c.setStyleSheet("background: transparent;")
         v = QVBoxLayout(c)
-        v.setContentsMargins(14, 12, 14, 12); v.setSpacing(10)
+        v.setContentsMargins(14, 8, 14, 8); v.setSpacing(6)
 
         # ── File path bar ────────────────────────────────────────────────
         path_row = QHBoxLayout(); path_row.setContentsMargins(0, 0, 0, 0)
@@ -944,43 +1347,22 @@ class AudioCueEditorDialog(BaseDialog):
         # ── Controls row — Play/Stop / Fade In / 6 cue cards / Fade Out ─
         v.addLayout(self._build_controls_row())
 
-        ph_options = self._make_placeholder(
-            "▼  Options bar (Variable Length / AutoCue / Volume / Normalize / 32-bit) "
-            "coming in Phase 5-C",
-            color=TEXT_DIM, height=40)
-        v.addWidget(ph_options)
+        # ── Options bar (Phase 5-C) ──────────────────────────────────────
+        self._options_bar = _OptionsBar()
+        self._options_bar.changed.connect(self._validate)
+        self._options_bar.reset_clicked.connect(self._on_options_reset)
+        v.addWidget(self._options_bar)
 
-        ph_meta = self._make_placeholder(
-            "▼  PUBLIC ANNOUNCEMENT METADATA section coming in Phase 5-C",
-            color=TEXT_DIM, height=60)
-        v.addWidget(ph_meta)
+        # ── Public Announcement Metadata (Phase 5-C) ─────────────────────
+        self._metadata = _MetadataSection()
+        self._metadata.changed.connect(self._validate)
+        v.addWidget(self._metadata)
 
-        ph_ai = self._make_placeholder(
-            "✦  AI auto-fill banner coming in Phase 5-C",
-            color=TEXT_DIM, height=40)
-        v.addWidget(ph_ai)
+        # ── AI banner (Phase 5-C — decorative) ───────────────────────────
+        v.addWidget(_AIBanner())
 
         v.addStretch()
         return c
-
-    def _make_placeholder(self, text: str, color: str, height: int) -> QFrame:
-        """Visual placeholder for sections to be filled in 5-C."""
-        f = QFrame()
-        f.setFixedHeight(height)
-        f.setStyleSheet(
-            f"QFrame {{ background: rgba(255,255,255,0.02); "
-            f"border: 1px dashed {rgba('#ffffff', 0.10)}; "
-            f"border-radius: 5px; }}"
-        )
-        l = QLabel(text, f)
-        l.setGeometry(0, 0, 9999, height)
-        l.setFont(inter(10))
-        l.setStyleSheet(
-            f"QLabel {{ color: {color}; background: transparent; "
-            f"border: none; }}"
-        )
-        l.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        return f
 
     def _build_controls_row(self) -> QHBoxLayout:
         """Phase 5-B: Play/Stop column + Fade In + 6 cue cards + Fade Out."""
@@ -1250,6 +1632,25 @@ class AudioCueEditorDialog(BaseDialog):
         if self._fade_out_slider:
             self._fade_out_slider.set_value(int(d.get("fade_out_ms") or 0))
 
+        # Options bar — variable_length, auto_cue, normalize, bit_depth_32, volume_level
+        if self._options_bar:
+            vol = d.get("volume_level")
+            self._options_bar.set_state(
+                variable_length=int(d.get("variable_length") or 0),
+                auto_cue=int(d.get("auto_cue") or 0),
+                normalize=int(d.get("normalize") or 0),
+                bit_depth_32=int(d.get("bit_depth_32") or 0),
+                volume=100 if vol is None or vol == 0 else int(vol),
+            )
+
+        # Metadata section — title/artist field modes + update_on_play
+        if self._metadata:
+            self._metadata.set_state(
+                title_field_mode=str(d.get("title_field_mode") or "AUTO"),
+                artist_field_mode=str(d.get("artist_field_mode") or "AUTO"),
+                update_on_play=str(d.get("update_on_play") or "Yes"),
+            )
+
         # Initial validation (defaults are valid; this primes the footer)
         self._validate()
 
@@ -1266,10 +1667,70 @@ class AudioCueEditorDialog(BaseDialog):
                 f"[cue-editor] path edit "
                 f"{'unlocked' if not self._path_input.isReadOnly() else 'locked'}")
 
+    def _on_options_reset(self):
+        """↻ Reset on the options bar — restores option toggles + volume to
+        defaults. Cue points and fade values are NOT touched here (they have
+        their own per-card Reset)."""
+        if self._options_bar:
+            self._options_bar.reset_to_defaults()
+        log.info("[cue-editor] options reset (toggles + volume → defaults)")
+
+    def _collect_save_payload(self) -> dict:
+        """Gather full state into a dict keyed by canonical column names —
+        the same schema `Database.save_song_cue_points` expects."""
+        payload: dict = {}
+
+        # Cue point positions
+        if self._waveform:
+            for marker_id, ms in self._waveform.get_positions().items():
+                payload[MARKER_DB_FIELD[marker_id]] = int(ms)
+
+        # Fade values
+        if self._fade_in_slider:
+            payload["fade_in_ms"] = int(self._fade_in_slider.value())
+        if self._fade_out_slider:
+            payload["fade_out_ms"] = int(self._fade_out_slider.value())
+
+        # Options
+        if self._options_bar:
+            payload.update(self._options_bar.get_state())
+
+        # Metadata
+        if self._metadata:
+            payload.update(self._metadata.get_state())
+
+        return payload
+
     def _on_save(self):
-        """Phase 5-A: Save is disabled. 5-B will collect waveform positions
-        + slider values + option toggles and write via save_song_cue_points."""
-        log.info("[cue-editor] save clicked (Phase 5-A — wiring in 5-B)")
-        # Placeholder: emit signal so the integration code is exercised
-        self.cues_saved.emit(self._song_id)
-        self.accept()
+        """Validate, persist, toast, emit, close.
+
+        Validation must pass before reaching here (Save button is gated by
+        _validate), but we re-check defensively.
+        """
+        if not self._validate():
+            log.warning("[cue-editor] save blocked — validation failed")
+            return
+
+        try:
+            payload = self._collect_save_payload()
+            self._db.save_song_cue_points(self._song_id, payload)
+            log.info(
+                f"[cue-editor] saved cue data for song id={self._song_id} "
+                f"({len(payload)} fields)")
+        except Exception as exc:
+            log.error(f"[cue-editor] save failed: {exc}")
+            QMessageBox.critical(
+                self, "Save failed",
+                f"Could not save cue data:\n\n{exc}")
+            return
+
+        # Brief success toast, then emit + close
+        toast = _Toast("✓  Cue points saved", self)
+        def _finish():
+            try:
+                toast.deleteLater()
+            except Exception:
+                pass
+            self.cues_saved.emit(self._song_id)
+            self.accept()
+        toast.schedule_close(_finish, dwell_ms=700)
