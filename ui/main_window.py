@@ -173,6 +173,19 @@ class MainWindow(QMainWindow):
             self.spots_commercials.breadcrumb_clicked.connect(self._on_breadcrumb)
             self.spots_commercials.studio_clicked.connect(self._on_studio_clicked)
             self._stack.addWidget(self.spots_commercials)
+
+            # Studio Single Deck — broadcast operator workstation (Figma 182:2)
+            # Phase D1: skeleton only; Day D2 wires audio, D3+ wires scheduler.
+            from ui.studio import Studio
+            self.studio = Studio(
+                self._db, parent=None, engine=self._engine)
+            self.studio.breadcrumb_clicked.connect(self._on_breadcrumb)
+            self._stack.addWidget(self.studio)
+
+            # F9 shortcut → open Studio (broadcast convention; Jazler precedent)
+            from PyQt6.QtGui import QShortcut, QKeySequence
+            self._studio_shortcut = QShortcut(QKeySequence("F9"), self)
+            self._studio_shortcut.activated.connect(self._on_studio_clicked)
         except Exception as exc:
             import traceback
             log.error(f"Mount failed: {exc}\n{traceback.format_exc()}")
@@ -206,6 +219,8 @@ class MainWindow(QMainWindow):
 
     def _on_studio_clicked(self) -> None:
         log.info("Open Studio →")
+        if hasattr(self, "studio"):
+            self._stack.setCurrentWidget(self.studio)
 
     def _on_settings_clicked(self) -> None:
         log.info("Settings →")
