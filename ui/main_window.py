@@ -36,6 +36,13 @@ class MainWindow(QMainWindow):
         from core.audio import AudioEngine
         self._engine = AudioEngine(parent=self)
 
+        # Shared SchedulerEngine instance (Phase D3 — Option C DI).
+        # Lives on its own QThread; ticks at 1Hz. NOT auto-started in
+        # D3 — explicit start() comes from D5+ once the live broadcast
+        # loop is wired. Stopped before audio cleanup on shutdown.
+        from core.scheduler import SchedulerEngine
+        self._scheduler = SchedulerEngine(self._db, parent=self)
+
         # Phase B5: aboutToQuit safety net. Fires on app force-quit, OS
         # shutdown, or any path that bypasses closeEvent. cleanup_all is
         # idempotent so the dual-hook is cheap.
@@ -175,10 +182,11 @@ class MainWindow(QMainWindow):
             self._stack.addWidget(self.spots_commercials)
 
             # Studio Single Deck — broadcast operator workstation (Figma 182:2)
-            # Phase D1: skeleton only; Day D2 wires audio, D3+ wires scheduler.
+            # Phase D1: skeleton; D2 wires manual audio; D3 passes scheduler.
             from ui.studio import Studio
             self.studio = Studio(
-                self._db, parent=None, engine=self._engine)
+                self._db, parent=None,
+                engine=self._engine, scheduler=self._scheduler)
             self.studio.breadcrumb_clicked.connect(self._on_breadcrumb)
             self._stack.addWidget(self.studio)
 
@@ -240,9 +248,22 @@ class MainWindow(QMainWindow):
         self._cleanup_engine()
 
     def _cleanup_engine(self):
-        """Idempotent engine cleanup. Both closeEvent and aboutToQuit
-        call this; the second call is a no-op once the engine has no
-        active channels."""
+        """Idempotent shutdown. Both closeEvent and aboutToQuit call
+        this; the second call is a no-op once the scheduler is stopped
+        and the engine has no active channels.
+
+        ORDER MATTERS: scheduler stops FIRST so it can't fire any more
+        spot_due / song_auto_advance signals into a tearing-down audio
+        engine. Then audio cleanup."""
+        # 1. Stop scheduler (silence the event source)
+        if hasattr(self, "_scheduler") and self._scheduler is not None:
+            try:
+                self._scheduler.stop()
+                log.info("SchedulerEngine stopped")
+            except Exception as exc:
+                log.warning(f"scheduler stop failed: {exc}")
+
+        # 2. Cleanup audio channels
         if not hasattr(self, "_engine") or self._engine is None:
             return
         try:

@@ -1386,6 +1386,16 @@ class Studio(QWidget):
             self._engine.playback_ended.connect(self._on_engine_playback_ended)
             self._engine.error_occurred.connect(self._on_engine_error)
 
+        # Scheduler signal connections (Phase D3 — handlers are no-ops
+        # for now; D4 will wire spot_due to real spot playback, D5 will
+        # wire song_auto_advance to queue advancement)
+        if self._scheduler is not None:
+            self._scheduler.spot_due.connect(self._on_scheduler_spot_due)
+            self._scheduler.song_auto_advance.connect(
+                self._on_scheduler_song_advance)
+            self._scheduler.break_approaching.connect(
+                self._on_scheduler_break_warn)
+
         # Wire transport + master vol + queue
         self._transport.restart_clicked.connect(self._on_restart_clicked)
         self._transport.loop_toggled.connect(self._on_loop_toggled)
@@ -1773,6 +1783,23 @@ class Studio(QWidget):
             return
         log.warning(f"[studio] engine error: {message}")
         self._on_engine_playback_ended(channel_id)
+
+    # ── Scheduler signal handlers (Phase D3 — placeholder logging) ───────
+
+    def _on_scheduler_spot_due(self, campaign_id: int) -> None:
+        """D4 will wire this to actually fetch + play the campaign's spot
+        file via the deck channel (or a dedicated spots channel). For
+        D3, just log."""
+        log.info(f"[studio] scheduler: spot_due campaign={campaign_id}")
+
+    def _on_scheduler_song_advance(self) -> None:
+        """D5 will wire this to load the next queue item on the deck.
+        For D3, just log."""
+        log.info("[studio] scheduler: song_auto_advance")
+
+    def _on_scheduler_break_warn(self, seconds_until: int) -> None:
+        """D4 will wire this to flash the Next Break card. For D3, log."""
+        log.info(f"[studio] scheduler: break_approaching in {seconds_until}s")
 
     # ── Lifecycle: stop on hide / navigate-away ──────────────────────────
 
