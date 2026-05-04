@@ -23,6 +23,7 @@ Phase status (incremental build):
 """
 
 import logging
+import os
 from typing import Optional
 from datetime import datetime
 
@@ -848,9 +849,18 @@ class _AIInsightBar(QFrame):
 class _NowAiring(QFrame):
     """Compact 'currently playing' strip below the table.
 
-    No real BASS playback yet — it shows a static progress bar based on
-    the most-recent campaign in broadcast_log. Wired to actual playback
-    in a later phase along with the campaign scheduling engine."""
+    Phase B3: wired to AudioEngine. The left-edge play/stop button
+    triggers manual playback of the selected campaign's first spot file.
+    Progress bar + duration text are driven by engine.position_changed
+    via set_progress / set_duration_text. AutoPlay pill is unchanged —
+    Phase D scheduler will wire it.
+    """
+
+    play_clicked = pyqtSignal()    # emitted when the ▶/■ button is clicked
+
+    PLAY_BTN_X = 10
+    PLAY_BTN_W = 30
+    PLAY_BTN_H = 30
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -861,35 +871,112 @@ class _NowAiring(QFrame):
             f"border-radius: 8px; }}"
         )
         self._campaign_name = "—"
-        self._progress = 0.5
+        self._progress = 0.0
         self._duration_text = "0:00 / 0:00"
+        self._playing = False
+        self._hover_play = False
+        self.setMouseTracking(True)
 
-    def set_campaign(self, name: str):
+    # ── Public API (Phase B3) ─────────────────────────────────────────────
+
+    def set_campaign(self, name: str) -> None:
         self._campaign_name = name or "—"
         self.update()
+
+    def set_progress(self, fraction: float) -> None:
+        f = max(0.0, min(1.0, float(fraction)))
+        if abs(self._progress - f) < 0.001:
+            return
+        self._progress = f
+        self.update()
+
+    def set_duration_text(self, text: str) -> None:
+        self._duration_text = text or "0:00 / 0:00"
+        self.update()
+
+    def set_playing(self, playing: bool) -> None:
+        if self._playing == playing:
+            return
+        self._playing = playing
+        if not playing:
+            # Reset progress visual when not playing — looks cleaner than
+            # leaving the bar half-full on stop.
+            self._progress = 0.0
+            self._duration_text = "0:00 / 0:00"
+        self.update()
+
+    # ── Hit-testing for the play button ──────────────────────────────────
+
+    def _play_btn_rect(self) -> QRectF:
+        return QRectF(
+            self.PLAY_BTN_X,
+            (NOW_AIRING_H - self.PLAY_BTN_H) / 2,
+            self.PLAY_BTN_W,
+            self.PLAY_BTN_H,
+        )
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            if self._play_btn_rect().contains(e.position()):
+                self.play_clicked.emit()
+                return
+        super().mousePressEvent(e)
+
+    def mouseMoveEvent(self, e):
+        over = self._play_btn_rect().contains(e.position())
+        if over != self._hover_play:
+            self._hover_play = over
+            self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor if over
+                                   else Qt.CursorShape.ArrowCursor))
+            self.update(self._play_btn_rect().toRect())
+        super().mouseMoveEvent(e)
+
+    def leaveEvent(self, e):
+        if self._hover_play:
+            self._hover_play = False
+            self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
+            self.update(self._play_btn_rect().toRect())
+        super().leaveEvent(e)
+
+    # ── Paint ─────────────────────────────────────────────────────────────
 
     def paintEvent(self, _e):
         super().paintEvent(_e)
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        # Live dot (pulsing replacement: static green is fine here)
-        p.setBrush(QColor(GREEN)); p.setPen(Qt.PenStyle.NoPen)
-        p.drawEllipse(14, NOW_AIRING_H // 2 - 4, 8, 8)
-        # NOW AIRING label
+
+        # ── Play / stop button (left edge, replaces the static dot) ─────
+        btn = self._play_btn_rect()
+        accent = QColor(RED if self._playing else GREEN)
+        bg = QColor(accent); bg.setAlphaF(0.32 if self._hover_play else 0.20)
+        path = QPainterPath(); path.addRoundedRect(btn, 6, 6)
+        p.setClipPath(path)
+        p.fillRect(btn, bg)
+        p.setClipping(False)
+        bc = QColor(accent); bc.setAlphaF(0.55)
+        p.setPen(QPen(bc, 1)); p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawRoundedRect(btn, 6, 6)
+        p.setPen(QColor(accent))
+        p.setFont(inter(13, QFont.Weight.Bold))
+        p.drawText(btn, Qt.AlignmentFlag.AlignCenter,
+                   "■" if self._playing else "▶")
+
+        # NOW AIRING label (shifted right to make room for play button)
+        label_x = self.PLAY_BTN_X + self.PLAY_BTN_W + 8
         p.setPen(QColor(TEXT_MUTED))
         p.setFont(inter(8, QFont.Weight.Bold, letter_spacing=1.4))
-        p.drawText(QRectF(28, 6, 100, 14),
+        p.drawText(QRectF(label_x, 6, 100, 14),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                    "NOW AIRING")
         # Campaign name
         p.setPen(QColor(GREEN_LIGHT))
         p.setFont(inter(11, QFont.Weight.DemiBold))
-        p.drawText(QRectF(28, 22, 240, 18),
+        p.drawText(QRectF(label_x, 22, 240, 18),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                    self._campaign_name)
 
         # Progress bar (centre)
-        bar = QRectF(280, NOW_AIRING_H // 2 - 3, self.width() - 460, 6)
+        bar = QRectF(290, NOW_AIRING_H // 2 - 3, self.width() - 470, 6)
         path = QPainterPath(); path.addRoundedRect(bar, 3, 3)
         p.setClipPath(path)
         p.fillRect(bar, QColor("#0a0c18"))
@@ -907,7 +994,7 @@ class _NowAiring(QFrame):
                    Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
                    self._duration_text)
 
-        # AutoPlay ON pill (right edge)
+        # AutoPlay ON pill (right edge — unchanged; Phase D will wire it)
         pill = QRectF(self.width() - 92, NOW_AIRING_H // 2 - 11, 80, 22)
         bg = QColor(AMBER); bg.setAlphaF(0.18)
         p.setBrush(bg); p.setPen(Qt.PenStyle.NoPen)
@@ -929,15 +1016,24 @@ class SpotsCommercials(QWidget):
     edit_breaks_clicked   = pyqtSignal(int)   # campaign_id
     campaign_selected     = pyqtSignal(int)
 
-    def __init__(self, db, parent=None):
+    def __init__(self, db, parent=None, engine=None):
         super().__init__(parent)
         self._db = db
+        self._engine = engine    # shared AudioEngine (Phase B Option C)
 
         # State
         self._campaigns: list[dict] = []
         self._row_widgets: list[_CampaignRow] = []
         self._selected_id: Optional[int] = None
         self._filter: str = "all"
+
+        # Phase B3 Now-Airing playback state — channel separate from
+        # SongsLibrary._preview_cid and AudioCueEditorDialog._playback_cid
+        # so all three UIs can audition simultaneously (Q2 contract).
+        self._airing_cid: Optional[int] = None
+        self._airing_campaign_id: Optional[int] = None
+        self._airing_spot_path: Optional[str] = None
+        self._airing_duration_ms: int = 0
 
         # Refs
         self._table_layout: Optional[QVBoxLayout] = None
@@ -1193,6 +1289,12 @@ class SpotsCommercials(QWidget):
         self._now_airing = _NowAiring(self)
         na_y = WINDOW_H - STATUS_H - NOW_AIRING_H - 18
         self._now_airing.setGeometry(TABLE_X0, na_y, TABLE_W, NOW_AIRING_H)
+        # Phase B3: wire the play/stop button + engine signals
+        self._now_airing.play_clicked.connect(self._on_airing_play_clicked)
+        if self._engine is not None:
+            self._engine.position_changed.connect(self._on_airing_position)
+            self._engine.playback_ended.connect(self._on_airing_playback_ended)
+            self._engine.error_occurred.connect(self._on_airing_error)
 
     # ── RIGHT DETAIL PANEL ───────────────────────────────────────────────
 
@@ -1436,6 +1538,135 @@ class SpotsCommercials(QWidget):
             r.set_selected(r._campaign.get("id") == campaign_id)
         self._refresh_detail_panel()
         self.campaign_selected.emit(int(campaign_id))
+
+    # ── Phase B3: Now Airing playback wiring ─────────────────────────────
+
+    def _on_airing_play_clicked(self) -> None:
+        """Now Airing strip ▶/■ button. Toggles per Q5 contract:
+          - same campaign currently airing → stop
+          - different selected campaign → stop current, start new
+          - no current airing → start the selected campaign
+
+        Manual play only — scheduled auto-play is Phase D scheduler's job.
+        Preview is audition only, no broadcast_log entry (Q4)."""
+        if self._engine is None:
+            log.warning("[spots] no engine — Now Airing play unavailable")
+            return
+
+        target_id = self._selected_id
+        if target_id is None:
+            log.info("[spots] no campaign selected — Now Airing play ignored")
+            return
+
+        if self._airing_campaign_id == target_id:
+            self._stop_airing()
+            return
+
+        self._stop_airing()
+        self._start_airing(target_id)
+
+    def _start_airing(self, campaign_id: int) -> None:
+        spot_files = self._db.get_spot_files(campaign_id)
+        # Pick first ACTIVE file with on-disk path. Round-robin selection
+        # is Phase D scheduler's job.
+        chosen = None
+        for sf in spot_files:
+            path = sf["file_path"] if "file_path" in sf.keys() else None
+            if not path:
+                continue
+            if not os.path.exists(path):
+                continue
+            is_active = bool(sf["is_active"]) if "is_active" in sf.keys() else True
+            if not is_active:
+                continue
+            chosen = sf
+            break
+
+        if chosen is None:
+            log.warning(
+                f"[spots] campaign {campaign_id} has no playable spot file")
+            if self._now_airing:
+                self._now_airing.set_campaign(
+                    "No playable spot in campaign")
+            return
+
+        path = chosen["file_path"]
+        try:
+            cid = self._engine.load_file(path)
+        except Exception as exc:
+            log.warning(f"[spots] load_file failed: {exc}")
+            return
+
+        self._engine.play(cid)
+        self._airing_cid = cid
+        self._airing_campaign_id = campaign_id
+        self._airing_spot_path = path
+        self._airing_duration_ms = self._engine.get_duration_ms(cid) or 0
+
+        # Strip UI
+        if self._now_airing is not None:
+            campaign = next(
+                (c for c in self._campaigns if c["id"] == campaign_id), None)
+            if campaign:
+                self._now_airing.set_campaign(campaign.get("name") or "—")
+            self._now_airing.set_playing(True)
+            self._now_airing.set_progress(0.0)
+            self._now_airing.set_duration_text(
+                f"0:00 / {_fmt_duration_short(self._airing_duration_ms)}")
+
+        log.info(
+            f"[spots] now-airing started ch={cid} campaign={campaign_id} "
+            f"path={os.path.basename(path)} dur={self._airing_duration_ms}ms")
+
+    def _stop_airing(self) -> None:
+        """End the current airing and reset strip. Idempotent."""
+        if self._airing_cid is None:
+            return
+        cid = self._airing_cid
+        try:
+            self._engine.cleanup(cid)
+        except Exception as exc:
+            log.debug(f"[spots] airing cleanup error: {exc}")
+
+        self._airing_cid = None
+        self._airing_campaign_id = None
+        self._airing_spot_path = None
+        self._airing_duration_ms = 0
+
+        if self._now_airing is not None:
+            self._now_airing.set_playing(False)
+
+        log.info(f"[spots] now-airing stopped (was ch={cid})")
+
+    # ── Engine signal handlers (filtered to OUR channel) ─────────────────
+
+    def _on_airing_position(self, channel_id: int, position_ms: int) -> None:
+        if channel_id != self._airing_cid or self._now_airing is None:
+            return
+        if self._airing_duration_ms > 0:
+            self._now_airing.set_progress(
+                position_ms / self._airing_duration_ms)
+            self._now_airing.set_duration_text(
+                f"{_fmt_duration_short(position_ms)} / "
+                f"{_fmt_duration_short(self._airing_duration_ms)}")
+
+    def _on_airing_playback_ended(self, channel_id: int) -> None:
+        if channel_id == self._airing_cid:
+            self._stop_airing()
+
+    def _on_airing_error(self, channel_id: int, message: str) -> None:
+        if channel_id == self._airing_cid:
+            log.warning(f"[spots] airing engine error: {message}")
+            self._stop_airing()
+
+    # ── Lifecycle: stop airing on hide / navigate-away ───────────────────
+
+    def hideEvent(self, event):
+        try:
+            self._stop_airing()
+        except Exception:
+            pass
+        super().hideEvent(event)
 
     def _refresh_detail_panel(self):
         if not self._selected_id or not self._header_card:

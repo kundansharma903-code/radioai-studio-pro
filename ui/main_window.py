@@ -158,7 +158,8 @@ class MainWindow(QMainWindow):
 
             # Spots & Commercials Library (Figma 35:2)
             from ui.spots_commercials import SpotsCommercials
-            self.spots_commercials = SpotsCommercials(self._db)
+            self.spots_commercials = SpotsCommercials(
+                self._db, engine=self._engine)
             self.spots_commercials.breadcrumb_clicked.connect(self._on_breadcrumb)
             self.spots_commercials.studio_clicked.connect(self._on_studio_clicked)
             self._stack.addWidget(self.spots_commercials)
