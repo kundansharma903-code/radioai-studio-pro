@@ -46,6 +46,7 @@ stitcher_*.wav
 
 # Distribution
 *.spec
+*.spec.bak
 figma_5-2.png
 figma_192-2.png
 figma_212-2.png
@@ -54,3 +55,23 @@ figma_218-2.png
 figma_218-46.png
 figma_112-2.png
 figma_32-2.png
+
+# Claude Code worktrees + internal state
+.claude/
+
+# Test cache
+.pytest_cache/
+
+# Editor swaps
+*.swp
+*.swo
+*~
+
+# OS metadata
+.DS_Store
+
+# Local backups
+*_backup_*/
+
+# SQLite journal (in addition to .db-wal / .db-shm above)
+*.db-journal
