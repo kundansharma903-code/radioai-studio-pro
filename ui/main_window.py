@@ -190,11 +190,15 @@ class MainWindow(QMainWindow):
             self.studio.breadcrumb_clicked.connect(self._on_breadcrumb)
             self._stack.addWidget(self.studio)
 
-            # Scheduling UI removed — full redesign pending.
-            # Scheduler engine + DB tables (clocks, clock_slots,
-            # auto_schedule, force_clocks) remain intact and reusable;
-            # the Studio playback path still drives off
-            # SchedulerEngine.pick_next_item when running.
+            # Scheduling Hub — premium dark theme rebuild (Figma 231:3).
+            # Pure navigation grid + Studio launcher; live status footer
+            # reflects scheduler engine state.
+            from ui.scheduling_hub import SchedulingHub
+            self.scheduling_hub = SchedulingHub(
+                self._db, scheduler=self._scheduler, parent=None)
+            self.scheduling_hub.screen_requested.connect(
+                self._on_hub_screen_requested)
+            self._stack.addWidget(self.scheduling_hub)
 
             # F9 shortcut → open Studio (broadcast convention; Jazler precedent)
             from PyQt6.QtGui import QShortcut, QKeySequence
@@ -213,12 +217,51 @@ class MainWindow(QMainWindow):
             self._stack.setCurrentWidget(self.instant_jingles)
         elif screen == "spots" and hasattr(self, "spots_commercials"):
             self._stack.setCurrentWidget(self.spots_commercials)
-        # 'scheduling' card click → no-op for now (UI redesign pending).
+        elif screen == "scheduling" and hasattr(self, "scheduling_hub"):
+            # Hub becomes the visible screen; it injects studio reference
+            # lazily so the now-playing poll picks up Studio if mounted.
+            if hasattr(self, "studio") and hasattr(self.scheduling_hub,
+                                                    "set_studio"):
+                self.scheduling_hub.set_studio(self.studio)
+            self._stack.setCurrentWidget(self.scheduling_hub)
 
     def _on_breadcrumb(self, where: str) -> None:
         log.info(f"Breadcrumb → {where}")
         if where == "control_panel" and hasattr(self, "control_panel"):
             self._stack.setCurrentWidget(self.control_panel)
+
+    def _on_hub_screen_requested(self, screen: str) -> None:
+        """Routes from SchedulingHub.screen_requested. Real screens that
+        haven't been ported to the new theme yet show a status-bar /
+        toast saying so — never crash."""
+        log.info(f"Hub → {screen}")
+        if screen == "studio_open":
+            self._on_studio_clicked()
+            return
+        if screen == "libraries":
+            # Libraries tab in the new top nav → back to Control Panel
+            # for now (Control Panel hosts the library cards).
+            if hasattr(self, "control_panel"):
+                self._stack.setCurrentWidget(self.control_panel)
+            return
+        # Everything else is a future scheduling sub-screen.
+        from PyQt6.QtWidgets import QMessageBox
+        labels = {
+            "playlists":          "Playlists",
+            "main_auto_schedule": "Main Auto Schedule",
+            "force_clocks":       "Force Clocks Schedule",
+            "rebroadcast":        "Rebroadcast Schedule",
+            "rds":                "RDS",
+            "final_log_creator":  "Final Log Creator",
+            "log_viewer":         "Log Viewer",
+            "settings":           "Settings",
+            "ai_magic":           "AI Magic",
+        }
+        title = labels.get(screen, screen)
+        QMessageBox.information(
+            self, title,
+            f"{title} — coming soon.\n\nThis screen will be ported to "
+            "the premium theme in a follow-up commit.")
 
     def _on_song_selected(self, song_id: int) -> None:
         log.info(f"Song selected: id={song_id}")

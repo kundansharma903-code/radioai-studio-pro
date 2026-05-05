@@ -134,3 +134,55 @@ App launches clean.
 No regressions.
 
 Writing MORNING_BRIEFING.md next.
+
+---
+
+## 2026-05-05 — Scheduling Hub rebuild (Figma 231:3 — Premium Dark)
+
+First screen of the new ~13-screen premium theme port. Rebuild of
+`ui/scheduling_hub.py` from scratch after the clean-slate deletion;
+locks in the layout patterns (header, tile system, footer, design
+tokens) that the next 12 screens will reuse.
+
+What changed:
+- `ui/scheduling_hub.py` (NEW, ~830 lines) — header (logo + wordmark +
+  4-tab nav with active gradient underline + center clock + Active
+  Station card with green pulse + Open Studio button), Live Time pill,
+  page title, 7 navigation tiles (Playlists / Main Auto Schedule /
+  Force Clocks / Rebroadcast / RDS in left column; Final Log Creator /
+  Log Viewer in right column), Studio Launcher hero card with NOW
+  PLAYING + Go Live button, status footer with engine-state pulse,
+  hairline divider, version row + Settings link.
+- Single `screen_requested(str)` signal — emits keys per tile click.
+- Single 1Hz `QTimer` drives header time, day, date, Live Time pill
+  clock, Studio now-playing poll, Active Station pulse phase, and
+  uptime — no extra timers.
+- Engine wiring: subscribes to `SchedulerEngine.started` / `.stopped`;
+  flips footer state ("SYSTEM HEALTHY" ↔ "ENGINE STOPPED") and the
+  Active Station pulse dot.
+- Studio polling: reads `studio._current_track` each tick; fallback to
+  "—" when idle. No new signals added to `ui/studio.py` (it's locked).
+- Custom QPainter widgets for Logo (5 waveform bars + drop shadow),
+  Live Time Pill, Active Station Card, Open Studio button, Tile Cards
+  (with per-tile accent gradient + glow), Studio Launcher (rainbow top
+  accent + purple haze + mic icon), Status Footer (gradient pulse).
+- All gradients/colors/fonts cached in `__init__`. Drop shadows via
+  `QGraphicsDropShadowEffect`. paintEvents respect `event.rect()`
+  contracts; hover state changes update only `self.rect()`.
+- `ui/main_window.py` — Scheduling card click now routes to the new
+  hub; lazily injects Studio reference; new `_on_hub_screen_requested`
+  dispatcher with toast fallback for the 9 sub-screens still to be
+  ported.
+
+Tests: `tests/test_scheduling_hub.py` (NEW, 22 tests) — smoke render,
+7-tile composition, signal emission per tile + Studio launcher + Go
+Live + header Open Studio + Libraries, 1Hz tick updates header time
+/ live pill / footer uptime, scheduler started/stopped flips footer
++ pulse, Studio now-playing poll updates launcher caption.
+
+Suite: 113 → 135 passed, 1 deselected (+22 net new).
+
+Design ref: `design_refs/figma_hub_231_3.png` (full-fidelity render
+saved for visual regression checks).
+
+Commit: `feat(ui): rebuild scheduling hub with premium dark theme (figma 231:3)`
