@@ -198,15 +198,22 @@ class MainWindow(QMainWindow):
             self._stack.addWidget(self.clock_editor)
 
             # Main Auto Schedule — 24×7 clock-to-hour grid (Figma 161:2).
-            # Phase F1 — reachable via Clock Editor's "Scheduling" header
-            # nav button. Phase F3 will route Control Panel "Scheduling"
-            # card to the Hub which then exposes Auto Schedule + Clock
-            # Editor as separate cards.
+            # Phase F1 — reachable from the Hub or from Clock Editor's
+            # "Scheduling" header nav button.
             from ui.auto_schedule import AutoSchedule
             self.auto_schedule = AutoSchedule(self._db, parent=None)
             self.auto_schedule.breadcrumb_clicked.connect(self._on_breadcrumb)
             self.auto_schedule.studio_clicked.connect(self._on_studio_clicked)
             self._stack.addWidget(self.auto_schedule)
+
+            # Scheduling Hub — top-level scheduling navigation (Figma 50:2).
+            # Phase F3 — replaces Control Panel "Scheduling" card's direct
+            # route to Clock Editor.
+            from ui.scheduling_hub import SchedulingHub
+            self.scheduling_hub = SchedulingHub(self._db, parent=None)
+            self.scheduling_hub.breadcrumb_clicked.connect(self._on_breadcrumb)
+            self.scheduling_hub.studio_clicked.connect(self._on_studio_clicked)
+            self._stack.addWidget(self.scheduling_hub)
 
             # F9 shortcut → open Studio (broadcast convention; Jazler precedent)
             from PyQt6.QtGui import QShortcut, QKeySequence
@@ -225,9 +232,9 @@ class MainWindow(QMainWindow):
             self._stack.setCurrentWidget(self.instant_jingles)
         elif screen == "spots" and hasattr(self, "spots_commercials"):
             self._stack.setCurrentWidget(self.spots_commercials)
-        elif screen == "scheduling" and hasattr(self, "clock_editor"):
-            # F2.1: direct route to Clock Editor. F3 will wire to Hub.
-            self._stack.setCurrentWidget(self.clock_editor)
+        elif screen == "scheduling" and hasattr(self, "scheduling_hub"):
+            # F3: Scheduling card → Hub (replaces F2 direct-to-Clock-Editor).
+            self._stack.setCurrentWidget(self.scheduling_hub)
 
     def _on_breadcrumb(self, where: str) -> None:
         log.info(f"Breadcrumb → {where}")
@@ -237,6 +244,38 @@ class MainWindow(QMainWindow):
             self._stack.setCurrentWidget(self.clock_editor)
         elif where == "auto_schedule" and hasattr(self, "auto_schedule"):
             self._stack.setCurrentWidget(self.auto_schedule)
+        elif where == "scheduling_hub" and hasattr(self, "scheduling_hub"):
+            self._stack.setCurrentWidget(self.scheduling_hub)
+        elif where in ("final_log", "force_clocks", "playlists",
+                       "log_viewer", "rebroadcast", "rds_settings"):
+            # F4-F8 + RDS — stubs land in P5. For now show a placeholder
+            # toast so the Hub's nav cards always have a response.
+            target_attr = where  # e.g. 'final_log' → self.final_log
+            screen = getattr(self, target_attr, None)
+            if screen is not None:
+                self._stack.setCurrentWidget(screen)
+            else:
+                self._show_phase_toast(where)
+
+    def _show_phase_toast(self, target: str) -> None:
+        """Stub responder used while the F4-F8 screens haven't landed."""
+        from PyQt6.QtWidgets import QMessageBox
+        labels = {
+            "final_log":   ("Final Log Creator",
+                            "Phase F4 — generates today's broadcast log."),
+            "force_clocks": ("Force Clocks",
+                             "Phase F6 — date-specific clock overrides."),
+            "playlists":   ("Playlists",
+                            "Phase F7 — manual song-sequence builder."),
+            "log_viewer":  ("Log Viewer",
+                            "Phase F5 — view + edit generated logs."),
+            "rebroadcast": ("Rebroadcast",
+                            "Phase F8 — replay-recorded broadcast scheduling."),
+            "rds_settings": ("RDS Settings",
+                             "Phase G — Radio Data System text config."),
+        }
+        title, body = labels.get(target, (target, "Coming soon."))
+        QMessageBox.information(self, title, body)
 
     def _on_song_selected(self, song_id: int) -> None:
         log.info(f"Song selected: id={song_id}")
