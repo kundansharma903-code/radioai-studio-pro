@@ -186,3 +186,78 @@ Design ref: `design_refs/figma_hub_231_3.png` (full-fidelity render
 saved for visual regression checks).
 
 Commit: `feat(ui): rebuild scheduling hub with premium dark theme (figma 231:3)`
+
+---
+
+## 2026-05-05 — Playlists screen + chrome refactor (Figma 239:2)
+
+Second screen of the premium-theme port. Lands the chrome refactor
+that the next ~12 screens will lean on.
+
+Two commits, in order:
+
+### C1 — refactor(ui): extract chrome + tokens to shared modules
+
+- `ui/widgets/tokens.py` (new) — single source of truth for premium
+  color tokens. Re-exports the legacy palette / font helpers from
+  `_tokens.py` (existing screens keep using that), and adds the
+  premium extensions (page gradient stops, card surfaces, full
+  per-tile accent set with _LT/_DK/_MD variants, qcolor_a helper).
+- `ui/widgets/app_chrome.py` (new) — `Header` (88h: logo, wordmark,
+  4-tab nav, clock + day/date, Active Station pulse card, Open
+  Studio button), `LiveTimePill` (rose pulse pill), `_Logo`,
+  `_ActiveStationCard`, `_OpenStudioHeaderButton`, `drop_shadow`
+  helper. Header signals: libraries / settings / ai_magic /
+  studio_open. API: set_time(hhmm, ss, day, date), station_card.
+- `ui/scheduling_hub.py` — drops the local chrome (-439 LOC) and
+  imports from the new modules.
+- `tests/test_scheduling_hub.py` — updated imports. 22/22 still pass.
+
+### C2 — feat(ui): build Playlists screen with engine wiring (figma 239:2)
+
+- `ui/playlists.py` (rewritten) — premium-theme screen:
+  - Reuses `Header` + `LiveTimePill` from app_chrome.
+  - Page background gradient + breadcrumb "SCHEDULING / PLAYLISTS" +
+    Inter Black 36 title + subtitle.
+  - Toolbar: themed search input with debounced 200ms changes + 4
+    filter chips (All / Manual / Imported / Smart with live counts) +
+    "+ New Playlist" purple primary button + "↓ Import" secondary.
+  - 4 stat cards (TOTAL PLAYLISTS / TOTAL TRACKS / AVG DURATION /
+    SCHEDULED), each with 3px top accent gradient + Roboto Mono Bold
+    big number + label + sub.
+  - 6-card grid (2col × 3row, 442×130 each) — covers, type badges
+    (MANUAL/IMPORTED/SMART), tracks count + duration, "scheduled" or
+    "not in schedule" subtitle, ▶ Preview + Open → buttons, IN
+    SCHEDULE / NOT SCHEDULED status pill.
+  - Detail panel (412×480 right side): big cover, title, ON AIR NOW
+    pill (true if Studio's current track lives in this playlist),
+    track preview list (first 5), action bar (Edit / Add to Schedule
+    / overflow ···).
+  - Footer hairline + version row + Settings link.
+- DB additions (idempotent ALTER):
+  - `playlists.kind TEXT DEFAULT 'manual'`
+  - `playlists.updated_at TEXT DEFAULT (datetime('now'))`
+  - `db.get_playlists_with_stats()` (track count + total duration via
+    LEFT JOIN), `db.get_playlist_first_tracks(id, limit)`,
+    `db.set_playlist_scheduled(id, day, time)`.
+- `core/scheduler/engine.py` — `add_playlist_to_schedule(playlist_id)`
+  shim that stamps the playlist's scheduled_day + time. Plus
+  `remove_playlist_from_schedule` for the inverse. Future Phase E
+  work will replace with smarter slot allocation.
+- `ui/main_window.py` — Playlists screen mounted; `screen_requested`
+  dispatcher routes 'playlists' → screen, 'playlist_edit:<id>' /
+  'playlist_new' → "coming soon" toast, 'studio_open' → Studio.
+- `tests/test_playlists_screen.py` (new, 15 tests) — smoke render,
+  composition, showEvent loads from DB, filter chips toggle + counts,
+  search filters grid, search debouncer present, card selection
+  updates detail panel, screen_requested per signal source, Add to
+  Schedule routes through scheduler shim and toggles DB,
+  preview-without-engine no-crash, _kind_norm sanity.
+- `tests/test_phase_stubs.py` — Playlists removed from the stub
+  smoke (it's no longer a stub).
+
+Suite: 135 → 149 passed (+14 net new — 15 new playlists tests + 1
+removed from phase_stubs). App boot clean —
+"Playlists ready (Figma 239:2 — Premium Dark)".
+
+Design ref: `design_refs/figma_playlists_239_2.png`.

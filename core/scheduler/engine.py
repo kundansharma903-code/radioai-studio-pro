@@ -609,6 +609,46 @@ class SchedulerEngine(QObject):
         Available" indicator."""
         return len(self._songs_matching_filter_json(filter_json))
 
+    # ── Playlists screen integration ─────────────────────────────────────
+
+    def add_playlist_to_schedule(self, playlist_id: int) -> bool:
+        """Premium Playlists screen — "Add to Schedule" action.
+
+        Marks the playlist as scheduled (today / now). Returns True on
+        success, False on failure. The actual broadcast wiring still
+        runs through the Studio + auto_schedule path; this is the
+        playlist-level toggle that the UI surfaces.
+
+        Future Phase E work will replace this with smarter scheduling
+        (slot allocation, day-part fit) — for now it's a deterministic
+        toggle so the screen has live state."""
+        from datetime import datetime as _dt
+        now = _dt.now()
+        try:
+            self._db.set_playlist_scheduled(
+                int(playlist_id),
+                scheduled_day=now.strftime("%Y-%m-%d"),
+                scheduled_time=now.strftime("%H:%M"),
+            )
+        except Exception as exc:
+            log.warning(f"add_playlist_to_schedule({playlist_id}): {exc}")
+            return False
+        log.info(
+            f"[scheduler] playlist {playlist_id} added to schedule "
+            f"({now.strftime('%Y-%m-%d %H:%M')})")
+        return True
+
+    def remove_playlist_from_schedule(self, playlist_id: int) -> bool:
+        """Inverse of add_playlist_to_schedule — clears scheduled_day/time."""
+        try:
+            self._db.set_playlist_scheduled(
+                int(playlist_id), scheduled_day=None, scheduled_time=None)
+        except Exception as exc:
+            log.warning(f"remove_playlist_from_schedule({playlist_id}): {exc}")
+            return False
+        log.info(f"[scheduler] playlist {playlist_id} removed from schedule")
+        return True
+
     def _pick_jingle(self, slot) -> Optional[dict]:
         """Jingle = a row from jingle_pads. selection_mode dispatches."""
         import random

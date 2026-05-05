@@ -200,6 +200,16 @@ class MainWindow(QMainWindow):
                 self._on_hub_screen_requested)
             self._stack.addWidget(self.scheduling_hub)
 
+            # Playlists — Figma 239:2 premium screen.
+            from ui.playlists import Playlists
+            self.playlists_screen = Playlists(
+                self._db, scheduler=self._scheduler,
+                studio=getattr(self, "studio", None),
+                engine=self._engine, parent=None)
+            self.playlists_screen.screen_requested.connect(
+                self._on_hub_screen_requested)
+            self._stack.addWidget(self.playlists_screen)
+
             # F9 shortcut → open Studio (broadcast convention; Jazler precedent)
             from PyQt6.QtGui import QShortcut, QKeySequence
             self._studio_shortcut = QShortcut(QKeySequence("F9"), self)
@@ -231,23 +241,45 @@ class MainWindow(QMainWindow):
             self._stack.setCurrentWidget(self.control_panel)
 
     def _on_hub_screen_requested(self, screen: str) -> None:
-        """Routes from SchedulingHub.screen_requested. Real screens that
-        haven't been ported to the new theme yet show a status-bar /
-        toast saying so — never crash."""
+        """Routes from SchedulingHub / Playlists / sibling screens.
+        Real screens that haven't been ported to the new theme yet
+        show a "coming soon" toast — never crash."""
         log.info(f"Hub → {screen}")
         if screen == "studio_open":
             self._on_studio_clicked()
             return
         if screen == "libraries":
-            # Libraries tab in the new top nav → back to Control Panel
-            # for now (Control Panel hosts the library cards).
+            # Libraries tab → Control Panel (hosts the library cards).
             if hasattr(self, "control_panel"):
                 self._stack.setCurrentWidget(self.control_panel)
+            return
+        if screen == "scheduling_hub" and hasattr(self, "scheduling_hub"):
+            self._stack.setCurrentWidget(self.scheduling_hub)
+            return
+        if screen == "playlists" and hasattr(self, "playlists_screen"):
+            # Lazy-inject Studio so the on-air detection works
+            if hasattr(self, "studio") and hasattr(
+                    self.playlists_screen, "set_studio"):
+                self.playlists_screen.set_studio(self.studio)
+            self._stack.setCurrentWidget(self.playlists_screen)
+            return
+        # screen_requested("playlist_edit:42") — open editor for that id
+        if screen.startswith("playlist_edit:"):
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.information(
+                self, "Playlist Editor",
+                f"Edit Playlist (id={screen.split(':', 1)[1]}) — "
+                "coming soon (Figma 240:2).")
+            return
+        if screen == "playlist_new":
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.information(
+                self, "New Playlist",
+                "New Playlist — coming soon (Figma 241:2).")
             return
         # Everything else is a future scheduling sub-screen.
         from PyQt6.QtWidgets import QMessageBox
         labels = {
-            "playlists":          "Playlists",
             "main_auto_schedule": "Main Auto Schedule",
             "force_clocks":       "Force Clocks Schedule",
             "rebroadcast":        "Rebroadcast Schedule",

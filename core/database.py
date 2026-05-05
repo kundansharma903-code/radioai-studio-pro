@@ -367,6 +367,83 @@ class Database:
             "SELECT * FROM clocks WHERE id = ?", [int(clock_id)]
         ).fetchone()
 
+    # ── Playlists (Premium-theme Playlists screen — Figma 239:2) ─────────
+
+    def _ensure_playlists_columns(self) -> None:
+        """Add the Playlists-screen columns (kind / updated_at) if missing.
+        Idempotent — safe to call on every read."""
+        conn = self._conn()
+        cols = {r[1] for r in conn.execute(
+            "PRAGMA table_info(playlists)").fetchall()}
+        adds = [
+            ("kind",        "TEXT DEFAULT 'manual'"),     # manual|imported|smart
+            ("updated_at",  "TEXT DEFAULT (datetime('now'))"),
+        ]
+        for col, decl in adds:
+            if col not in cols:
+                conn.execute(f"ALTER TABLE playlists ADD COLUMN {col} {decl}")
+        conn.commit()
+
+    def get_playlists_with_stats(self) -> list[dict]:
+        """Return all playlists with computed track count + total duration_ms.
+
+        Each row: {id, name, description, kind, scheduled_day,
+                   scheduled_time, is_active, updated_at,
+                   track_count, total_duration_ms}.
+        Used by the Premium Playlists screen."""
+        self._ensure_playlists_columns()
+        conn = self._conn()
+        rows = conn.execute(
+            """
+            SELECT p.*,
+                   COUNT(ps.id) AS track_count,
+                   COALESCE(SUM(s.duration_ms), 0) AS total_duration_ms
+            FROM   playlists p
+            LEFT JOIN playlist_songs ps ON ps.playlist_id = p.id
+            LEFT JOIN songs          s  ON ps.song_id     = s.id
+            GROUP  BY p.id
+            ORDER  BY (CASE WHEN p.scheduled_day IS NOT NULL AND p.scheduled_day != ''
+                            THEN 0 ELSE 1 END),
+                      p.updated_at DESC, p.name
+            """
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_playlist_first_tracks(
+        self, playlist_id: int, limit: int = 5
+    ) -> list[dict]:
+        """First N songs in a playlist, in playback position order."""
+        rows = self._conn().execute(
+            """
+            SELECT s.id, s.title, s.artist, s.duration_ms,
+                   s.file_path, ps.position
+            FROM   playlist_songs ps
+            JOIN   songs s ON ps.song_id = s.id
+            WHERE  ps.playlist_id = ?
+            ORDER  BY ps.position
+            LIMIT  ?
+            """,
+            [int(playlist_id), int(limit)],
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def set_playlist_scheduled(
+        self, playlist_id: int, scheduled_day: Optional[str] = None,
+        scheduled_time: Optional[str] = None,
+    ) -> None:
+        """Mark a playlist as scheduled (or unschedule by passing both
+        as None). Stamp updated_at."""
+        self._ensure_playlists_columns()
+        conn = self._conn()
+        from datetime import datetime as _dt
+        now_str = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
+        conn.execute(
+            "UPDATE playlists SET scheduled_day = ?, scheduled_time = ?, "
+            "updated_at = ? WHERE id = ?",
+            [scheduled_day, scheduled_time, now_str, int(playlist_id)],
+        )
+        conn.commit()
+
     def _ensure_clocks_columns(self) -> None:
         """Phase F-Final C3 — add modal-Clock-Editor columns to `clocks`
         if missing. Idempotent — safe to call on every save_clock."""
