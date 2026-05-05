@@ -1528,10 +1528,16 @@ class PlaylistNew(QWidget):
 
     AUTO_SAVE_MS = 1500
 
-    def __init__(self, db, scheduler=None, parent=None):
+    def __init__(self, db, scheduler=None, parent=None, engine=None):
         super().__init__(parent)
         self._db = db
         self._scheduler = scheduler
+        # Shared AudioEngine (Phase B Option C: singleton + DI). Frame 8
+        # has no Preview button per Figma — engine is held for the
+        # eventual Edit Playlist (Frame 9) preview hook and any future
+        # row-level preview affordance. None is a valid runtime state;
+        # all engine consumers must guard.
+        self._engine = engine
         self.setFixedSize(WINDOW_W, WINDOW_H)
         self.setMouseTracking(False)
 

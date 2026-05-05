@@ -213,7 +213,8 @@ class MainWindow(QMainWindow):
             # Create New Playlist — Figma 243:2 premium screen.
             from ui.playlist_new import PlaylistNew
             self.playlist_new_screen = PlaylistNew(
-                self._db, scheduler=self._scheduler, parent=None)
+                self._db, scheduler=self._scheduler, parent=None,
+                engine=self._engine)
             self.playlist_new_screen.screen_requested.connect(
                 self._on_hub_screen_requested)
             self._stack.addWidget(self.playlist_new_screen)

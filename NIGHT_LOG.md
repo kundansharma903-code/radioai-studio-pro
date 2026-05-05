@@ -331,3 +331,58 @@ Suite: 162 → 176 passed (+14 net new). Smoke clean —
 "PlaylistNew ready (Figma 243:2 — Premium Dark)".
 
 Design ref: `design_refs/figma_playlist_new_243_2.png`.
+
+---
+
+## Session 2026-05-05 — fix: PlaylistNew AudioEngine wiring
+
+### Root cause
+
+Handover spec said the warning "AudioEngine reference not wired into
+Playlists screen" fires on the Playlists ▶ Preview button. Re-verified
+on this branch — Playlists IS already correctly wired (constructor
+takes `engine=`, MainWindow passes `engine=self._engine` at
+ui/main_window.py:208). The actual gap is **PlaylistNew** (Frame 8 /
+Create New Playlist):
+
+- `PlaylistNew.__init__` had no `engine` param.
+- MainWindow constructed it without an engine kwarg.
+- Frame 8 has no Preview button per Figma 243:2 — the wiring is
+  forward-looking so Frame 9 (Edit Playlist, which DOES carry a
+  ▶ Preview in its top toolbar) can rely on the same shared engine
+  instance flowing in.
+
+Constructor arg name resolved to `engine` (matching Studio at
+ui/studio.py:1428 + every other DI'd screen), not `audio_engine`.
+Spec text "matching Studio's exact name" → `engine`.
+
+### Fix
+
+- ui/playlist_new.py: added `engine=None` param, stored as
+  `self._engine`. Comment notes it's held for Frame 9 preview hook.
+- ui/main_window.py: PlaylistNew construction now passes
+  `engine=self._engine` (same singleton as Studio + Playlists).
+
+### Tests (tests/test_playlists_engine_wiring.py — 3 new)
+
+- test_constructor_stores_engine — `s._engine is engine`
+- test_shared_instance_with_studio — `studio._engine is new._engine`
+  when same engine instance fed to both (Option C DI invariant)
+- test_guard_still_fires_when_engine_none — defaulting to None
+  remains valid so the existing `if self._engine is None` guard
+  pattern across screens stays meaningful
+
+Suite: 176 → 179 passed (+3 net new). No regressions.
+
+### Carry-over (cleanup pass candidate, NOT in this commit)
+
+Two AudioEngine definitions coexist in the tree:
+`core/audio/engine.py` (the active package — every `from core.audio
+import AudioEngine` resolves here) and `core/audio_engine.py` (legacy
+flat file, only `bass_init`/`bass_free` re-exported, the class itself
+unreferenced). Worth a future cleanup commit to delete the legacy
+class definition and keep only the BASS lifecycle helpers — but out
+of scope for the wiring fix.
+
+Commit: fix(ui): wire AudioEngine into Playlist New screen via
+constructor injection
