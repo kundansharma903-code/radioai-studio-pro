@@ -370,22 +370,235 @@ class Database:
     # ── Playlists (Premium-theme Playlists screen — Figma 239:2) ─────────
 
     def _ensure_playlists_columns(self) -> None:
-        """Add the Playlists-screen columns (kind / updated_at) if missing.
-        Idempotent — safe to call on every read."""
+        """Add the premium Playlists-screen columns if missing. Idempotent.
+
+        Scope:
+          - kind (manual|imported|smart) + updated_at (Playlists screen S2)
+          - color hex, tags csv, cover_path, status, auto_schedule_enabled
+            (Create New Playlist S3 — draft state machine + meta fields)"""
         conn = self._conn()
         cols = {r[1] for r in conn.execute(
             "PRAGMA table_info(playlists)").fetchall()}
         adds = [
-            ("kind",        "TEXT DEFAULT 'manual'"),     # manual|imported|smart
+            # Screen 2
+            ("kind",        "TEXT DEFAULT 'manual'"),
             ("updated_at",  "TEXT DEFAULT (datetime('now'))"),
+            # Screen 3 (new playlist creation)
+            ("color",                    "TEXT"),                # hex e.g. '#06b6d4'
+            ("tags",                     "TEXT"),                # comma-separated
+            ("cover_path",               "TEXT"),                # asset path
+            ("status",                   "TEXT DEFAULT 'active'"),  # 'draft' | 'active'
+            ("auto_schedule_enabled",    "INTEGER DEFAULT 0"),
         ]
         for col, decl in adds:
             if col not in cols:
                 conn.execute(f"ALTER TABLE playlists ADD COLUMN {col} {decl}")
         conn.commit()
 
+    # ── Paginated song search (premium Create New Playlist) ─────────────
+
+    def search_songs(
+        self,
+        query: Optional[str] = None,
+        category_id: Optional[int] = None,
+        bpm_min: Optional[int] = None,
+        bpm_max: Optional[int] = None,
+        year_min: Optional[int] = None,
+        year_max: Optional[int] = None,
+        sort: str = "recent",
+        offset: int = 0,
+        limit: int = 10,
+    ) -> List[sqlite3.Row]:
+        """Paginated song search. Used by the Create New Playlist library
+        browser; the heavy lifting is done in SQL so we never load the
+        whole songs table into Python.
+
+        Filters: text query (title or artist LIKE), category, BPM range,
+        year range. Sort: 'recent' (entry_date DESC), 'az' (artist+title),
+        'bpm' (bpm DESC). Always paginated — caller passes offset+limit."""
+        sql, params = self._songs_filter_sql(
+            query, category_id, bpm_min, bpm_max, year_min, year_max)
+        sort_clause = {
+            "recent": " ORDER BY s.entry_date DESC, s.id DESC",
+            "az":     " ORDER BY s.artist, s.title",
+            "bpm":    " ORDER BY s.bpm DESC, s.artist",
+        }.get(str(sort or "recent").lower(), " ORDER BY s.entry_date DESC")
+        sql = (
+            "SELECT s.*, c.name AS cat_name, c.color AS cat_color "
+            "FROM   songs s "
+            "LEFT JOIN categories c ON s.category_id = c.id "
+            "WHERE  s.is_enabled = 1"
+            + sql
+            + sort_clause
+            + " LIMIT ? OFFSET ?"
+        )
+        params = list(params) + [int(limit), int(offset)]
+        return self._conn().execute(sql, params).fetchall()
+
+    def count_songs(
+        self,
+        query: Optional[str] = None,
+        category_id: Optional[int] = None,
+        bpm_min: Optional[int] = None,
+        bpm_max: Optional[int] = None,
+        year_min: Optional[int] = None,
+        year_max: Optional[int] = None,
+    ) -> int:
+        """Match count for the same filter set. Used to drive the
+        'Showing X results' label and the page X / Y indicator."""
+        sql, params = self._songs_filter_sql(
+            query, category_id, bpm_min, bpm_max, year_min, year_max)
+        sql = (
+            "SELECT COUNT(*) FROM songs s "
+            "WHERE s.is_enabled = 1" + sql
+        )
+        row = self._conn().execute(sql, params).fetchone()
+        return int(row[0] or 0) if row else 0
+
+    @staticmethod
+    def _songs_filter_sql(
+        query, category_id, bpm_min, bpm_max, year_min, year_max,
+    ) -> tuple[str, list]:
+        """Build the WHERE-tail and params list shared by search_songs +
+        count_songs. Returns (sql_fragment_starting_with_AND, params)."""
+        sql = ""
+        params: list = []
+        q = (query or "").strip()
+        if q:
+            sql += " AND (s.title LIKE ? OR s.artist LIKE ?)"
+            params += [f"%{q}%", f"%{q}%"]
+        if category_id:
+            sql += " AND s.category_id = ?"
+            params.append(int(category_id))
+        if bpm_min is not None:
+            sql += " AND s.bpm >= ?"; params.append(int(bpm_min))
+        if bpm_max is not None:
+            sql += " AND s.bpm <= ?"; params.append(int(bpm_max))
+        if year_min is not None:
+            sql += " AND s.year >= ?"; params.append(int(year_min))
+        if year_max is not None:
+            sql += " AND s.year <= ?"; params.append(int(year_max))
+        return sql, params
+
+    # ── Playlist draft state machine (premium Create New Playlist) ──────
+
+    def create_playlist_draft(
+        self,
+        name: str = "Untitled Playlist",
+        kind: str = "manual",
+        color: Optional[str] = None,
+        tags: Optional[str] = None,
+    ) -> int:
+        """Insert a playlist row with status='draft'. Returns the new id.
+        Used by the Create New Playlist screen on first user interaction
+        so auto-save has a target row to write into."""
+        self._ensure_playlists_columns()
+        conn = self._conn()
+        cur = conn.execute(
+            "INSERT INTO playlists (name, kind, color, tags, status, "
+            "is_active, updated_at) VALUES (?, ?, ?, ?, 'draft', 0, "
+            "datetime('now'))",
+            [str(name or "Untitled Playlist"), str(kind or "manual"),
+             color, tags],
+        )
+        conn.commit()
+        return int(cur.lastrowid)
+
+    def update_playlist_draft(
+        self,
+        playlist_id: int,
+        name: Optional[str] = None,
+        kind: Optional[str] = None,
+        color: Optional[str] = None,
+        tags: Optional[str] = None,
+        cover_path: Optional[str] = None,
+        auto_schedule_enabled: Optional[bool] = None,
+    ) -> None:
+        """Update mutable meta fields on a draft (or active) playlist.
+        Stamps updated_at. Idempotent — only writes columns the caller
+        passed (None → unchanged)."""
+        self._ensure_playlists_columns()
+        conn = self._conn()
+        cols_present = {r[1] for r in conn.execute(
+            "PRAGMA table_info(playlists)").fetchall()}
+        sets: list[str] = []; values: list = []
+        candidate = {
+            "name":                  name,
+            "kind":                  kind,
+            "color":                 color,
+            "tags":                  tags,
+            "cover_path":            cover_path,
+            "auto_schedule_enabled":
+                None if auto_schedule_enabled is None
+                else (1 if auto_schedule_enabled else 0),
+        }
+        for col, val in candidate.items():
+            if val is None or col not in cols_present:
+                continue
+            sets.append(f"{col} = ?")
+            values.append(val)
+        if not sets:
+            return
+        sets.append("updated_at = datetime('now')")
+        values.append(int(playlist_id))
+        conn.execute(
+            f"UPDATE playlists SET {', '.join(sets)} WHERE id = ?", values)
+        conn.commit()
+
+    def replace_playlist_songs(
+        self, playlist_id: int, song_ids: list[int]
+    ) -> None:
+        """Atomic DELETE+INSERT replace of a playlist's song list, in
+        the order given. position field auto-numbered 1..N."""
+        conn = self._conn()
+        pid = int(playlist_id)
+        try:
+            conn.execute("BEGIN")
+            conn.execute(
+                "DELETE FROM playlist_songs WHERE playlist_id = ?", [pid])
+            for i, sid in enumerate(list(song_ids or [])):
+                conn.execute(
+                    "INSERT INTO playlist_songs (playlist_id, song_id, "
+                    "position) VALUES (?, ?, ?)",
+                    [pid, int(sid), i + 1])
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+    def commit_playlist_draft(self, playlist_id: int) -> None:
+        """Flip a draft to status='active' + is_active=1. Stamps
+        updated_at. Used when the user clicks Save Playlist."""
+        self._ensure_playlists_columns()
+        conn = self._conn()
+        conn.execute(
+            "UPDATE playlists SET status = 'active', is_active = 1, "
+            "updated_at = datetime('now') WHERE id = ?",
+            [int(playlist_id)])
+        conn.commit()
+
+    def delete_playlist_draft(self, playlist_id: int) -> bool:
+        """Delete a row IF its status is 'draft'. Returns True on delete,
+        False if the row was already active (we never touch active
+        playlists from this method). Used when the user clicks Cancel."""
+        self._ensure_playlists_columns()
+        conn = self._conn()
+        row = conn.execute(
+            "SELECT status FROM playlists WHERE id = ?", [int(playlist_id)]
+        ).fetchone()
+        if row is None or (row["status"] or "") != "draft":
+            return False
+        conn.execute(
+            "DELETE FROM playlist_songs WHERE playlist_id = ?",
+            [int(playlist_id)])
+        conn.execute("DELETE FROM playlists WHERE id = ?", [int(playlist_id)])
+        conn.commit()
+        return True
+
     def get_playlists_with_stats(self) -> list[dict]:
-        """Return all playlists with computed track count + total duration_ms.
+        """Return all active playlists with computed track count + total
+        duration_ms. Excludes status='draft' rows (in-progress playlists
+        being built in the Create New Playlist screen).
 
         Each row: {id, name, description, kind, scheduled_day,
                    scheduled_time, is_active, updated_at,
@@ -401,6 +614,7 @@ class Database:
             FROM   playlists p
             LEFT JOIN playlist_songs ps ON ps.playlist_id = p.id
             LEFT JOIN songs          s  ON ps.song_id     = s.id
+            WHERE  COALESCE(p.status, 'active') != 'draft'
             GROUP  BY p.id
             ORDER  BY (CASE WHEN p.scheduled_day IS NOT NULL AND p.scheduled_day != ''
                             THEN 0 ELSE 1 END),
