@@ -1145,6 +1145,12 @@ class AutoSchedule(QWidget):
         except Exception as exc:
             log.warning(f"load clocks failed: {exc}")
             clocks = []
+        # Sort newest-first so a freshly-saved clock always lands in the
+        # visible 3-row window (panel slices to top 3 per Figma 278:2).
+        # db.get_all_clocks() orders by name — fine for full-list callers,
+        # but here the operator's mental model is "the clock I just made."
+        # Higher id = more recently created (autoincrement primary key).
+        clocks.sort(key=lambda c: int(c["id"]), reverse=True)
         try:
             grid = self._db.get_auto_schedule_grid()
         except Exception as exc:

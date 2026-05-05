@@ -773,3 +773,105 @@ clocks present.
 
 feat(ui): build Clock Editor screen with element editor + filter
 wiring (figma 285:2)
+
+---
+
+## Session 2026-05-05 — fix: "saved clock vanished" was a display bug
+
+### Symptom
+
+User created a clock via the new Clock Editor (Frame 11), hit OK, was
+routed back to Auto Schedule, and the clock didn't appear in the
+Available Clocks panel. Persisted across restart — same panel content,
+no sign of the new clock.
+
+### Diagnosis (no save bug — display bug)
+
+Live DB inspection on the user's actual `radioai.db` showed:
+
+```
+TOTAL clocks: 33
+id=348  name='test 01'  color='#f43f5e'  slots=15   ← user's most recent save
+id=347  name='test 01'  color='#f43f5e'  slots=17   ← user's prior save
+…
+```
+
+The user's saves persisted **perfectly** — slots, colors, all intact.
+The bug was in the *display path*, not the *save path*:
+
+1. [ui/auto_schedule.py:266](ui/auto_schedule.py:266) (`_ClocksPanel.set_clocks`) hard-slices
+   the incoming list to `clocks[:3]` — by design per Figma 278:2, only
+   3 rows of vertical space exist in the panel.
+2. [core/database.py:351](core/database.py:351) (`db.get_all_clocks`) orders by
+   `c.name` ASC. With 33+ clocks and an ASCII sort, the alphabetically-
+   first 3 names monopolize those 3 slots.
+3. The user's `'test 01'` (lowercase `t` = 0x74) sorted at the very
+   end of the ASCII list — so even though it was clearly in the DB
+   with full slot data, it never reached the visible window.
+
+This is exactly the carry-over #4 from the prior Auto Schedule commit
+(`7205692`): *"Available Clocks panel shows only 3 rows per Figma. If
+Kavish accumulates 4+ clocks, the rest are invisible."* The fix
+deferred there became a real blocker the moment Kavish smoke-tested
+Frame 11.
+
+### Fix (3-line behaviour change, zero UI change)
+
+`AutoSchedule._reload_clocks_and_grid` now sorts the loaded clocks by
+`id DESC` (newest first) before passing them to `_ClocksPanel`. The
+DB call is untouched — `db.get_all_clocks()` still returns name-
+ordered rows; the screen-level re-sort is purely consumer-side.
+Higher autoincrement id ⇒ more recently created ⇒ a freshly-saved
+clock always lands in slot 0.
+
+The 3-row visible window cap (Figma fidelity) is unchanged. The
+fundamental "panel only fits 3 of N" issue still needs scroll
+support someday — flagged below.
+
+### Tests (2 new)
+
+`tests/test_auto_schedule.py` (21 → 23 tests):
+
+- `test_panel_orders_newest_first_so_freshly_saved_appears_in_top_slot`
+  — seeds 4 clocks via `env.make_clock`, calls
+  `_reload_clocks_and_grid`, asserts the highest-id seeded clock is at
+  `_clocks_panel._rows[0]`.
+- `test_freshly_saved_clock_via_clock_editor_visible_after_reload` —
+  end-to-end: mounts a `ClockEditor` against the same DB, calls
+  `_save()`, then exercises the Auto Schedule reload path and asserts
+  the new id is among the visible rows.
+
+### Manual smoke (per user spec)
+
+Two-stage script reproducing the user's failure mode:
+
+- **Stage 1** — fresh Python process, build `ClockEditor`, save
+  "Smoke Restart Clock" via the screen's `_save()`. Reports
+  `id=390, slots=1`. Process exits.
+- **Stage 2** — *new* Python process (= "restart app"), fresh
+  `Database` singleton, fresh `AutoSchedule` instance. Panel slot 0
+  reads `'Smoke Restart Clock'` ✓.
+
+Cleanup deletes the smoke clock so the live DB stays tidy.
+
+### Suite
+
+199 → 226 passed (+2 net new this commit, +25 from the prior Frame
+11 commit). 2 deselected (slow soak + the pre-existing
+`test_preview_without_engine_does_not_crash` modal-dialog hang). Zero
+regressions.
+
+### Carry-over (still NOT fixed in this commit)
+
+**The 3-of-N cap remains.** Once the user has 4+ clocks they care
+about and creates a 5th, the older ones still drop out of view as
+they did before. This commit fixes the immediate "I just saved a
+clock and it's missing" symptom but doesn't address the underlying
+visibility ceiling. Real fix is scroll or pagination on the panel —
+explicitly a UI change, deferred to a future polish commit. The
+"AVAILABLE CLOCKS  N" badge in the panel header continues to show the
+true count so the user can at least see the discrepancy.
+
+### Commit
+
+fix(ui): show newest clocks first in Auto Schedule panel

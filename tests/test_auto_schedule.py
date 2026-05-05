@@ -338,6 +338,62 @@ def test_delete_clock_clears_referencing_cells(screen):
     assert env.db.get_clock(cid) is None
 
 
+# ── Newest-first panel ordering (regression: "saved clock vanished") ────
+
+
+def test_panel_orders_newest_first_so_freshly_saved_appears_in_top_slot(screen):
+    """``_reload_clocks_and_grid`` must sort by id DESC before slicing to
+    the panel's 3-row window. db.get_all_clocks() orders by name; on a
+    DB with 30+ clocks, an alphabetically-late name (e.g. lowercase
+    'test 01') would never reach the top 3 — operator perceives "save
+    vanished." Higher id ⇒ more recently created (autoincrement PK)."""
+    s, env = screen
+    # Seed 4 fresh clocks so we KNOW the highest-id one is ours, not
+    # whatever the live DB had before
+    seeded_ids = sorted([
+        env.make_clock("ord_a"),
+        env.make_clock("ord_b"),
+        env.make_clock("ord_c"),
+        env.make_clock("ord_d"),
+    ])
+    newest = seeded_ids[-1]
+    s._reload_clocks_and_grid()
+    # The visible panel is sliced to 3 rows by _ClocksPanel.set_clocks.
+    # After the newest-first sort, the highest seeded id MUST be in slot 0.
+    visible_ids = [r.clock_id for r in s._clocks_panel._rows]
+    assert visible_ids, "panel rendered no rows"
+    assert visible_ids[0] == newest, (
+        f"expected newest clock id={newest} in slot 0, got "
+        f"visible={visible_ids}")
+
+
+def test_freshly_saved_clock_via_clock_editor_visible_after_reload(qtbot, screen):
+    """End-to-end: Clock Editor save flow → AutoSchedule reload → the
+    new clock id is rendered in the panel's visible window. Regression
+    catch for the 'I saved but can't see it' symptom."""
+    s, env = screen
+    # Mount a Clock Editor with the same db as the screen — match the
+    # MainWindow wiring pattern.
+    from ui.clock_editor import ClockEditor, MODE_NEW
+    editor = ClockEditor(db=env.db, scheduler=None)
+    qtbot.addWidget(editor)
+    editor.load_for_mode(MODE_NEW)
+    # Give it a uniquely-prefixed name so cleanup catches it
+    test_name = f"_test_autosched_save_{uuid.uuid4().hex[:6]}"
+    editor._meta.set_name(test_name)
+    editor._on_add()    # at least one element so validate passes
+    new_id = editor._save()
+    assert new_id is not None, "ClockEditor._save() returned None"
+    env.created_clock_ids.append(int(new_id))
+    # Now exercise the same path the user does: navigate back to
+    # AutoSchedule which calls _reload_clocks_and_grid on showEvent
+    s._reload_clocks_and_grid()
+    visible_ids = [r.clock_id for r in s._clocks_panel._rows]
+    assert int(new_id) in visible_ids, (
+        f"newly-saved clock id={new_id} not in panel visible_ids="
+        f"{visible_ids}")
+
+
 # ── Mode persistence ────────────────────────────────────────────────────
 
 
