@@ -695,8 +695,23 @@ class SchedulingHub(QWidget):
         except Exception as exc:
             log.warning(f"grid load failed: {exc}")
             grid = {}
+
+        # Phase F-Final S5: Log Ready badge reads from final_logs.
+        from datetime import datetime as _dt
+        today_str = _dt.now().strftime("%Y-%m-%d")
+        try:
+            log_row = self._db.get_final_log(today_str)
+        except Exception:
+            log_row = None
+        if log_row is not None:
+            log_label = "Today"
+        elif grid:
+            log_label = "Pending"
+        else:
+            log_label = "—"
+
         self._set_badge(self._badge_clocks, str(len(clocks)))
-        self._set_badge(self._badge_log, "Today" if grid else "—")
+        self._set_badge(self._badge_log, log_label)
         self._matrix.set_data(grid, clocks)
         self._status.set_clock_count(len(clocks))
 

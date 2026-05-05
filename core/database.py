@@ -594,6 +594,158 @@ class Database:
             conn.rollback()
             raise
 
+    # ── Final Log (Phase F-Final S5) ─────────────────────────────────────
+
+    def get_final_log(self, log_date: str):
+        """Return the final_logs row for `log_date` ('YYYY-MM-DD'), or None."""
+        return self._conn().execute(
+            "SELECT * FROM final_logs WHERE log_date = ? LIMIT 1",
+            [str(log_date)],
+        ).fetchone()
+
+    def get_final_log_entries(self, log_id: int) -> List[sqlite3.Row]:
+        """All entries in a final_log, ordered by position."""
+        return self._conn().execute(
+            "SELECT * FROM final_log_entries WHERE log_id = ? "
+            "ORDER BY position ASC",
+            [int(log_id)],
+        ).fetchall()
+
+    def delete_final_log(self, log_date: str) -> int:
+        """Delete the log + entries (cascade) for `log_date`. Returns rows
+        removed at the parent level."""
+        conn = self._conn()
+        cur = conn.execute("DELETE FROM final_logs WHERE log_date = ?",
+                           [str(log_date)])
+        conn.commit()
+        return int(cur.rowcount or 0)
+
+    def generate_final_log(self, log_date: str, scheduler) -> dict:
+        """Phase F-Final S5: pre-compute the 24-hour playout for `log_date`
+        using the scheduler's pickers. Returns
+        {log_id, entry_count, hours_resolved, hours_empty, warning_count}.
+
+        Generation strategy:
+          1. Replace any existing final_log for this date (idempotent)
+          2. For each hour 0..23:
+               - resolve clock via force_clocks override OR auto_schedule
+               - if no clock for this hour, skip
+               - reset scheduler cursor (so generation is deterministic
+                 within an hour), walk all clock_slots once, pick each
+               - schedule each picked item at cumulative-time-from-hour-start
+        Each picked item is stored as a final_log_entries row.
+
+        `scheduler`: a SchedulerEngine instance — used for its pickers.
+        Pickers consult the live broadcast_log for separation, so
+        generation is approximate; a future polish pass can supply a
+        local 'already-picked' set for stricter same-day separation.
+        """
+        from datetime import datetime as _dt
+        date_str = str(log_date)
+
+        # Resolve day_of_week for the target date.
+        try:
+            dow = _dt.strptime(date_str, "%Y-%m-%d").weekday()
+        except ValueError:
+            raise ValueError(f"log_date must be YYYY-MM-DD, got {log_date!r}")
+
+        conn = self._conn()
+        # Replace any existing log for this date.
+        self.delete_final_log(date_str)
+
+        # Insert the parent log row.
+        cur = conn.execute(
+            "INSERT INTO final_logs (log_date, generated_by, generated_at, "
+            "is_locked, warning_count) VALUES (?, 'AI', "
+            "datetime('now', 'localtime'), 0, 0)",
+            [date_str],
+        )
+        log_id = int(cur.lastrowid)
+
+        hours_resolved = 0
+        hours_empty = 0
+        warnings = 0
+        position = 0
+
+        for hour in range(24):
+            # Resolve clock for this (date, hour).
+            when = _dt.strptime(f"{date_str} {hour:02d}:00", "%Y-%m-%d %H:%M")
+            try:
+                fc = self.get_force_clock_for(when)
+                clock_id = int(fc["clock_id"]) if fc else None
+            except Exception:
+                clock_id = None
+            if clock_id is None:
+                row = self.get_active_clock(dow, hour)
+                clock_id = int(row["id"]) if row else None
+            if clock_id is None:
+                hours_empty += 1
+                continue
+
+            slots = self.get_clock_slots(clock_id)
+            if not slots:
+                hours_empty += 1
+                continue
+            hours_resolved += 1
+
+            # Reset scheduler cursor for deterministic per-hour walk.
+            scheduler._clock_slot_cursor = 0
+            scheduler._active_hour_key = (dow, hour)
+
+            cumulative_seconds = 0
+            for _ in slots:
+                item = scheduler.pick_next_item(when)
+                if item is None:
+                    warnings += 1
+                    break
+                # Time within the hour
+                slot_h = hour + cumulative_seconds // 3600
+                slot_m = (cumulative_seconds % 3600) // 60
+                slot_s = cumulative_seconds % 60
+                scheduled_time = (
+                    f"{slot_h:02d}:{slot_m:02d}:{slot_s:02d}")
+
+                # Map item_type → entry_type + song_id / jingle_id / campaign_id
+                etype = item.get("item_type", "song")
+                song_id = (int(item["item_id"])
+                           if etype == "song" and item.get("item_id") else None)
+                campaign_id = (int(item["item_id"])
+                               if etype == "spot" and item.get("item_id") else None)
+                jingle_id = (int(item["item_id"])
+                             if etype in ("jingle", "station_id")
+                             and item.get("item_id") else None)
+
+                conn.execute(
+                    "INSERT INTO final_log_entries (log_id, scheduled_time, "
+                    "entry_type, song_id, campaign_id, jingle_id, "
+                    "title_override, artist_override, duration_ms, "
+                    "is_locked, position) VALUES "
+                    "(?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
+                    [log_id, scheduled_time, etype, song_id,
+                     campaign_id, jingle_id,
+                     item.get("title"), item.get("artist"),
+                     int(item.get("duration_ms") or 0), position])
+                position += 1
+                cumulative_seconds += max(1, int(item.get("duration_ms") or 0) // 1000)
+                if cumulative_seconds >= 3600:
+                    break
+
+        # Update warning_count + entry_count is implicit (count via query).
+        conn.execute("UPDATE final_logs SET warning_count = ? WHERE id = ?",
+                     [warnings, log_id])
+        conn.commit()
+
+        entry_count = int(conn.execute(
+            "SELECT COUNT(*) FROM final_log_entries WHERE log_id = ?",
+            [log_id]).fetchone()[0])
+        return {
+            "log_id":         log_id,
+            "entry_count":    entry_count,
+            "hours_resolved": hours_resolved,
+            "hours_empty":    hours_empty,
+            "warning_count":  warnings,
+        }
+
     # ── Force Clocks (Phase F-Final S4 resolution layer) ─────────────────────
 
     def get_force_clock_for(self, when) -> Optional[sqlite3.Row]:

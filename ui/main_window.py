@@ -215,15 +215,21 @@ class MainWindow(QMainWindow):
             self.scheduling_hub.studio_clicked.connect(self._on_studio_clicked)
             self._stack.addWidget(self.scheduling_hub)
 
-            # F4–F8 stub screens — reachable from the Hub's nav cards.
-            # Each is a Figma-faithful skeleton with stubbed actions.
+            # F4–F8 screens — reachable from the Hub's nav cards.
+            # F4 (Final Log) gets a scheduler reference so its Generate
+            # action shares the same picker state as Studio's live path.
+            # F5–F8 are still skeletons.
             from ui.final_log import FinalLog
             from ui.log_viewer import LogViewer
             from ui.force_clocks import ForceClocks
             from ui.playlists import Playlists
             from ui.rebroadcast import Rebroadcast
-            for attr, cls in [("final_log",    FinalLog),
-                              ("log_viewer",   LogViewer),
+            self.final_log = FinalLog(
+                self._db, parent=None, scheduler=self._scheduler)
+            self.final_log.breadcrumb_clicked.connect(self._on_breadcrumb)
+            self.final_log.studio_clicked.connect(self._on_studio_clicked)
+            self._stack.addWidget(self.final_log)
+            for attr, cls in [("log_viewer",   LogViewer),
                               ("force_clocks", ForceClocks),
                               ("playlists",    Playlists),
                               ("rebroadcast",  Rebroadcast)]:
