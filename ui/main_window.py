@@ -227,6 +227,14 @@ class MainWindow(QMainWindow):
                 self._on_hub_screen_requested)
             self._stack.addWidget(self.auto_schedule_screen)
 
+            # Clock Editor — Figma 285:2 premium screen.
+            from ui.clock_editor import ClockEditor
+            self.clock_editor_screen = ClockEditor(
+                self._db, scheduler=self._scheduler, parent=None)
+            self.clock_editor_screen.screen_requested.connect(
+                self._on_hub_screen_requested)
+            self._stack.addWidget(self.clock_editor_screen)
+
             # F9 shortcut → open Studio (broadcast convention; Jazler precedent)
             from PyQt6.QtGui import QShortcut, QKeySequence
             self._studio_shortcut = QShortcut(QKeySequence("F9"), self)
@@ -295,12 +303,28 @@ class MainWindow(QMainWindow):
                 and hasattr(self, "auto_schedule_screen")):
             self._stack.setCurrentWidget(self.auto_schedule_screen)
             return
-        # screen_requested("clock_edit:42") — Clock Editor (Frame 11) not built
-        if screen == "clock_new" or screen.startswith("clock_edit:"):
-            from PyQt6.QtWidgets import QMessageBox
-            QMessageBox.information(
-                self, "Clock Editor",
-                "Clock Editor — coming soon (Figma 285:2 / Frame 11).")
+        # Clock Editor (Figma 285:2) — three modes
+        if screen == "clock_new" and hasattr(self, "clock_editor_screen"):
+            self.clock_editor_screen.load_for_mode("new")
+            self._stack.setCurrentWidget(self.clock_editor_screen)
+            return
+        if (screen.startswith("clock_edit:")
+                and hasattr(self, "clock_editor_screen")):
+            try:
+                cid = int(screen.split(":", 1)[1])
+            except (ValueError, IndexError):
+                return
+            self.clock_editor_screen.load_for_mode("edit", clock_id=cid)
+            self._stack.setCurrentWidget(self.clock_editor_screen)
+            return
+        if (screen.startswith("clock_duplicate:")
+                and hasattr(self, "clock_editor_screen")):
+            try:
+                cid = int(screen.split(":", 1)[1])
+            except (ValueError, IndexError):
+                return
+            self.clock_editor_screen.load_for_mode("duplicate", clock_id=cid)
+            self._stack.setCurrentWidget(self.clock_editor_screen)
             return
         if screen == "auto_program_settings":
             from PyQt6.QtWidgets import QMessageBox

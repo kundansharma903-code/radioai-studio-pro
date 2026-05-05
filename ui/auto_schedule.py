@@ -1288,14 +1288,9 @@ class AutoSchedule(QWidget):
         cid = self._clocks_panel.selected_id()
         if cid is None:
             return
-        try:
-            new_id = self._db.duplicate_clock(int(cid))
-        except Exception as exc:
-            log.warning(f"duplicate_clock failed: {exc}"); return
-        self._reload_clocks_and_grid()
-        # Auto-select the clone if it's in the visible window
-        self._clocks_panel.select_clock(int(new_id))
-        log.info(f"[auto_sched] duplicated clock {cid} → {new_id}")
+        # Route to Clock Editor in duplicate mode — user gets an
+        # opportunity to rename / tweak before the clone is committed.
+        self.screen_requested.emit(f"clock_duplicate:{int(cid)}")
 
     # ── Header tick ──────────────────────────────────────────────────────
 

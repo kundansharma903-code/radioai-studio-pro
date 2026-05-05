@@ -573,3 +573,203 @@ cleanup":
 
 feat(ui): build Main Auto Schedule screen with grid editor +
 scheduler integration (figma 278:2)
+
+---
+
+## Session 2026-05-05 — feat: Clock Editor (Frame 11 / Figma 285:2)
+
+### Investigation findings
+
+The handover assumed a missing `core/db/clocks.py` module + needed CRUD
+methods. Reality: the schema is already complete and every CRUD method
+already exists on the `Database` singleton. **No migration, no new db
+methods.**
+
+- `clocks` extra cols (already idempotent-ALTER'd): `comments`, `color`,
+  `backup_song_filter`, `loop_cycle_enabled`, `show_only_descriptions`.
+  Every Frame 11 meta-strip field is in place.
+- `clock_slots` extra cols: `selection_mode`, `filter_json`,
+  `specific_song_id`, `specific_artist_id`, `minute_position`,
+  `duration_seconds`, etc. The `filter_json` blob shape exactly matches
+  Frame 11's filter axis set (sound_code, era, vocal, year/priority/bpm
+  ranges).
+- CRUD already on db: `create_clock`, `save_clock`, `delete_clock`,
+  `duplicate_clock`, `get_clock`, `get_clock_slots`, `get_all_clocks`,
+  `save_clock_slots` (atomic DELETE+INSERT replace).
+- Filter resolution lives on the scheduler engine
+  (`SchedulerEngine.count_songs_matching_filter` / private
+  `_songs_matching_filter_json`). Reused as-is — calling the underscore
+  method with documented intent so we get count + per-song duration in
+  one pass without re-querying.
+
+### Scope decisions confirmed by user
+
+- **Q1 — Duplicate via editor:** flipped Auto Schedule's
+  `_on_duplicate_clicked` from direct-`db.duplicate_clock` to
+  `screen_requested("clock_duplicate:<id>")`. Editor opens in create
+  mode pre-populated with "Copy of <name>" + cloned slots; user can
+  rename / tweak before OK.
+- **Q2 — Decorative dropdowns:** Sound Code / Popularity / Properties
+  rendered as no-op `(All)` only. The songs schema has no matching
+  column for any of them. **Flagged below — investigate later.**
+- **Q3 — Filters fully wired, Song Tracks + Artists placeholder:**
+  Filters tab is the high-value 90% case (Jazler-style rotation
+  building). Song Tracks + Artists tabs render a "coming soon"
+  placeholder pointing the operator back to Filters.
+- **Q4 — Atomic save on OK:** in-memory list + single
+  `db.save_clock_slots(id, all_slots)` call inside one txn. No
+  piecemeal DB writes — Cancel discards cleanly.
+- **Q5 — Incremental clock face build:** empty state → single
+  segment → N segments. Each step has its own paint test (3 face-
+  level tests in the suite).
+- **Q6 — Click-the-arc selects:** no separate element list — the
+  clock face IS the list. Selected segment renders with bright white
+  outline + glow. INSERT/REPLACE/DELETE buttons disabled when no
+  selection.
+- **Q7 — Live-DB tests with prefixed names:** `_test_clockedit_<uuid8>`
+  prefix on every clock; full try/finally cleanup + colorize-by
+  setting restored.
+
+### Files
+
+- **NEW** `ui/clock_editor.py` (~2060 lines after split) — assembles
+  the screen: meta strip, available-elements card (5-type icon row +
+  3 sub-tabs + filter panel + big category dropdown), filter results
+  card (live count + avg duration), action stack (ADD/INSERT/REPLACE/
+  DELETE with disabled-state logic), Clock Editor card (status bar +
+  Colorize By + clock face host + 2 checkboxes), OK / Cancel buttons.
+  Owns mode handling (`load_for_mode("new"|"edit"|"duplicate", id?)`),
+  dirty tracking with `_is_loading` suppression, validation gate,
+  filter debounce timer (200ms), atomic save path.
+
+- **NEW** `ui/widgets/clock_face.py` (~284 lines) — `ClockFaceWidget`
+  + the constants it owns (`ELEMENT_TYPE_COLORS`, `DEFAULT_DURATION_S`,
+  `DEFAULT_COLORIZE_BY`). Custom-paint annular wedges, click-to-select,
+  Colorize By (type / category / era), empty-state hint. Reusable;
+  could host the Final Log creator's hour preview later.
+  Split out per the >800-line rule — clock_editor.py was 2292 lines
+  before extraction.
+
+- **MODIFIED** `ui/main_window.py`:
+  - Mounts `ClockEditor` on the stack with scheduler reference.
+  - 3 routes: `clock_new` / `clock_edit:<id>` / `clock_duplicate:<id>`
+    each call `load_for_mode(...)` then `setCurrentWidget`. Replaces
+    the earlier "coming soon (Figma 285:2)" toast.
+
+- **MODIFIED** `ui/auto_schedule.py` — `_on_duplicate_clicked` now
+  emits `clock_duplicate:<id>` instead of calling
+  `db.duplicate_clock` directly. One-line semantic change — gives
+  the user the editor's rename-and-tweak step the spec called out.
+
+- **NEW** `tests/test_clock_editor.py` (25 tests, ~450 lines).
+
+### Selection model + element CRUD
+
+- Click a segment on the clock face → `selected_idx` set, INSERT /
+  REPLACE / DELETE enable.
+- Click empty area → deselect, those buttons disable.
+- ADD: enabled only when filter resolves to ≥1 song (for "song" type)
+  AND clock has under 60 minutes filled.
+- INSERT pushes a new element at the selected index, others shift
+  down.
+- REPLACE swaps current filter into the selected row, preserving
+  the row's `minute_position`.
+- DELETE drops the selected element and re-indexes selection to the
+  same position (or None at the end).
+- All mutations operate on an in-memory `list[dict]`. Save on OK
+  calls `db.save_clock_slots(id, all_slots)` once — atomic replace.
+- `_elements_to_slot_payload` repacks `minute_position` so the
+  saved slots line up left-to-right with no gap, matching the face's
+  visual rendering.
+
+### Validation
+
+- Empty / whitespace name → blocks save with status bar + dialog.
+- Zero elements → blocks save with same.
+- Status bar transitions:
+  - **OK** (green) when total fill ≥ 50m and ≤ 60m
+  - **WARN** (amber) when total < 50m ("scheduler may loop early")
+    or > 60m ("last elements may be cut")
+  - **ERROR** (rose) when validation fails on save attempt
+
+### Tests
+
+25 tests in `tests/test_clock_editor.py`:
+- Smoke / mount / blank load / edit-mode populate / duplicate-mode
+  prefix-and-dirty
+- Element CRUD: ADD push / INSERT at selection / REPLACE preserves
+  minute_position / DELETE removes
+- Filter UI: state shape / reset clears all to "(All)" / 200ms
+  debounce only fires once for 5 rapid changes
+- Validation: blocks empty name / blocks zero elements / passes when
+  both present
+- Save paths: create persists clock + slots / edit updates in-place
+  (same id) / duplicate creates fresh row with cloned slots
+- Round-trip fidelity: load → save (no edits) preserves slot type
+  order + count
+- Cancel routing + dirty tracking
+- Type ↔ DB mapping invariants (incl. legacy "spot" alias)
+- Clock face: empty state has no segments / one segment per element /
+  Colorize By switches segment color
+
+Suite count: 199 passed → 224 passed (+25 net new), 2 deselected
+(slow soak + the pre-existing `test_preview_without_engine_does_not_crash`
+hung modal-dialog test from the prior commit's carry-over). Zero
+regressions.
+
+### Carry-overs (cleanup pass candidates, NOT in this commit)
+
+1. **`clock_editor.py` is 2060 lines after splitting out the clock
+   face.** Still over the soft 800-line guideline, but the file is
+   logically organized with clear section separators per widget. A
+   future cleanup could split into:
+     - `ui/clock_editor/meta_strip.py`
+     - `ui/clock_editor/available_elements.py` (filter panel, the
+        biggest single piece at ~300 lines)
+     - `ui/clock_editor/screen.py`
+   Not splitting now — the widgets are tightly coupled to the screen's
+   state machine, premature splitting would create import friction
+   without functional gain. Re-evaluate if maintenance gets painful.
+2. **Decorative dropdowns** (Sound Code / Popularity / Properties)
+   are no-op `(All)`. Investigate:
+     - Is "Popularity" an alias for `priority` bins (Hot / Standard /
+       Low)? If so, redundant with the Priorities range filter — pick
+       one as canonical.
+     - Is "Properties" a flags compound (`is_frozen` /
+       `variable_length` / `auto_cue` / `update_on_play`)? If so,
+       expose as multi-select with the actual axes.
+     - "Sound Code" likely equals the Pick Category dropdown — the
+       schedulers `_songs_matching_filter_json` reads the category by
+       NAME, so the screen passes `sound_code = category.name`. The
+       small Sound Code dropdown could either mirror Pick Category
+       (visual redundancy) or be dropped from Frame 11.
+   When this lands, tell user explicitly: "yeh teen dropdowns abhi
+   cosmetic hain — asli filter Era / Vocal / Year / Priority / BPM se
+   hote hain."
+3. **Backup Song Filter `···` picker** is "Coming soon" — the col
+   exists in DB; the engine doesn't yet read it; the picker dialog
+   isn't built. Future Frame N.
+4. **Drag-reorder of clock face segments** deferred. Click-to-select
+   only in v1.
+5. **Pre-existing flaky test** still flagged (carry-over #5 from the
+   Auto Schedule commit). Same modal-dialog hang in
+   `test_preview_without_engine_does_not_crash`. Out of scope here.
+
+### Manual smoke notes
+
+App launched cleanly with `py main.py`:
+```
+ClockEditor ready (Figma 285:2 — Premium Dark)
+MainWindow ready — window=1338x691, design canvas=1440x900
+```
+Boot trace shows every screen mounts in sequence; no errors. Window
+opened for interactive click-through; the user can exercise:
+Auto Schedule → "+ Create New Clock" → name + filter → +ADD → OK →
+verify back in Available Clocks; Edit Selected → tweak color → OK;
+Duplicate Selected → "Copy of X" appears in editor → OK → both
+clocks present.
+
+### Commit
+
+feat(ui): build Clock Editor screen with element editor + filter
+wiring (figma 285:2)
