@@ -125,3 +125,51 @@ def test_assignment_grid_lookup_matches_writes(schedule):
     # Cleanup
     for d, h in pairs:
         db.clear_auto_schedule_cell(d, h)
+
+
+# ── Ref 225:4 polish ────────────────────────────────────────────────────
+
+
+def test_clock_double_click_emits_launch_signal(qtbot, schedule):
+    """Per ref 225:4: double-clicking a clock row in the sidebar fires
+    the launch dispatch (`_launch_clock_editor`). Verify the wiring:
+    the sidebar relays its row's double_clicked → clock_double_clicked,
+    and the AutoSchedule connects that to its launcher."""
+    received: list[str] = []
+    schedule.breadcrumb_clicked.connect(received.append)
+    # Simulate the sidebar's clock_double_clicked signal directly
+    if not schedule._sidebar._rows:
+        pytest.skip("no clocks rendered in sidebar")
+    schedule._sidebar.clock_double_clicked.emit(
+        int(schedule._sidebar._rows[0]._clock["id"]))
+    # _launch_clock_editor emits 'clock_editor' breadcrumb (full-screen
+    # route in C2; modal lands in C3).
+    assert "clock_editor" in received
+
+
+def test_set_button_uses_red_color(schedule):
+    """Per ref 225:4 the SET ▶▶ button is red, not amber. Walk the
+    sidebar's bottom action stack and verify the SET button's
+    stylesheet contains the RED token (#f43f5e)."""
+    from PyQt6.QtWidgets import QPushButton
+    set_btn = None
+    for b in schedule._sidebar.findChildren(QPushButton):
+        if "SET" in (b.text() or ""):
+            set_btn = b
+            break
+    assert set_btn is not None, "SET ▶▶ button not found"
+    qss = set_btn.styleSheet().lower()
+    assert "f43f5e" in qss, \
+        f"SET button stylesheet does not contain RED (#f43f5e): {qss[:200]}"
+
+
+def test_tab_order_is_specific_days_then_weekdays(schedule):
+    """Ref 225:4 order is Specific Days first, Weekdays second."""
+    from PyQt6.QtWidgets import QPushButton
+    tabs_in_order: list[str] = []
+    for b in schedule._main.findChildren(QPushButton):
+        t = b.text()
+        if t in ("Specific Days", "Weekdays"):
+            tabs_in_order.append(t)
+    assert tabs_in_order == ["Specific Days", "Weekdays"], \
+        f"unexpected tab order: {tabs_in_order}"

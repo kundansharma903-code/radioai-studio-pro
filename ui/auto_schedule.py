@@ -229,6 +229,7 @@ class _Header(QFrame):
 
 class _ClockRow(QFrame):
     clicked = pyqtSignal(int)
+    double_clicked = pyqtSignal(int)   # opens modal Clock Editor (ref 225:5)
 
     def __init__(self, clock: dict, is_active: bool, parent=None):
         super().__init__(parent)
@@ -240,6 +241,11 @@ class _ClockRow(QFrame):
     def mousePressEvent(self, e: QMouseEvent) -> None:
         if e.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit(int(self._clock.get("id", 0)))
+
+    def mouseDoubleClickEvent(self, e: QMouseEvent) -> None:
+        if e.button() == Qt.MouseButton.LeftButton:
+            self.double_clicked.emit(int(self._clock.get("id", 0)))
+        super().mouseDoubleClickEvent(e)
 
     def paintEvent(self, _e):
         super().paintEvent(_e)
@@ -277,12 +283,13 @@ class _ClockRow(QFrame):
 
 
 class _ClocksSidebar(QFrame):
-    clock_selected     = pyqtSignal(int)
-    new_clock          = pyqtSignal()
-    edit_clock         = pyqtSignal()      # SET >> in Figma — open in editor
-    duplicate_clock    = pyqtSignal()
-    auto_program       = pyqtSignal()      # stub
-    delete_clock       = pyqtSignal()
+    clock_selected      = pyqtSignal(int)
+    clock_double_clicked = pyqtSignal(int)  # opens modal Clock Editor
+    new_clock           = pyqtSignal()
+    edit_clock          = pyqtSignal()      # SET >> — open editor on selected
+    duplicate_clock     = pyqtSignal()
+    auto_program        = pyqtSignal()      # stub
+    delete_clock        = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -320,12 +327,12 @@ class _ClocksSidebar(QFrame):
         v.addWidget(self._rows_box)
         v.addStretch()
 
-        # Bottom action stack
+        # Bottom action stack — SET in red per ref 225:4
         for label, color, signal in [
-            ("SET ▶▶",                AMBER,    self.edit_clock),
+            ("SET ▶▶",                RED,       self.edit_clock),
             ("Duplicate Clock",       CYAN_LIGHT, self.duplicate_clock),
             ("Auto Program Settings", PURPLE_LIGHT, self.auto_program),
-            ("✗  Delete Clock",       RED,       self.delete_clock),
+            ("✗  Delete Clock",       RED_LIGHT, self.delete_clock),
         ]:
             b = QPushButton(label)
             b.setFixedHeight(30)
@@ -350,6 +357,7 @@ class _ClocksSidebar(QFrame):
         for clk in clocks:
             row = _ClockRow(clk, is_active=(int(clk.get("id") or 0) == int(active_id or 0)))
             row.clicked.connect(self.clock_selected.emit)
+            row.double_clicked.connect(self.clock_double_clicked.emit)
             self._rows_layout.addWidget(row)
             self._rows.append(row)
 
@@ -697,9 +705,9 @@ class AutoSchedule(QWidget):
         self._sidebar = _ClocksSidebar(self)
         self._sidebar.setGeometry(LEFT_X, CONTENT_Y, LEFT_W, CONTENT_H)
         self._sidebar.clock_selected.connect(self._on_clock_selected)
+        self._sidebar.clock_double_clicked.connect(self._launch_clock_editor)
         self._sidebar.new_clock.connect(self._on_new_clock)
-        self._sidebar.edit_clock.connect(
-            lambda: self.breadcrumb_clicked.emit("clock_editor"))
+        self._sidebar.edit_clock.connect(self._on_edit_clock)
         self._sidebar.duplicate_clock.connect(self._on_duplicate_clock)
         self._sidebar.auto_program.connect(self._on_auto_program_stub)
         self._sidebar.delete_clock.connect(self._on_delete_clock)
@@ -719,18 +727,8 @@ class AutoSchedule(QWidget):
         sub.setStyleSheet(f"color: {TEXT_MUTED}; background: transparent;")
         v.addWidget(sub)
 
-        # Tab bar + clear all
+        # Tab bar + clear all — Specific Days first per ref 225:4
         bar_row = QHBoxLayout(); bar_row.setSpacing(6)
-        weekdays_tab = QPushButton("Weekdays")
-        weekdays_tab.setFixedHeight(32)
-        weekdays_tab.setFont(inter(10, QFont.Weight.DemiBold))
-        weekdays_tab.setStyleSheet(
-            f"QPushButton {{ background: {rgba(CYAN, 0.20)}; "
-            f"color: {CYAN_LIGHT}; "
-            f"border: 1px solid {rgba(CYAN, 0.50)}; "
-            f"border-radius: 5px; padding: 0 16px; }}"
-        )
-        bar_row.addWidget(weekdays_tab)
         specific_tab = QPushButton("Specific Days")
         specific_tab.setFixedHeight(32)
         specific_tab.setFont(inter(10, QFont.Weight.DemiBold))
@@ -742,6 +740,16 @@ class AutoSchedule(QWidget):
             f"border-radius: 5px; padding: 0 16px; }}"
         )
         bar_row.addWidget(specific_tab)
+        weekdays_tab = QPushButton("Weekdays")
+        weekdays_tab.setFixedHeight(32)
+        weekdays_tab.setFont(inter(10, QFont.Weight.DemiBold))
+        weekdays_tab.setStyleSheet(
+            f"QPushButton {{ background: {rgba(CYAN, 0.20)}; "
+            f"color: {CYAN_LIGHT}; "
+            f"border: 1px solid {rgba(CYAN, 0.50)}; "
+            f"border-radius: 5px; padding: 0 16px; }}"
+        )
+        bar_row.addWidget(weekdays_tab)
         bar_row.addStretch()
         clear_btn = QPushButton("Clear All")
         clear_btn.setFixedHeight(32)
@@ -797,6 +805,34 @@ class AutoSchedule(QWidget):
         self._selected_clock_id = int(clock_id)
         self._sidebar.populate(self._clocks, active_id=self._selected_clock_id)
 
+    def _launch_clock_editor(self, clock_id: int) -> None:
+        """Single dispatch point for opening the Clock Editor on a clock id.
+
+        Phase F-Final S5 follow-up (ref 225:5): C3 will replace this with
+        a modal QDialog (`ClockEditorDialog`). For now the C2 commit
+        keeps the existing full-screen route — the breadcrumb signal
+        flips MainWindow's stack to the existing clock_editor screen
+        and that screen's _load_clock pre-loads the requested id."""
+        log.info(f"[auto-schedule] launch clock editor for id={clock_id}")
+        # Ask MainWindow to open Clock Editor; it will load whichever
+        # clock is the screen's _current_clock_id (carried from the
+        # last visit). Pre-loading a specific id requires the modal
+        # path arriving in C3.
+        self._selected_clock_id = int(clock_id)
+        self.breadcrumb_clicked.emit("clock_editor")
+
+    def _on_edit_clock(self) -> None:
+        """SET ▶▶ button — opens Clock Editor for the currently-selected
+        clock. Falls back to first available clock if none selected."""
+        cid = self._selected_clock_id
+        if cid is None and self._clocks:
+            cid = int(self._clocks[0]["id"])
+        if cid is None:
+            QMessageBox.information(self, "No clocks",
+                                    "Create a clock first via + New Clock.")
+            return
+        self._launch_clock_editor(cid)
+
     def _on_new_clock(self) -> None:
         try:
             new_id = self._db.create_clock("New Clock")
@@ -805,6 +841,9 @@ class AutoSchedule(QWidget):
             return
         self._selected_clock_id = new_id
         self._refresh_all()
+        # Per ref 225:4 — newly-created clock immediately opens in the
+        # Clock Editor (modal in C3, full-screen route for now).
+        self._launch_clock_editor(new_id)
 
     def _on_duplicate_clock(self) -> None:
         if self._selected_clock_id is None:
