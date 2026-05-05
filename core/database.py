@@ -461,6 +461,84 @@ class Database:
             conn.rollback()
             raise
 
+    # ── Auto Schedule grid (Phase F1) ────────────────────────────────────────
+
+    def normalize_auto_schedule(self) -> int:
+        """Split any multi-hour auto_schedule rows into per-hour rows.
+        Idempotent — second call updates 0. Run on first F1 mount so the
+        grid editor always sees one row per (day, hour)."""
+        conn = self._conn()
+        rows = conn.execute(
+            "SELECT id, clock_id, day_of_week, hour_start, hour_end "
+            "FROM auto_schedule WHERE hour_end - hour_start > 1"
+        ).fetchall()
+        if not rows:
+            return 0
+        try:
+            conn.execute("BEGIN")
+            for r in rows:
+                conn.execute("DELETE FROM auto_schedule WHERE id = ?", [r[0]])
+                for h in range(int(r[3]), int(r[4])):
+                    conn.execute(
+                        "INSERT INTO auto_schedule (clock_id, day_of_week, "
+                        "hour_start, hour_end) VALUES (?, ?, ?, ?)",
+                        [int(r[1]), int(r[2]), int(h), int(h) + 1])
+            conn.commit()
+            return len(rows)
+        except Exception:
+            conn.rollback()
+            raise
+
+    def get_auto_schedule_grid(self) -> dict:
+        """Return {(day, hour): clock_id} for the entire 24×7 grid.
+        Multi-hour ranges are expanded so each hour has its own entry."""
+        rows = self._conn().execute(
+            "SELECT clock_id, day_of_week, hour_start, hour_end FROM auto_schedule"
+        ).fetchall()
+        grid: dict = {}
+        for r in rows:
+            for h in range(int(r["hour_start"]), int(r["hour_end"])):
+                grid[(int(r["day_of_week"]), h)] = int(r["clock_id"])
+        return grid
+
+    def set_auto_schedule_cell(self, day_of_week: int, hour: int,
+                               clock_id: int) -> None:
+        """Assign clock to (day, hour). Replaces any existing assignment
+        that overlaps this hour. Per CLAUDE.md guardrail — DELETE WHERE
+        is exact-match equality (not LIKE), safe."""
+        conn = self._conn()
+        d = int(day_of_week); h = int(hour); cid = int(clock_id)
+        try:
+            conn.execute("BEGIN")
+            conn.execute(
+                "DELETE FROM auto_schedule WHERE day_of_week = ? "
+                "AND hour_start <= ? AND hour_end > ?", [d, h, h])
+            conn.execute(
+                "INSERT INTO auto_schedule (clock_id, day_of_week, "
+                "hour_start, hour_end) VALUES (?, ?, ?, ?)",
+                [cid, d, h, h + 1])
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+    def clear_auto_schedule_cell(self, day_of_week: int, hour: int) -> None:
+        """Remove any assignment that covers (day, hour)."""
+        conn = self._conn()
+        d = int(day_of_week); h = int(hour)
+        conn.execute(
+            "DELETE FROM auto_schedule WHERE day_of_week = ? "
+            "AND hour_start <= ? AND hour_end > ?", [d, h, h])
+        conn.commit()
+
+    def clear_all_auto_schedule(self) -> int:
+        """Wipe the entire grid. Returns rows removed.
+        Refuses if WHERE-style clauses leak — uses unconditional DELETE."""
+        conn = self._conn()
+        cur = conn.execute("DELETE FROM auto_schedule")
+        conn.commit()
+        return int(cur.rowcount or 0)
+
     def migrate_spot_to_break(self) -> int:
         """Phase F2.3 — rename clock_slots.slot_type 'Spot'/'spot' to
         'Break'. Idempotent: second call updates 0 rows. The auto and

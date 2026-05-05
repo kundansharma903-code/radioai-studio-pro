@@ -190,14 +190,23 @@ class MainWindow(QMainWindow):
             self.studio.breadcrumb_clicked.connect(self._on_breadcrumb)
             self._stack.addWidget(self.studio)
 
-            # Clock Editor — broadcast clock template builder (Figma 165:2)
-            # Phase F2.1 — entry point through Control Panel "Scheduling" card.
-            # Phase F3 will replace direct routing with the Hub screen.
+            # Clock Editor — broadcast clock template builder (Figma 59:2)
             from ui.clock_editor import ClockEditor
             self.clock_editor = ClockEditor(self._db, parent=None)
             self.clock_editor.breadcrumb_clicked.connect(self._on_breadcrumb)
             self.clock_editor.studio_clicked.connect(self._on_studio_clicked)
             self._stack.addWidget(self.clock_editor)
+
+            # Main Auto Schedule — 24×7 clock-to-hour grid (Figma 161:2).
+            # Phase F1 — reachable via Clock Editor's "Scheduling" header
+            # nav button. Phase F3 will route Control Panel "Scheduling"
+            # card to the Hub which then exposes Auto Schedule + Clock
+            # Editor as separate cards.
+            from ui.auto_schedule import AutoSchedule
+            self.auto_schedule = AutoSchedule(self._db, parent=None)
+            self.auto_schedule.breadcrumb_clicked.connect(self._on_breadcrumb)
+            self.auto_schedule.studio_clicked.connect(self._on_studio_clicked)
+            self._stack.addWidget(self.auto_schedule)
 
             # F9 shortcut → open Studio (broadcast convention; Jazler precedent)
             from PyQt6.QtGui import QShortcut, QKeySequence
@@ -224,6 +233,10 @@ class MainWindow(QMainWindow):
         log.info(f"Breadcrumb → {where}")
         if where == "control_panel" and hasattr(self, "control_panel"):
             self._stack.setCurrentWidget(self.control_panel)
+        elif where == "clock_editor" and hasattr(self, "clock_editor"):
+            self._stack.setCurrentWidget(self.clock_editor)
+        elif where == "auto_schedule" and hasattr(self, "auto_schedule"):
+            self._stack.setCurrentWidget(self.auto_schedule)
 
     def _on_song_selected(self, song_id: int) -> None:
         log.info(f"Song selected: id={song_id}")

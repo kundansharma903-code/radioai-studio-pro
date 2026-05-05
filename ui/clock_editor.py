@@ -139,6 +139,7 @@ class _Header(QFrame):
     """
 
     control_panel_clicked = pyqtSignal()
+    scheduling_clicked    = pyqtSignal()
     studio_clicked        = pyqtSignal()
 
     def __init__(self, parent=None):
@@ -170,7 +171,7 @@ class _Header(QFrame):
         sched_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         sched_btn.setFont(inter(10, QFont.Weight.Medium))
         sched_btn.setStyleSheet(self._nav_qss(active=False))
-        # No handler — Hub is F3 territory
+        sched_btn.clicked.connect(self.scheduling_clicked.emit)
 
         ce_btn = QPushButton("Clock Editor", self)
         ce_btn.setGeometry(434, 22, 108, 28)
@@ -1402,6 +1403,8 @@ class ClockEditor(QWidget):
         self._header.setGeometry(0, 0, WINDOW_W, HEADER_H)
         self._header.control_panel_clicked.connect(
             lambda: self.breadcrumb_clicked.emit("control_panel"))
+        self._header.scheduling_clicked.connect(
+            lambda: self.breadcrumb_clicked.emit("auto_schedule"))
         self._header.studio_clicked.connect(self.studio_clicked.emit)
 
         self._sidebar = _ClocksListSidebar(self)
