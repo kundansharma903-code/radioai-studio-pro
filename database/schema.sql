@@ -202,6 +202,22 @@ CREATE TABLE IF NOT EXISTS sweepers (
     is_enabled      INTEGER DEFAULT 1
 );
 
+-- Voice Tracks: pre-recorded operator inserts with a date-window validity.
+-- Phase F-Final addition. Picker filters by today between valid_from..valid_to.
+CREATE TABLE IF NOT EXISTS voice_tracks (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT    NOT NULL,
+    file_path   TEXT,
+    duration_ms INTEGER DEFAULT 0,
+    valid_from  TEXT,    -- 'YYYY-MM-DD' or NULL = always valid
+    valid_to    TEXT,    -- 'YYYY-MM-DD' or NULL = always valid
+    label       TEXT,    -- e.g. "Show open / weather tag"
+    is_active   INTEGER DEFAULT 1
+);
+-- Station IDs reuse the existing `jingles` table filtered by
+--   category = 'Station ID'
+-- (no separate table — jingles already has every column we need).
+
 -- ════════════════════════════════════════════════════════════════════
 -- 4. CLOCKS, SLOTS, AUTO-SCHEDULE GRID
 -- ════════════════════════════════════════════════════════════════════
@@ -239,7 +255,8 @@ CREATE TABLE IF NOT EXISTS clock_slots (
     fallback_category_id INTEGER REFERENCES categories(id),  -- F2.2.1 (Figma 59:2)
     pin_to_time         INTEGER NOT NULL DEFAULT 0,          -- F2.2.1 (Figma 59:2)
     duration_seconds    INTEGER,                             -- F2.3   (Break + VT)
-    ref_text            TEXT                                 -- F2.3   (Station ID ref / VT label)
+    ref_text            TEXT,                                -- F2.3   (Station ID ref / VT label)
+    selection_mode      TEXT    DEFAULT 'random_from_category'  -- F-Final: specific|random_from_category|random_any
 );
 
 -- 24×7 grid: which clock plays which day+hour range.

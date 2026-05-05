@@ -389,8 +389,9 @@ class Database:
         conn.commit()
 
     def _ensure_clock_slots_columns(self) -> None:
-        """Add the F2.2.1 + F2.3 columns (Figma 59:2 redesign) if missing.
-        Idempotent — safe to call on every save_clock_slots."""
+        """Add the F2.2.1 + F2.3 + F-Final columns (Figma 59:2 redesign +
+        rotation engine) if missing. Idempotent — safe to call on every
+        save_clock_slots."""
         conn = self._conn()
         cols = {r[1] for r in conn.execute(
             "PRAGMA table_info(clock_slots)").fetchall()}
@@ -400,11 +401,122 @@ class Database:
             # F2.3 (Figma 59:2 per-type panels)
             ("duration_seconds",     "INTEGER"),  # Break + Voice Track
             ("ref_text",             "TEXT"),     # Station ID ref / VT label
+            # F-Final (rotation engine)
+            ("selection_mode",       "TEXT DEFAULT 'random_from_category'"),
+            # values: 'specific'|'random_from_category'|'random_any'
         ]
         for col, decl in adds:
             if col not in cols:
                 conn.execute(f"ALTER TABLE clock_slots ADD COLUMN {col} {decl}")
         conn.commit()
+
+    def _ensure_voice_tracks_table(self) -> None:
+        """Create voice_tracks if missing (Phase F-Final). Idempotent."""
+        conn = self._conn()
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS voice_tracks (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                name        TEXT    NOT NULL,
+                file_path   TEXT,
+                duration_ms INTEGER DEFAULT 0,
+                valid_from  TEXT,
+                valid_to    TEXT,
+                label       TEXT,
+                is_active   INTEGER DEFAULT 1
+            )
+            """)
+        conn.commit()
+
+    def seed_rotation_test_data(self) -> dict:
+        """Phase F-Final: seed minimal test data for the rotation engine
+        if the corresponding tables are empty. Returns counts inserted.
+
+        - 3 sweepers (real audio path resolution is the operator's job
+          to wire later — placeholder file_path='' lets the picker
+          return a row that Studio handles gracefully)
+        - 2 station IDs (rows in `jingles` with category='Station ID')
+        - 2 voice tracks (always-valid window)
+
+        Idempotent: only seeds when each table is empty for the
+        rotation type."""
+        self._ensure_voice_tracks_table()
+        conn = self._conn()
+        added = {"sweepers": 0, "station_ids": 0, "voice_tracks": 0}
+
+        n = conn.execute("SELECT COUNT(*) FROM sweepers").fetchone()[0]
+        if int(n or 0) == 0:
+            for nm in ("KISS Energy", "Drop the Beat", "Coming Up Next"):
+                conn.execute(
+                    "INSERT INTO sweepers (name, category, file_path, "
+                    "duration_ms, is_enabled) VALUES (?, 'Station', '', 8000, 1)",
+                    [nm])
+                added["sweepers"] += 1
+
+        n = conn.execute(
+            "SELECT COUNT(*) FROM jingles WHERE category = 'Station ID'"
+        ).fetchone()[0]
+        if int(n or 0) == 0:
+            for nm in ("KISS FM 91.5 Main Ident", "KISS Shot 01"):
+                conn.execute(
+                    "INSERT INTO jingles (name, category, file_path, "
+                    "duration_ms, is_enabled) VALUES "
+                    "(?, 'Station ID', '', 5000, 1)",
+                    [nm])
+                added["station_ids"] += 1
+
+        n = conn.execute("SELECT COUNT(*) FROM voice_tracks").fetchone()[0]
+        if int(n or 0) == 0:
+            for nm, lbl in (("Morning Open", "Show open"),
+                            ("Weather Tag", "Daily weather tag")):
+                conn.execute(
+                    "INSERT INTO voice_tracks (name, file_path, "
+                    "duration_ms, valid_from, valid_to, label, is_active) "
+                    "VALUES (?, '', 30000, NULL, NULL, ?, 1)",
+                    [nm, lbl])
+                added["voice_tracks"] += 1
+
+        conn.commit()
+        return added
+
+    # ── Voice tracks / sweepers / station IDs lookup (Phase F-Final) ──────
+
+    def get_voice_tracks(self, today: Optional[str] = None) -> List[sqlite3.Row]:
+        """Active voice tracks valid on `today` (YYYY-MM-DD).
+        NULL valid_from / valid_to = always valid."""
+        from datetime import datetime as _dt
+        today = today or _dt.now().strftime("%Y-%m-%d")
+        return self._conn().execute(
+            """
+            SELECT * FROM voice_tracks
+            WHERE  is_active = 1
+            AND    (valid_from IS NULL OR valid_from <= ?)
+            AND    (valid_to   IS NULL OR valid_to   >= ?)
+            """,
+            [today, today],
+        ).fetchall()
+
+    def get_sweepers_active(self) -> List[sqlite3.Row]:
+        return self._conn().execute(
+            "SELECT * FROM sweepers WHERE is_enabled = 1"
+        ).fetchall()
+
+    def get_station_ids_active(self) -> List[sqlite3.Row]:
+        return self._conn().execute(
+            "SELECT * FROM jingles "
+            "WHERE category = 'Station ID' AND is_enabled = 1"
+        ).fetchall()
+
+    def get_jingle_pads_active(self,
+                               pallet_id: Optional[int] = None
+                               ) -> List[sqlite3.Row]:
+        sql = ("SELECT * FROM jingle_pads "
+               "WHERE file_path IS NOT NULL AND file_path != ''")
+        params: list = []
+        if pallet_id:
+            sql += " AND pallet_id = ?"
+            params.append(int(pallet_id))
+        return self._conn().execute(sql, params).fetchall()
 
     def create_clock(self, name: str = "New Clock") -> int:
         """Insert a fresh empty clock with safe defaults.
