@@ -86,14 +86,24 @@ RIGHT_W  = WINDOW_W - RIGHT_X           # 420
 # ── Slot type → color/label helpers ─────────────────────────────────────────
 
 SLOT_TYPE_COLORS = {
-    "Song":     CYAN,
-    "song":     CYAN,
-    "Jingle":   PURPLE,
-    "jingle":   PURPLE,
-    "Sweeper":  AMBER,
-    "sweeper":  AMBER,
-    "Spot":     RED,
-    "spot":     RED,
+    # F2.1+F2.2 set (kept for backwards compat with shipped UI + tests).
+    "Song":         CYAN,
+    "song":         CYAN,
+    "Jingle":       PURPLE,
+    "jingle":       PURPLE,
+    "Sweeper":      AMBER,
+    "sweeper":      AMBER,
+    "Spot":         RED,
+    "spot":         RED,
+    # F2.3 groundwork — additional types from Figma 59:2 redesign.
+    # UI surfaces for these land when the Figma 59:2 layout is built;
+    # extending the palette now lets save/load round-trip them safely.
+    "Break":        GREEN,
+    "break":        GREEN,
+    "Station ID":   PINK,
+    "station_id":   PINK,
+    "Voice Track":  CYAN_LIGHT,
+    "voice_track":  CYAN_LIGHT,
 }
 
 

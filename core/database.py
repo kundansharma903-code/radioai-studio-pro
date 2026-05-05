@@ -367,10 +367,26 @@ class Database:
         )
         conn.commit()
 
+    def _ensure_clock_slots_columns(self) -> None:
+        """Add the F2.2.1 columns (Figma 59:2 redesign groundwork) if
+        missing. Idempotent — safe to call on every save_clock_slots."""
+        conn = self._conn()
+        cols = {r[1] for r in conn.execute(
+            "PRAGMA table_info(clock_slots)").fetchall()}
+        adds = [
+            ("fallback_category_id", "INTEGER REFERENCES categories(id)"),
+            ("pin_to_time",          "INTEGER NOT NULL DEFAULT 0"),
+        ]
+        for col, decl in adds:
+            if col not in cols:
+                conn.execute(f"ALTER TABLE clock_slots ADD COLUMN {col} {decl}")
+        conn.commit()
+
     def save_clock_slots(self, clock_id: int, slots: list) -> None:
         """Replace this clock's slot list with `slots`. DELETE+INSERT
         within a transaction. Per CLAUDE.md guardrail: WHERE clock_id = ?
         is exact-match on a known id, not a LIKE pattern — safe."""
+        self._ensure_clock_slots_columns()
         conn = self._conn()
         cols_present = {r[1] for r in conn.execute(
             "PRAGMA table_info(clock_slots)").fetchall()}
@@ -383,7 +399,8 @@ class Database:
                 for k in ("slot_type", "category_id", "energy_pref",
                          "vocal_pref", "priority_pref",
                          "separation_override", "position_minutes",
-                         "is_break", "sweeper_position", "item_id"):
+                         "is_break", "sweeper_position", "item_id",
+                         "fallback_category_id", "pin_to_time"):
                     if k in cols_present and k in slot:
                         payload[k] = slot[k]
                 cols = ", ".join(payload.keys())

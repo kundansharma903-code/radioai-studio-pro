@@ -146,3 +146,41 @@ def test_move_down_swaps_with_next(editor):
     editor._on_move_down()
     assert editor._slots == state_before
     assert editor._is_dirty is False
+
+
+# ── F2.2.1 (Figma 59:2 groundwork) — color palette + schema migration ──
+
+def test_slot_type_colors_cover_figma_59_2_set():
+    """All 6 slot types from Figma 59:2 legend resolve to a real color.
+
+    Phase F2.2.1 extended SLOT_TYPE_COLORS so the eventual 59:2 timeline
+    paint code can look up Break / Station ID / Voice Track without
+    hitting the TEXT_MUTED fallback. Legacy keys (Spot) stay populated
+    so the F2.1+F2.2 list view doesn't regress.
+    """
+    from ui.clock_editor import SLOT_TYPE_COLORS, _slot_type_color
+
+    for canonical in ("Song", "Break", "Jingle", "Station ID",
+                      "Sweeper", "Voice Track"):
+        assert canonical in SLOT_TYPE_COLORS, f"missing color for {canonical!r}"
+        assert _slot_type_color(canonical).startswith("#")
+
+    # Spot is the F2.1+F2.2 legacy entry — still resolvable.
+    assert _slot_type_color("Spot").startswith("#")
+
+
+def test_save_clock_slots_migrates_new_columns(qtbot):
+    """save_clock_slots is the migration entry point — first call ensures
+    fallback_category_id + pin_to_time exist on clock_slots. Idempotent:
+    calling twice is safe."""
+    db = Database()
+    conn = db._conn()
+
+    # Run the migration twice (idempotence check).
+    db._ensure_clock_slots_columns()
+    db._ensure_clock_slots_columns()
+
+    cols = {r[1] for r in conn.execute(
+        "PRAGMA table_info(clock_slots)").fetchall()}
+    assert "fallback_category_id" in cols
+    assert "pin_to_time" in cols

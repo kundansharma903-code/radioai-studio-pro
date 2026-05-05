@@ -218,10 +218,14 @@ CREATE TABLE IF NOT EXISTS clocks (
 );
 
 -- Ordered slots inside a clock (songs / jingles / spots / sweepers).
+-- Phase F2.2.1: slot_type set extended to support Figma 59:2 redesign —
+-- now {song, break, jingle, station_id, sweeper, voice_track}. Existing
+-- legacy values (spot, event) still load; future migration may collapse
+-- them into the new set.
 CREATE TABLE IF NOT EXISTS clock_slots (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     clock_id            INTEGER NOT NULL REFERENCES clocks(id) ON DELETE CASCADE,
-    slot_type           TEXT    NOT NULL,   -- song|jingle|spot|sweeper|event
+    slot_type           TEXT    NOT NULL,
     category_id         INTEGER REFERENCES categories(id),
     energy_pref         TEXT    DEFAULT 'Any',
     vocal_pref          TEXT    DEFAULT 'Any',
@@ -231,7 +235,9 @@ CREATE TABLE IF NOT EXISTS clock_slots (
     slot_order          INTEGER NOT NULL,
     is_break            INTEGER DEFAULT 0,
     sweeper_position    TEXT    DEFAULT 'START_OF_SONG',
-    item_id             INTEGER DEFAULT 0   -- specific song/jingle if locked
+    item_id             INTEGER DEFAULT 0,  -- specific song/jingle if locked
+    fallback_category_id INTEGER REFERENCES categories(id),  -- F2.2.1 (Figma 59:2)
+    pin_to_time         INTEGER NOT NULL DEFAULT 0           -- F2.2.1 (Figma 59:2)
 );
 
 -- 24×7 grid: which clock plays which day+hour range.
