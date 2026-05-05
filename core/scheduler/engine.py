@@ -310,51 +310,63 @@ class SchedulerEngine(QObject):
             log.debug(f"_break_time_to_dt: unparseable {time_str!r}")
             return None
 
-    # ── Phase F2: clock-driven song picker ───────────────────────────────
+    # ── Phase F-Final: clock-driven rotation engine (full Jazler set) ────
 
-    def pick_next_song(self, now: Optional[datetime] = None) -> Optional[dict]:
-        """Phase F2 — clock-driven scheduling.
+    # Default separation windows. Configurable via scheduling_rules table
+    # in a future polish pass — for now hard-coded sane defaults.
+    SEPARATION_SAME_ARTIST_MIN = 60   # no same artist within 60 min
+    SEPARATION_SAME_SONG_MIN   = 240  # no same song    within 4 hours
 
-        Reads auto_schedule for the current (day_of_week, hour) → clock_id.
-        Reads that clock's slot list and picks the next 'Song' slot at
-        the current cursor position. Fills it via category + energy +
-        vocal preferences.
+    def pick_next_item(self, now: Optional[datetime] = None) -> Optional[dict]:
+        """Phase F-Final — full Jazler-equivalent clock dispatcher.
 
-        Maintains an internal cursor that resets on hour rollover. Non-Song
-        slot types (Break/Jingle/Sweeper/Station ID/Voice Track) are
-        skipped at this layer — they will get proper pickers in Phase E.
-        Studio handles ad-break triggering separately via spot_due signal.
+        Resolves the active clock for current (day_of_week, hour) via
+        force_clocks override → auto_schedule fallback. Walks slots from
+        the cursor position; dispatches by slot_type to the matching
+        picker. Returns the first non-None pick.
 
-        Returns dict {song: <song row>, clock_id: int, slot_idx: int}
-        or None if no clock is assigned for this hour or no song is
-        playable. Studio falls back to its in-memory queue on None.
+        Returns:
+            {item_type, item_id, file_path, title, artist, duration_ms,
+             clock_id, slot_idx}
+            or None if no clock is assigned, no slots, or every slot's
+            picker returned None (e.g. empty break, voice track out of
+            window).
 
-        Safe to call from any thread — uses thread-local DB connection.
+        Each call advances the cursor past the slot whose picker
+        produced the returned item. Hour rollover resets the cursor.
+        Safe to call from any thread.
         """
         if now is None:
             now = datetime.now()
-        dow = int(now.weekday())   # Monday=0 … Sunday=6 (matches schema)
+        dow = int(now.weekday())
         hour = int(now.hour)
         hour_key = (dow, hour)
-
-        # Hour rollover: reset slot cursor.
         if getattr(self, "_active_hour_key", None) != hour_key:
             self._clock_slot_cursor = 0
             self._active_hour_key = hour_key
 
+        # Phase F-Final S4: force_clocks override layer
+        clock_id: Optional[int] = None
         try:
-            clock_row = self._db.get_active_clock(dow, hour)
+            fc = self._db.get_force_clock_for(now)
+            if fc is not None:
+                clock_id = int(fc["clock_id"])
         except Exception as exc:
-            log.debug(f"pick_next_song: get_active_clock failed: {exc}")
-            return None
-        if not clock_row:
-            return None
+            log.debug(f"pick_next_item: get_force_clock_for failed: {exc}")
+        if clock_id is None:
+            try:
+                clock_row = self._db.get_active_clock(dow, hour)
+            except Exception as exc:
+                log.debug(f"pick_next_item: get_active_clock failed: {exc}")
+                return None
+            if not clock_row:
+                return None
+            clock_id = int(clock_row["id"])
 
-        clock_id = int(clock_row["id"])
         try:
             slots = self._db.get_clock_slots(clock_id)
         except Exception as exc:
-            log.debug(f"pick_next_song: get_clock_slots failed: {exc}")
+            log.debug(f"pick_next_item: get_clock_slots failed: {exc}")
             return None
         if not slots:
             return None
@@ -364,54 +376,354 @@ class SchedulerEngine(QObject):
         for offset in range(n):
             idx = (cursor + offset) % n
             slot = slots[idx]
-            stype = (slot["slot_type"] or "").strip().lower()
-            if stype == "song":
-                song = self._pick_song_for_slot(slot)
-                if song is not None:
-                    self._clock_slot_cursor = (idx + 1) % n
-                    return {
-                        "song":     song,
-                        "clock_id": clock_id,
-                        "slot_idx": idx,
-                    }
-            # Phase E TODO: dispatch break / jingle / sweeper / station_id
-            # / voice_track here. For now they're skipped at this layer —
-            # ad spots fire via spot_due, jingles via Instant Jingles, etc.
+            stype = (slot["slot_type"] or "").strip().lower().replace(" ", "_")
+
+            picker = {
+                "song":         self._pick_song,
+                "jingle":       self._pick_jingle,
+                "sweeper":      self._pick_sweeper,
+                "station_id":   self._pick_station_id,
+                "voice_track":  self._pick_voice_track,
+                "break":        self._pick_break,
+                # Legacy 'spot' rows behave like Break.
+                "spot":         self._pick_break,
+            }.get(stype)
+
+            if picker is None:
+                continue
+
+            try:
+                # _pick_break also takes `now`; others ignore it.
+                if stype in ("break", "spot"):
+                    item = picker(slot, now)
+                else:
+                    item = picker(slot)
+            except Exception as exc:
+                log.warning(f"pick_next_item: picker {stype} failed: {exc}")
+                item = None
+            if item is None:
+                continue
+            self._clock_slot_cursor = (idx + 1) % n
+            item["clock_id"] = clock_id
+            item["slot_idx"] = idx
+            return item
         return None
 
-    def _pick_song_for_slot(self, slot) -> Optional[dict]:
-        """Random song for a Song slot. Filters by category / energy /
-        vocal; falls back to fallback_category_id, then to any song."""
+    def pick_next_song(self, now: Optional[datetime] = None) -> Optional[dict]:
+        """Backward-compat wrapper. Loops pick_next_item until a 'song'
+        item is found (or budget exhausted). Repackages into the legacy
+        {song, clock_id, slot_idx} shape so existing call sites keep
+        working."""
+        for _ in range(32):   # safety bound — clocks rarely exceed 32 slots
+            item = self.pick_next_item(now=now)
+            if item is None:
+                return None
+            if item.get("item_type") == "song":
+                return {
+                    "song": {
+                        "id":          item.get("item_id"),
+                        "title":       item.get("title"),
+                        "artist":      item.get("artist"),
+                        "file_path":   item.get("file_path"),
+                        "duration_ms": item.get("duration_ms"),
+                    },
+                    "clock_id": item.get("clock_id"),
+                    "slot_idx": item.get("slot_idx"),
+                }
+        return None
+
+    # ── Per-type pickers ──────────────────────────────────────────────────
+
+    @staticmethod
+    def _slot_mode(slot) -> str:
+        """Resolve the selection_mode field with a sane default."""
+        m = (slot["selection_mode"]
+             if "selection_mode" in slot.keys() else None) or "random_from_category"
+        return str(m).strip().lower()
+
+    @staticmethod
+    def _slot_item_id(slot) -> Optional[int]:
+        v = slot["item_id"] if "item_id" in slot.keys() else None
+        return int(v) if v else None
+
+    @staticmethod
+    def _slot_category_id(slot) -> Optional[int]:
+        v = slot["category_id"] if "category_id" in slot.keys() else None
+        return int(v) if v else None
+
+    def _pick_song(self, slot) -> Optional[dict]:
+        """Song pick with separation: filters by category + energy +
+        vocal preferences, then drops candidates that ran in the recent
+        artist (60 min) / song (4 hr) windows. Falls back to the full
+        candidate set if nothing passes separation."""
         import random
-        category_id = slot["category_id"] if "category_id" in slot.keys() else None
+        category_id = self._slot_category_id(slot)
         energy = slot["energy_pref"] if "energy_pref" in slot.keys() else None
-        vocal = slot["vocal_pref"] if "vocal_pref" in slot.keys() else None
+        vocal  = slot["vocal_pref"]  if "vocal_pref"  in slot.keys() else None
         try:
             songs = self._db.get_songs(
                 category_id=category_id,
                 energy=energy if energy and energy != "Any" else None,
-                vocal=vocal if vocal and vocal != "Any" else None,
-                limit=80,
+                vocal=vocal   if vocal  and vocal  != "Any" else None,
+                limit=120,
             )
         except Exception as exc:
-            log.debug(f"_pick_song_for_slot: get_songs failed: {exc}")
+            log.debug(f"_pick_song: get_songs failed: {exc}")
             songs = []
         if not songs:
             fb_id = (slot["fallback_category_id"]
                      if "fallback_category_id" in slot.keys() else None)
             if fb_id:
                 try:
-                    songs = self._db.get_songs(category_id=int(fb_id), limit=80)
+                    songs = self._db.get_songs(category_id=int(fb_id), limit=120)
                 except Exception:
                     songs = []
         if not songs:
             try:
-                songs = self._db.get_songs(limit=80)
+                songs = self._db.get_songs(limit=120)
             except Exception:
                 songs = []
         if not songs:
             return None
-        return dict(random.choice(songs))
+
+        recent_artists = self._recent_artists(self.SEPARATION_SAME_ARTIST_MIN)
+        recent_song_ids = self._recent_song_ids(self.SEPARATION_SAME_SONG_MIN)
+        eligible = [
+            s for s in songs
+            if int(s["id"]) not in recent_song_ids
+            and (s["artist"] or "") not in recent_artists
+        ]
+        chosen = random.choice(eligible) if eligible else random.choice(songs)
+        return {
+            "item_type":   "song",
+            "item_id":     int(chosen["id"]),
+            "file_path":   chosen["file_path"] if "file_path" in chosen.keys() else None,
+            "title":       chosen["title"]     if "title"     in chosen.keys() else None,
+            "artist":      chosen["artist"]    if "artist"    in chosen.keys() else None,
+            "duration_ms": int(chosen["duration_ms"] or 0)
+                           if "duration_ms" in chosen.keys() else 0,
+        }
+
+    def _pick_jingle(self, slot) -> Optional[dict]:
+        """Jingle = a row from jingle_pads. selection_mode dispatches."""
+        import random
+        mode = self._slot_mode(slot)
+        item_id = self._slot_item_id(slot)
+        cat_id  = self._slot_category_id(slot)   # interpreted as pallet_id
+
+        if mode == "specific" and item_id:
+            row = self._db._conn().execute(
+                "SELECT * FROM jingle_pads WHERE id = ? "
+                "AND file_path IS NOT NULL AND file_path != ''",
+                [item_id]).fetchone()
+            return self._jingle_pad_to_item(row) if row else None
+
+        if mode == "random_from_category" and cat_id:
+            pads = list(self._db.get_jingle_pads_active(pallet_id=cat_id))
+            if pads:
+                return self._jingle_pad_to_item(random.choice(pads))
+
+        # random_any (or fall-through from above)
+        pads = list(self._db.get_jingle_pads_active())
+        if not pads:
+            return None
+        return self._jingle_pad_to_item(random.choice(pads))
+
+    @staticmethod
+    def _jingle_pad_to_item(row) -> dict:
+        return {
+            "item_type":   "jingle",
+            "item_id":     int(row["id"]) if row and "id" in row.keys() else None,
+            "file_path":   row["file_path"] if row and "file_path" in row.keys() else None,
+            "title":       row["label"]     if row and "label"     in row.keys() else "Jingle",
+            "artist":      "JINGLE",
+            "duration_ms": int(row["duration_ms"] or 0)
+                           if row and "duration_ms" in row.keys() else 0,
+        }
+
+    def _pick_sweeper(self, slot) -> Optional[dict]:
+        import random
+        mode = self._slot_mode(slot)
+        item_id = self._slot_item_id(slot)
+
+        if mode == "specific" and item_id:
+            row = self._db._conn().execute(
+                "SELECT * FROM sweepers WHERE id = ? AND is_enabled = 1",
+                [item_id]).fetchone()
+            return self._sweeper_to_item(row) if row else None
+
+        rows = list(self._db.get_sweepers_active())
+        if not rows:
+            return None
+        return self._sweeper_to_item(random.choice(rows))
+
+    @staticmethod
+    def _sweeper_to_item(row) -> dict:
+        return {
+            "item_type":   "sweeper",
+            "item_id":     int(row["id"]) if row else None,
+            "file_path":   row["file_path"] if row and "file_path" in row.keys() else None,
+            "title":       row["name"]      if row and "name"      in row.keys() else "Sweeper",
+            "artist":      "SWEEPER",
+            "duration_ms": int(row["duration_ms"] or 0)
+                           if row and "duration_ms" in row.keys() else 0,
+        }
+
+    def _pick_station_id(self, slot) -> Optional[dict]:
+        """Station IDs are jingles WHERE category='Station ID'."""
+        import random
+        mode = self._slot_mode(slot)
+        item_id = self._slot_item_id(slot)
+
+        if mode == "specific" and item_id:
+            row = self._db._conn().execute(
+                "SELECT * FROM jingles WHERE id = ? "
+                "AND category = 'Station ID' AND is_enabled = 1",
+                [item_id]).fetchone()
+            return self._station_id_to_item(row) if row else None
+
+        rows = list(self._db.get_station_ids_active())
+        if not rows:
+            return None
+        return self._station_id_to_item(random.choice(rows))
+
+    @staticmethod
+    def _station_id_to_item(row) -> dict:
+        return {
+            "item_type":   "station_id",
+            "item_id":     int(row["id"]) if row else None,
+            "file_path":   row["file_path"] if row and "file_path" in row.keys() else None,
+            "title":       row["name"]      if row and "name"      in row.keys() else "Station ID",
+            "artist":      "STATION ID",
+            "duration_ms": int(row["duration_ms"] or 0)
+                           if row and "duration_ms" in row.keys() else 0,
+        }
+
+    def _pick_voice_track(self, slot) -> Optional[dict]:
+        """Voice tracks filter by today between valid_from..valid_to.
+        Returns None if no valid track is in the window — caller skips
+        the slot."""
+        import random
+        from datetime import datetime as _dt
+        mode = self._slot_mode(slot)
+        item_id = self._slot_item_id(slot)
+        today_str = _dt.now().strftime("%Y-%m-%d")
+
+        if mode == "specific" and item_id:
+            row = self._db._conn().execute(
+                "SELECT * FROM voice_tracks WHERE id = ? AND is_active = 1 "
+                "AND (valid_from IS NULL OR valid_from <= ?) "
+                "AND (valid_to   IS NULL OR valid_to   >= ?)",
+                [item_id, today_str, today_str]).fetchone()
+            return self._voice_track_to_item(row) if row else None
+
+        rows = list(self._db.get_voice_tracks(today_str))
+        if not rows:
+            return None
+        return self._voice_track_to_item(random.choice(rows))
+
+    @staticmethod
+    def _voice_track_to_item(row) -> dict:
+        return {
+            "item_type":   "voice_track",
+            "item_id":     int(row["id"]) if row else None,
+            "file_path":   row["file_path"] if row and "file_path" in row.keys() else None,
+            "title":       row["label"] if (row and "label" in row.keys() and row["label"])
+                           else (row["name"] if row and "name" in row.keys() else "Voice Track"),
+            "artist":      "VOICE TRACK",
+            "duration_ms": int(row["duration_ms"] or 0)
+                           if row and "duration_ms" in row.keys() else 0,
+        }
+
+    def _pick_break(self, slot, now: datetime) -> Optional[dict]:
+        """A Break slot pulls the next pending campaign for the current
+        hour — returns the first active spot file. Coordinates with the
+        spot_due tick path via the shared _fired_breaks dedupe set so we
+        don't double-fire a campaign that the per-tick scheduler already
+        sent."""
+        try:
+            day_breaks = list(self._db.get_active_breaks_for_day(int(now.weekday())))
+        except Exception:
+            return None
+        if not day_breaks:
+            return None
+        # Filter to campaigns whose break_time falls in the current hour
+        # and aren't already in _fired_breaks.
+        cur_hour = int(now.hour)
+        for br in day_breaks:
+            br_time = (br["break_time"] or "").strip()
+            if not br_time:
+                continue
+            try:
+                br_h = int(br_time.split(":")[0])
+            except (ValueError, IndexError):
+                continue
+            if br_h != cur_hour:
+                continue
+            campaign_id = int(br["campaign_id"])
+            dedupe_key = (campaign_id, br_time)
+            if dedupe_key in self._fired_breaks:
+                continue
+            # Pick the first playable spot file for this campaign.
+            try:
+                files = list(self._db.get_spot_files(campaign_id))
+            except Exception:
+                files = []
+            chosen = None
+            for sf in files:
+                fp = sf["file_path"] if "file_path" in sf.keys() else None
+                is_act = (sf["is_active"] if "is_active" in sf.keys() else 1)
+                if fp and int(is_act or 0):
+                    chosen = sf
+                    break
+            if chosen is None:
+                continue
+            self._fired_breaks.add(dedupe_key)
+            return {
+                "item_type":   "spot",
+                "item_id":     campaign_id,
+                "file_path":   chosen["file_path"]
+                               if "file_path" in chosen.keys() else None,
+                "title":       br["campaign_name"] or "Spot",
+                "artist":      "Spot · auto-aired",
+                "duration_ms": int(chosen["duration_ms"] or 0)
+                               if "duration_ms" in chosen.keys() else 0,
+            }
+        return None
+
+    # ── Separation rule helpers ──────────────────────────────────────────
+
+    def _recent_artists(self, minutes: int) -> set:
+        """Distinct song artists played in the last `minutes` minutes."""
+        from datetime import datetime as _dt, timedelta as _td
+        cutoff = (_dt.now() - _td(minutes=int(minutes))).strftime(
+            "%Y-%m-%d %H:%M:%S")
+        try:
+            rows = self._db._conn().execute(
+                "SELECT DISTINCT s.artist FROM broadcast_log bl "
+                "LEFT JOIN songs s ON bl.song_id = s.id "
+                "WHERE bl.played_at >= ? AND bl.entry_type = 'song' "
+                "AND s.artist IS NOT NULL AND s.artist != ''",
+                [cutoff],
+            ).fetchall()
+        except Exception:
+            return set()
+        return {r[0] for r in rows if r[0]}
+
+    def _recent_song_ids(self, minutes: int) -> set:
+        from datetime import datetime as _dt, timedelta as _td
+        cutoff = (_dt.now() - _td(minutes=int(minutes))).strftime(
+            "%Y-%m-%d %H:%M:%S")
+        try:
+            rows = self._db._conn().execute(
+                "SELECT DISTINCT bl.song_id FROM broadcast_log bl "
+                "WHERE bl.played_at >= ? AND bl.entry_type = 'song' "
+                "AND bl.song_id IS NOT NULL",
+                [cutoff],
+            ).fetchall()
+        except Exception:
+            return set()
+        return {int(r[0]) for r in rows if r[0]}
 
     # ── Diagnostics ──────────────────────────────────────────────────────
 

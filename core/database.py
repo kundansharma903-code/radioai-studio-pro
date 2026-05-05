@@ -594,6 +594,59 @@ class Database:
             conn.rollback()
             raise
 
+    # ── Force Clocks (Phase F-Final S4 resolution layer) ─────────────────────
+
+    def get_force_clock_for(self, when) -> Optional[sqlite3.Row]:
+        """Return the force_clocks row that overrides today × hour at the
+        given datetime, or None. Single-shot rule: first matching override
+        for the date wins (active only).
+
+        `when`: datetime — inspected for date + time."""
+        from datetime import datetime as _dt
+        if when is None:
+            when = _dt.now()
+        date_str = when.strftime("%Y-%m-%d")
+        time_str = when.strftime("%H:%M")
+        return self._conn().execute(
+            """
+            SELECT * FROM force_clocks
+            WHERE  is_active = 1
+            AND    override_date = ?
+            AND    (time_start IS NULL OR time_start <= ?)
+            AND    (time_end   IS NULL OR time_end   >= ?)
+            ORDER  BY id
+            LIMIT  1
+            """,
+            [date_str, time_str, time_str],
+        ).fetchone()
+
+    def list_force_clocks(self) -> List[sqlite3.Row]:
+        """All active force_clocks rows, most-recent-first."""
+        return self._conn().execute(
+            "SELECT * FROM force_clocks WHERE is_active = 1 "
+            "ORDER BY override_date DESC, id DESC"
+        ).fetchall()
+
+    def add_force_clock(self, name: str, clock_id: int,
+                        override_date: str, time_start: str = "00:00",
+                        time_end: str = "23:59") -> int:
+        """Insert a new override. Returns the new row id."""
+        conn = self._conn()
+        cur = conn.execute(
+            "INSERT INTO force_clocks (name, clock_id, override_date, "
+            "time_start, time_end, is_active) VALUES (?, ?, ?, ?, ?, 1)",
+            [name or "Override", int(clock_id), str(override_date),
+             str(time_start), str(time_end)],
+        )
+        conn.commit()
+        return int(cur.lastrowid)
+
+    def delete_force_clock(self, force_clock_id: int) -> None:
+        conn = self._conn()
+        conn.execute("DELETE FROM force_clocks WHERE id = ?",
+                     [int(force_clock_id)])
+        conn.commit()
+
     # ── Auto Schedule grid (Phase F1) ────────────────────────────────────────
 
     def normalize_auto_schedule(self) -> int:
