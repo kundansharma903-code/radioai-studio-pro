@@ -210,6 +210,14 @@ class MainWindow(QMainWindow):
                 self._on_hub_screen_requested)
             self._stack.addWidget(self.playlists_screen)
 
+            # Create New Playlist — Figma 243:2 premium screen.
+            from ui.playlist_new import PlaylistNew
+            self.playlist_new_screen = PlaylistNew(
+                self._db, scheduler=self._scheduler, parent=None)
+            self.playlist_new_screen.screen_requested.connect(
+                self._on_hub_screen_requested)
+            self._stack.addWidget(self.playlist_new_screen)
+
             # F9 shortcut → open Studio (broadcast convention; Jazler precedent)
             from PyQt6.QtGui import QShortcut, QKeySequence
             self._studio_shortcut = QShortcut(QKeySequence("F9"), self)
@@ -271,11 +279,8 @@ class MainWindow(QMainWindow):
                 f"Edit Playlist (id={screen.split(':', 1)[1]}) — "
                 "coming soon (Figma 240:2).")
             return
-        if screen == "playlist_new":
-            from PyQt6.QtWidgets import QMessageBox
-            QMessageBox.information(
-                self, "New Playlist",
-                "New Playlist — coming soon (Figma 241:2).")
+        if screen == "playlist_new" and hasattr(self, "playlist_new_screen"):
+            self._stack.setCurrentWidget(self.playlist_new_screen)
             return
         # Everything else is a future scheduling sub-screen.
         from PyQt6.QtWidgets import QMessageBox

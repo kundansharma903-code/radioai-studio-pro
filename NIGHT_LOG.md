@@ -261,3 +261,73 @@ removed from phase_stubs). App boot clean —
 "Playlists ready (Figma 239:2 — Premium Dark)".
 
 Design ref: `design_refs/figma_playlists_239_2.png`.
+
+---
+
+## 2026-05-05 — Create New Playlist screen (Figma 243:2)
+
+Third screen of the premium-theme port. Heaviest one in the chain so
+far — paginated library browser + drag-reorderable queue + auto-saving
+draft state. Two commits.
+
+### C1 — feat(db): paginated song search + playlist draft state
+
+- `db.search_songs(query, category_id, bpm_min/max, year_min/max,
+  sort, offset, limit)` + `db.count_songs(...)` — SQL pushes filters
+  + ORDER BY + LIMIT to SQLite so no full song-table load. Sort
+  options: 'recent' | 'az' | 'bpm'. Shared `_songs_filter_sql` helper
+  keeps search + count in lockstep.
+- Idempotent ALTER on `playlists`: color (hex), tags (csv),
+  cover_path, status ('draft'|'active', default 'active'),
+  auto_schedule_enabled (0|1).
+- Draft state machine:
+  * `create_playlist_draft(name, kind, color, tags)` → id (status='draft')
+  * `update_playlist_draft(id, **fields)` — partial, stamps updated_at
+  * `replace_playlist_songs(id, song_ids)` — atomic DELETE+INSERT
+  * `commit_playlist_draft(id)` — flips status='active' + is_active=1
+  * `delete_playlist_draft(id)` — refuses to drop active rows
+- `get_playlists_with_stats()` now excludes status='draft' so the
+  Playlists screen list doesn't surface in-progress playlists.
+- Tests (tests/test_playlist_draft_db.py — 13 new) cover paginated
+  search shapes, count agreement with paged walk, draft round-trip,
+  delete-draft refuses active, drafts hidden from list.
+
+### C2 — feat(ui): Create New Playlist screen
+
+- ui/playlist_new.py (new ~1280 lines):
+  - Reuses Header from app_chrome.
+  - Top action row: Cancel / ✓ Save Playlist (purple primary, drop shadow).
+  - Meta form strip (1328×116): cover picker (file dialog), name input,
+    type dropdown (Manual/Imported/Smart), 6-color swatch row, tags
+    input. `meta_changed(dict)` rolls up to the screen.
+  - Library Browser (760×484): themed search (200ms debounce) +
+    category chips with live counts (from db.count_songs) + filter
+    bar (BPM range / YEAR range / SORT) + 10-row paginated table +
+    pager. `+ ADD` per row flips to `✓ ADDED` when the song is in the
+    queue.
+  - Playlist Builder (540×484): QListView + custom QAbstractListModel
+    with proper moveRows() for drag-internal-move. Custom paint
+    delegate draws the 56h row (color bar, ⋮⋮ handle, rank chip,
+    title/artist, duration, × on hover). Footer: Add to Auto Schedule
+    toggle + Clear + ⇄ Shuffle.
+  - Auto-save QTimer single-shot 1500ms, restarts on every dirty
+    event. Fires create_playlist_draft on first interaction, then
+    update_playlist_draft + replace_playlist_songs on subsequent ticks.
+  - Save commits the draft + (if toggle on) calls
+    scheduler.add_playlist_to_schedule. Cancel with dirty state shows
+    confirm dialog; discard deletes the draft.
+- ui/main_window.py:
+  - Mounts PlaylistNew on the stack with scheduler reference.
+  - 'playlist_new' breadcrumb route now opens the screen instead of
+    showing a "coming soon" toast.
+- Tests (tests/test_playlist_new.py — 14 new) cover smoke + composition,
+  meta data binding, search-box debouncer, library + queue add/remove
+  sync, drag-reorder via moveRows, auto-save timer (1500ms single-shot)
+  + draft persistence, Save commits + emits 'playlists', auto-schedule
+  toggle routes through scheduler shim, Cancel-without-dirty fast path,
+  dirty-state autosave creates draft row.
+
+Suite: 162 → 176 passed (+14 net new). Smoke clean —
+"PlaylistNew ready (Figma 243:2 — Premium Dark)".
+
+Design ref: `design_refs/figma_playlist_new_243_2.png`.
