@@ -230,7 +230,13 @@ CREATE TABLE IF NOT EXISTS clocks (
     time_end    TEXT,
     day_mask    INTEGER DEFAULT 127,
     description TEXT,
-    is_active   INTEGER DEFAULT 1
+    is_active   INTEGER DEFAULT 1,
+    -- Phase F-Final C3 (ref 225:5 — modal Clock Editor)
+    comments    TEXT,
+    color       TEXT,                              -- hex (#RRGGBB)
+    backup_song_filter        TEXT,                -- JSON spec
+    loop_cycle_enabled        INTEGER DEFAULT 1,
+    show_only_descriptions    INTEGER DEFAULT 0
 );
 
 -- Ordered slots inside a clock (songs / jingles / spots / sweepers).
@@ -256,7 +262,12 @@ CREATE TABLE IF NOT EXISTS clock_slots (
     pin_to_time         INTEGER NOT NULL DEFAULT 0,          -- F2.2.1 (Figma 59:2)
     duration_seconds    INTEGER,                             -- F2.3   (Break + VT)
     ref_text            TEXT,                                -- F2.3   (Station ID ref / VT label)
-    selection_mode      TEXT    DEFAULT 'random_from_category'  -- F-Final: specific|random_from_category|random_any
+    selection_mode      TEXT    DEFAULT 'random_from_category', -- F-Final: specific|random_from_category|random_any
+    -- Phase F-Final C3 (ref 225:5 — Jazler-style filter slots)
+    filter_json         TEXT,                                -- {sound_code, era, vocal, year_min/max, ...}
+    specific_song_id    INTEGER REFERENCES songs(id),
+    specific_artist_id  INTEGER,
+    minute_position     INTEGER DEFAULT 0                    -- 0..59 — where on the clock face
 );
 
 -- 24×7 grid: which clock plays which day+hour range.

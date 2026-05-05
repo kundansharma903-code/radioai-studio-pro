@@ -10,6 +10,7 @@ Use --maximized to launch maximized for testing on larger displays.
 
 import logging
 import sys
+from typing import Optional
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QGuiApplication
@@ -190,12 +191,9 @@ class MainWindow(QMainWindow):
             self.studio.breadcrumb_clicked.connect(self._on_breadcrumb)
             self._stack.addWidget(self.studio)
 
-            # Clock Editor — broadcast clock template builder (Figma 59:2)
-            from ui.clock_editor import ClockEditor
-            self.clock_editor = ClockEditor(self._db, parent=None)
-            self.clock_editor.breadcrumb_clicked.connect(self._on_breadcrumb)
-            self.clock_editor.studio_clicked.connect(self._on_studio_clicked)
-            self._stack.addWidget(self.clock_editor)
+            # Phase F-Final C3 (ref 225:5): Clock Editor is now a modal
+            # QDialog launched on demand, not a stacked screen. The
+            # 'clock_editor' breadcrumb route opens it via _on_breadcrumb.
 
             # Main Auto Schedule — 24×7 clock-to-hour grid (Figma 161:2).
             # Phase F1 — reachable from the Hub or from Clock Editor's
@@ -264,8 +262,8 @@ class MainWindow(QMainWindow):
         log.info(f"Breadcrumb → {where}")
         if where == "control_panel" and hasattr(self, "control_panel"):
             self._stack.setCurrentWidget(self.control_panel)
-        elif where == "clock_editor" and hasattr(self, "clock_editor"):
-            self._stack.setCurrentWidget(self.clock_editor)
+        elif where == "clock_editor":
+            self._open_clock_editor_modal()
         elif where == "auto_schedule" and hasattr(self, "auto_schedule"):
             self._stack.setCurrentWidget(self.auto_schedule)
         elif where == "scheduling_hub" and hasattr(self, "scheduling_hub"):
@@ -280,6 +278,26 @@ class MainWindow(QMainWindow):
                 self._stack.setCurrentWidget(screen)
             else:
                 self._show_phase_toast(where)
+
+    def _open_clock_editor_modal(self) -> None:
+        """Phase F-Final C3 (ref 225:5): open the modal Clock Editor.
+        Pre-loads whichever clock the Auto Schedule sidebar has selected.
+        On close, refreshes Auto Schedule so any new/edited clock shows up."""
+        from ui.dialogs.clock_editor_dialog import ClockEditorDialog
+        selected: Optional[int] = None
+        if hasattr(self, "auto_schedule"):
+            selected = getattr(self.auto_schedule, "_selected_clock_id", None)
+        dlg = ClockEditorDialog(
+            self._db, clock_id=selected,
+            scheduler=getattr(self, "_scheduler", None),
+            parent=self)
+        dlg.exec()
+        if hasattr(self, "auto_schedule") and hasattr(
+                self.auto_schedule, "_refresh_all"):
+            try:
+                self.auto_schedule._refresh_all()
+            except Exception as exc:
+                log.debug(f"auto_schedule refresh after modal close: {exc}")
 
     def _show_phase_toast(self, target: str) -> None:
         """Stub responder used while the F4-F8 screens haven't landed."""

@@ -452,30 +452,73 @@ class SchedulerEngine(QObject):
         return int(v) if v else None
 
     def _pick_song(self, slot) -> Optional[dict]:
-        """Song pick with separation: filters by category + energy +
-        vocal preferences, then drops candidates that ran in the recent
-        artist (60 min) / song (4 hr) windows. Falls back to the full
-        candidate set if nothing passes separation."""
+        """Song pick — Phase F-Final C3 dispatch order:
+
+           1. specific_song_id    → exact song
+           2. specific_artist_id  → random song from that artist
+           3. filter_json         → apply Jazler-style filter spec
+           4. category_id (legacy F2.3 path) → random from category
+                                              with energy/vocal pref
+
+        Always applies separation rules (60-min artist / 4-hr song) at
+        the end. Falls back to the unfiltered candidate set when
+        separation eliminates everything; falls through to fallback
+        category, then to any song.
+        """
         import random
-        category_id = self._slot_category_id(slot)
-        energy = slot["energy_pref"] if "energy_pref" in slot.keys() else None
-        vocal  = slot["vocal_pref"]  if "vocal_pref"  in slot.keys() else None
-        try:
-            songs = self._db.get_songs(
-                category_id=category_id,
-                energy=energy if energy and energy != "Any" else None,
-                vocal=vocal   if vocal  and vocal  != "Any" else None,
-                limit=120,
-            )
-        except Exception as exc:
-            log.debug(f"_pick_song: get_songs failed: {exc}")
-            songs = []
+        # 1) specific song
+        sid = slot["specific_song_id"] if "specific_song_id" in slot.keys() else None
+        if sid:
+            row = self._db.get_song(int(sid))
+            if row:
+                return self._song_row_to_item(dict(row))
+
+        # 2) specific artist — random from artist's catalog
+        aid = slot["specific_artist_id"] if "specific_artist_id" in slot.keys() else None
+        if aid:
+            try:
+                rows = self._db._conn().execute(
+                    "SELECT s.* FROM songs s "
+                    "WHERE s.is_enabled = 1 AND "
+                    "(s.artist_id = ? OR s.artist = "
+                    " (SELECT name FROM artists WHERE id = ?))",
+                    [int(aid), int(aid)],
+                ).fetchall()
+            except Exception:
+                rows = []
+            if rows:
+                return self._song_row_to_item(dict(random.choice(rows)))
+
+        # 3) filter_json — Jazler-style filter spec
+        fj = slot["filter_json"] if "filter_json" in slot.keys() else None
+        songs: list = []
+        if fj:
+            songs = self._songs_matching_filter_json(fj)
+
+        # 4) legacy category-based path
+        if not songs:
+            category_id = self._slot_category_id(slot)
+            energy = slot["energy_pref"] if "energy_pref" in slot.keys() else None
+            vocal  = slot["vocal_pref"]  if "vocal_pref"  in slot.keys() else None
+            try:
+                songs = self._db.get_songs(
+                    category_id=category_id,
+                    energy=energy if energy and energy != "Any" else None,
+                    vocal=vocal   if vocal  and vocal  != "Any" else None,
+                    limit=120,
+                )
+            except Exception as exc:
+                log.debug(f"_pick_song: get_songs failed: {exc}")
+                songs = []
+
+        # Fallbacks: slot.fallback_category_id, then any song
         if not songs:
             fb_id = (slot["fallback_category_id"]
                      if "fallback_category_id" in slot.keys() else None)
             if fb_id:
                 try:
-                    songs = self._db.get_songs(category_id=int(fb_id), limit=120)
+                    songs = self._db.get_songs(
+                        category_id=int(fb_id), limit=120)
                 except Exception:
                     songs = []
         if not songs:
@@ -494,15 +537,77 @@ class SchedulerEngine(QObject):
             and (s["artist"] or "") not in recent_artists
         ]
         chosen = random.choice(eligible) if eligible else random.choice(songs)
+        return self._song_row_to_item(
+            chosen if isinstance(chosen, dict) else dict(chosen))
+
+    @staticmethod
+    def _song_row_to_item(row: dict) -> dict:
         return {
             "item_type":   "song",
-            "item_id":     int(chosen["id"]),
-            "file_path":   chosen["file_path"] if "file_path" in chosen.keys() else None,
-            "title":       chosen["title"]     if "title"     in chosen.keys() else None,
-            "artist":      chosen["artist"]    if "artist"    in chosen.keys() else None,
-            "duration_ms": int(chosen["duration_ms"] or 0)
-                           if "duration_ms" in chosen.keys() else 0,
+            "item_id":     int(row.get("id")) if row.get("id") else None,
+            "file_path":   row.get("file_path"),
+            "title":       row.get("title"),
+            "artist":      row.get("artist"),
+            "duration_ms": int(row.get("duration_ms") or 0),
         }
+
+    def _songs_matching_filter_json(self, filter_json: str) -> list:
+        """Apply a Jazler-style filter spec stored in clock_slots.filter_json.
+        Returns rows from `songs` matching the spec.
+
+        Filter shape:
+            {"sound_code": "Hot", "era": "2000s", "vocal": "vocal",
+             "year_min": 2000, "year_max": 2024,
+             "priority_min": 1, "priority_max": 9,
+             "bpm_min": 90, "bpm_max": 130}
+        Any key omitted = no constraint on that axis.
+        """
+        import json as _json
+        try:
+            spec = _json.loads(filter_json) if filter_json else {}
+        except Exception:
+            return []
+        sql = ("SELECT s.* FROM songs s "
+               "LEFT JOIN categories c ON s.category_id = c.id "
+               "WHERE s.is_enabled = 1")
+        params: list = []
+        # Sound Code = Category name
+        sc = spec.get("sound_code")
+        if sc and sc not in ("All", "all", ""):
+            sql += " AND c.name = ?"; params.append(str(sc))
+        # Era / vocal map to song columns when present
+        era = spec.get("era")
+        if era and era not in ("All", "all", ""):
+            sql += " AND s.era = ?"; params.append(str(era))
+        vocal = spec.get("vocal")
+        if vocal and vocal not in ("All", "all", ""):
+            sql += " AND s.vocal = ?"; params.append(str(vocal))
+        # Numeric ranges
+        for col, key_min, key_max in [
+            ("year",     "year_min",     "year_max"),
+            ("priority", "priority_min", "priority_max"),
+            ("bpm",      "bpm_min",      "bpm_max"),
+        ]:
+            v_min = spec.get(key_min); v_max = spec.get(key_max)
+            try:
+                if v_min not in (None, ""):
+                    sql += f" AND s.{col} >= ?"; params.append(int(v_min))
+                if v_max not in (None, ""):
+                    sql += f" AND s.{col} <= ?"; params.append(int(v_max))
+            except (TypeError, ValueError):
+                pass
+        sql += " LIMIT 240"
+        try:
+            return [dict(r) for r in self._db._conn().execute(
+                sql, params).fetchall()]
+        except Exception as exc:
+            log.debug(f"_songs_matching_filter_json failed: {exc}")
+            return []
+
+    def count_songs_matching_filter(self, filter_json: str) -> int:
+        """Public helper for the modal Clock Editor's live "X Songs
+        Available" indicator."""
+        return len(self._songs_matching_filter_json(filter_json))
 
     def _pick_jingle(self, slot) -> Optional[dict]:
         """Jingle = a row from jingle_pads. selection_mode dispatches."""

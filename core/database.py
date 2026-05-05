@@ -367,16 +367,38 @@ class Database:
             "SELECT * FROM clocks WHERE id = ?", [int(clock_id)]
         ).fetchone()
 
+    def _ensure_clocks_columns(self) -> None:
+        """Phase F-Final C3 — add modal-Clock-Editor columns to `clocks`
+        if missing. Idempotent — safe to call on every save_clock."""
+        conn = self._conn()
+        cols = {r[1] for r in conn.execute(
+            "PRAGMA table_info(clocks)").fetchall()}
+        adds = [
+            ("comments",                "TEXT"),
+            ("color",                   "TEXT"),
+            ("backup_song_filter",      "TEXT"),
+            ("loop_cycle_enabled",      "INTEGER DEFAULT 1"),
+            ("show_only_descriptions",  "INTEGER DEFAULT 0"),
+        ]
+        for col, decl in adds:
+            if col not in cols:
+                conn.execute(f"ALTER TABLE clocks ADD COLUMN {col} {decl}")
+        conn.commit()
+
     def save_clock(self, clock_id: int, data: dict) -> None:
         """Update top-level clock fields. Slots are saved separately via
         save_clock_slots — same transaction is the caller's job (Studio
         F2 wraps both in one BEGIN/COMMIT for atomic clock-edit save)."""
+        self._ensure_clocks_columns()
         conn = self._conn()
         cols_present = {r[1] for r in conn.execute(
             "PRAGMA table_info(clocks)").fetchall()}
         sets, values = [], []
         for k in ("name", "time_start", "time_end", "day_mask",
-                  "description", "is_active"):
+                  "description", "is_active",
+                  # Phase F-Final C3 — modal Clock Editor fields
+                  "comments", "color", "backup_song_filter",
+                  "loop_cycle_enabled", "show_only_descriptions"):
             if k in cols_present and k in data:
                 sets.append(f"{k} = ?")
                 values.append(data[k])
@@ -390,8 +412,8 @@ class Database:
 
     def _ensure_clock_slots_columns(self) -> None:
         """Add the F2.2.1 + F2.3 + F-Final columns (Figma 59:2 redesign +
-        rotation engine) if missing. Idempotent — safe to call on every
-        save_clock_slots."""
+        rotation engine + Jazler-style filter slots) if missing.
+        Idempotent — safe to call on every save_clock_slots."""
         conn = self._conn()
         cols = {r[1] for r in conn.execute(
             "PRAGMA table_info(clock_slots)").fetchall()}
@@ -399,15 +421,31 @@ class Database:
             ("fallback_category_id", "INTEGER REFERENCES categories(id)"),
             ("pin_to_time",          "INTEGER NOT NULL DEFAULT 0"),
             # F2.3 (Figma 59:2 per-type panels)
-            ("duration_seconds",     "INTEGER"),  # Break + Voice Track
-            ("ref_text",             "TEXT"),     # Station ID ref / VT label
-            # F-Final (rotation engine)
+            ("duration_seconds",     "INTEGER"),
+            ("ref_text",             "TEXT"),
+            # F-Final S1-S5 (rotation engine)
             ("selection_mode",       "TEXT DEFAULT 'random_from_category'"),
-            # values: 'specific'|'random_from_category'|'random_any'
+            # F-Final C3 (ref 225:5 — Jazler filter-based slots)
+            ("filter_json",          "TEXT"),
+            ("specific_song_id",     "INTEGER REFERENCES songs(id)"),
+            ("specific_artist_id",   "INTEGER"),
+            ("minute_position",      "INTEGER DEFAULT 0"),
         ]
+        added_minute_position = False
         for col, decl in adds:
             if col not in cols:
                 conn.execute(f"ALTER TABLE clock_slots ADD COLUMN {col} {decl}")
+                if col == "minute_position":
+                    added_minute_position = True
+        # If minute_position is brand-new, backfill from slot_order so
+        # existing data renders on the circular face. Rough heuristic:
+        # 4-min slots, slot 1 → 0min, slot 2 → 4min, …
+        if added_minute_position:
+            conn.execute(
+                "UPDATE clock_slots SET minute_position = "
+                "((slot_order - 1) * 4) % 60 "
+                "WHERE minute_position IS NULL OR minute_position = 0"
+            )
         conn.commit()
 
     def _ensure_voice_tracks_table(self) -> None:
@@ -910,7 +948,10 @@ class Database:
                          "separation_override", "position_minutes",
                          "is_break", "sweeper_position", "item_id",
                          "fallback_category_id", "pin_to_time",
-                         "duration_seconds", "ref_text"):
+                         "duration_seconds", "ref_text", "selection_mode",
+                         # F-Final C3
+                         "filter_json", "specific_song_id",
+                         "specific_artist_id", "minute_position"):
                     if k in cols_present and k in slot:
                         payload[k] = slot[k]
                 cols = ", ".join(payload.keys())
