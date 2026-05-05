@@ -219,6 +219,14 @@ class MainWindow(QMainWindow):
                 self._on_hub_screen_requested)
             self._stack.addWidget(self.playlist_new_screen)
 
+            # Main Auto Schedule — Figma 278:2 premium screen.
+            from ui.auto_schedule import AutoSchedule
+            self.auto_schedule_screen = AutoSchedule(
+                self._db, scheduler=self._scheduler, parent=None)
+            self.auto_schedule_screen.screen_requested.connect(
+                self._on_hub_screen_requested)
+            self._stack.addWidget(self.auto_schedule_screen)
+
             # F9 shortcut → open Studio (broadcast convention; Jazler precedent)
             from PyQt6.QtGui import QShortcut, QKeySequence
             self._studio_shortcut = QShortcut(QKeySequence("F9"), self)
@@ -283,10 +291,26 @@ class MainWindow(QMainWindow):
         if screen == "playlist_new" and hasattr(self, "playlist_new_screen"):
             self._stack.setCurrentWidget(self.playlist_new_screen)
             return
+        if (screen == "main_auto_schedule"
+                and hasattr(self, "auto_schedule_screen")):
+            self._stack.setCurrentWidget(self.auto_schedule_screen)
+            return
+        # screen_requested("clock_edit:42") — Clock Editor (Frame 11) not built
+        if screen == "clock_new" or screen.startswith("clock_edit:"):
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.information(
+                self, "Clock Editor",
+                "Clock Editor — coming soon (Figma 285:2 / Frame 11).")
+            return
+        if screen == "auto_program_settings":
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.information(
+                self, "Auto Program Settings",
+                "Auto Program Settings — coming soon.")
+            return
         # Everything else is a future scheduling sub-screen.
         from PyQt6.QtWidgets import QMessageBox
         labels = {
-            "main_auto_schedule": "Main Auto Schedule",
             "force_clocks":       "Force Clocks Schedule",
             "rebroadcast":        "Rebroadcast Schedule",
             "rds":                "RDS",
