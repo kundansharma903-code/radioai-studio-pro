@@ -1,9 +1,9 @@
 """
-Scheduling Hub unit tests (Phase F3).
+Scheduling Hub unit tests — Jazler-style 7-tile nav grid (ref 225:3).
 
-Covers SchedulingHub mounts cleanly, the nav cards exist with the
-expected keys, the status badges reflect real DB counts, and the
-day-part matrix renders without exception.
+The previous version had week-matrix + status badges + AI Insight panels.
+Per the reference rebuild, those are dropped; the Hub is now pure
+navigation + a Studio launcher card.
 """
 
 from __future__ import annotations
@@ -11,7 +11,9 @@ from __future__ import annotations
 import pytest
 
 from core.database import Database
-from ui.scheduling_hub import SchedulingHub, DAY_PARTS, DAYS, _NavCard
+from ui.scheduling_hub import (
+    SchedulingHub, TILE_SPEC, _NavTile, _StudioLauncher,
+)
 
 
 @pytest.fixture
@@ -21,60 +23,79 @@ def hub(qtbot):
     yield h
 
 
-# ── 1. Renders without crashing ────────────────────────────────────────
+# ── 1. Renders the 7 tiles per ref ──────────────────────────────────────
 
-def test_hub_mounts_clean(hub):
-    """SchedulingHub builds, all blocks instantiated, no exceptions."""
-    assert hub._header is not None
-    assert hub._matrix is not None
-    assert hub._status is not None
-
-
-# ── 2. Status badges reflect DB counts ─────────────────────────────────
-
-def test_status_badges_show_real_counts(hub):
-    db = hub._db
-    n_clocks = len(list(db.get_all_clocks()))
-    # The Clocks Built badge should display this count.
-    assert hub._badge_clocks._txt.text().startswith(f"{n_clocks}")
+def test_hub_renders_seven_tiles(hub):
+    """The Jazler ref shows exactly 7 nav tiles. No 8th 'Clock Editor'
+    card — that lives inside Auto Schedule now."""
+    assert len(TILE_SPEC) == 7
+    assert len(hub._tiles) == 7
+    keys = set(hub._tiles.keys())
+    assert keys == {"playlists", "final_log", "auto_schedule",
+                    "force_clocks", "rebroadcast", "rds_settings",
+                    "log_viewer"}
+    assert all(isinstance(t, _NavTile) for t in hub._tiles.values())
 
 
-# ── 3. Seven nav cards present with expected keys ──────────────────────
+# ── 2. Studio launcher in body, not header ──────────────────────────────
 
-def test_seven_nav_cards_with_correct_keys(hub):
-    expected = {"clock_editor", "final_log", "force_clocks",
-                "playlists", "log_viewer", "rebroadcast", "rds_settings"}
-    assert set(hub._nav_cards.keys()) == expected
-    assert all(isinstance(c, _NavCard) for c in hub._nav_cards.values())
-
-
-# ── 4. Day-part matrix has 6 day-parts and renders without exception ───
-
-def test_week_matrix_renders(hub):
-    """Force a paint pass on the matrix to surface any geometry errors."""
-    assert len(DAY_PARTS) == 6
-    assert len(DAYS) == 7
-    # Trigger paint
-    hub._matrix.repaint()
-    # And the matrix has populated grid state from the DB on init.
-    # _grid is a dict — may be empty if no auto_schedule rows exist.
-    assert isinstance(hub._matrix._grid, dict)
+def test_hub_studio_launcher_in_body(hub):
+    """Per ref 225:3, Studio launcher is a body-level card, not a
+    header button. _launcher should be a child widget visible in the
+    body area, not inside the header."""
+    assert hasattr(hub, "_launcher")
+    assert isinstance(hub._launcher, _StudioLauncher)
+    # Geometry: bottom-right of body — y position should be below the
+    # tile grid area (grid starts at y≈110, tile rows are 200 tall +
+    # 24 gap, launcher sits in row-2 area i.e. y > 100).
+    geom = hub._launcher.geometry()
+    assert geom.y() > 100
 
 
-# ── 5. Phase E placeholder marker present ──────────────────────────────
+# ── 3. Header has no AI Magic tab (only 4 tabs) ─────────────────────────
 
-def test_ai_insight_placeholder_present(hub):
-    """The AI SCHEDULING INSIGHT block should render the Phase E marker
-    so future Anthropic integration has an obvious mount point."""
-    # Walk the children and look for the phase marker text.
-    found = False
-    for child in hub.findChildren(type(hub._matrix).__bases__[0]):
-        # _matrix's base class is QWidget — too broad. Use a tighter probe:
-        pass
-    # Easier: inspect the labels for the literal "Phase E" text.
-    from PyQt6.QtWidgets import QLabel
-    for lbl in hub.findChildren(QLabel):
-        if "Phase E" in (lbl.text() or ""):
-            found = True
-            break
-    assert found, "AI SCHEDULING INSIGHT block missing Phase E marker"
+def test_header_has_four_tabs_no_ai_magic(hub):
+    """Per ref the top nav is Libraries / Scheduling / Settings /
+    Utilities — no AI Magic. AI Magic was a Phase E placeholder we
+    used in the 50:2 build; rebuild drops it."""
+    from PyQt6.QtWidgets import QPushButton
+    nav_buttons = [b for b in hub._header.findChildren(QPushButton)]
+    labels = [b.text() for b in nav_buttons]
+    assert "Libraries"  in labels
+    assert "Scheduling" in labels
+    assert "Settings"   in labels
+    assert "Utilities"  in labels
+    assert "AI Magic"   not in labels
+    assert "AI Magic ✦" not in labels
+
+
+# ── 4. Dropped panels are gone ──────────────────────────────────────────
+
+def test_dropped_panels_are_absent(hub):
+    """Status badges / week matrix / AI Insight / song separation rules
+    were removed — the corresponding attributes shouldn't exist."""
+    for attr in ("_badge_clocks", "_badge_log", "_badge_auto",
+                 "_matrix", "_ai_cards", "_nav_cards"):
+        assert not hasattr(hub, attr), \
+            f"dropped attribute {attr!r} still on Hub"
+
+
+# ── 5. Tile click emits breadcrumb to MainWindow target ─────────────────
+
+def test_tile_click_emits_breadcrumb(qtbot, hub):
+    """Clicking the auto_schedule tile should emit
+    breadcrumb_clicked('auto_schedule')."""
+    received: list[str] = []
+    hub.breadcrumb_clicked.connect(received.append)
+    hub._on_tile_clicked("auto_schedule")
+    assert received == ["auto_schedule"]
+
+
+# ── 6. Studio launcher click emits studio_clicked ──────────────────────
+
+def test_studio_launcher_click_emits_studio_clicked(qtbot, hub):
+    received: list[None] = []
+    hub.studio_clicked.connect(lambda: received.append(None))
+    # Simulate the click signal directly
+    hub._launcher.clicked.emit()
+    assert len(received) == 1
