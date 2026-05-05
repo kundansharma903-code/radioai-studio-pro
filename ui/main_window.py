@@ -215,6 +215,24 @@ class MainWindow(QMainWindow):
             self.scheduling_hub.studio_clicked.connect(self._on_studio_clicked)
             self._stack.addWidget(self.scheduling_hub)
 
+            # F4–F8 stub screens — reachable from the Hub's nav cards.
+            # Each is a Figma-faithful skeleton with stubbed actions.
+            from ui.final_log import FinalLog
+            from ui.log_viewer import LogViewer
+            from ui.force_clocks import ForceClocks
+            from ui.playlists import Playlists
+            from ui.rebroadcast import Rebroadcast
+            for attr, cls in [("final_log",    FinalLog),
+                              ("log_viewer",   LogViewer),
+                              ("force_clocks", ForceClocks),
+                              ("playlists",    Playlists),
+                              ("rebroadcast",  Rebroadcast)]:
+                screen = cls(self._db, parent=None)
+                screen.breadcrumb_clicked.connect(self._on_breadcrumb)
+                screen.studio_clicked.connect(self._on_studio_clicked)
+                self._stack.addWidget(screen)
+                setattr(self, attr, screen)
+
             # F9 shortcut → open Studio (broadcast convention; Jazler precedent)
             from PyQt6.QtGui import QShortcut, QKeySequence
             self._studio_shortcut = QShortcut(QKeySequence("F9"), self)
