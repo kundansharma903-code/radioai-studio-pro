@@ -109,6 +109,11 @@ class SchedulerEngine(QObject):
         # ('warn', campaign_id, break_time) for 30s-warning that already fired.
         self._fired_breaks: set = set()
 
+        # Phase F2: clock-slot cursor for pick_next_song. Reset on hour
+        # rollover so each hour starts at slot 0.
+        self._clock_slot_cursor: int = 0
+        self._active_hour_key: Optional[tuple[int, int]] = None
+
     # ── Lifecycle ─────────────────────────────────────────────────────────
 
     def is_running(self) -> bool:
@@ -304,6 +309,109 @@ class SchedulerEngine(QObject):
         except (ValueError, IndexError):
             log.debug(f"_break_time_to_dt: unparseable {time_str!r}")
             return None
+
+    # ── Phase F2: clock-driven song picker ───────────────────────────────
+
+    def pick_next_song(self, now: Optional[datetime] = None) -> Optional[dict]:
+        """Phase F2 — clock-driven scheduling.
+
+        Reads auto_schedule for the current (day_of_week, hour) → clock_id.
+        Reads that clock's slot list and picks the next 'Song' slot at
+        the current cursor position. Fills it via category + energy +
+        vocal preferences.
+
+        Maintains an internal cursor that resets on hour rollover. Non-Song
+        slot types (Break/Jingle/Sweeper/Station ID/Voice Track) are
+        skipped at this layer — they will get proper pickers in Phase E.
+        Studio handles ad-break triggering separately via spot_due signal.
+
+        Returns dict {song: <song row>, clock_id: int, slot_idx: int}
+        or None if no clock is assigned for this hour or no song is
+        playable. Studio falls back to its in-memory queue on None.
+
+        Safe to call from any thread — uses thread-local DB connection.
+        """
+        if now is None:
+            now = datetime.now()
+        dow = int(now.weekday())   # Monday=0 … Sunday=6 (matches schema)
+        hour = int(now.hour)
+        hour_key = (dow, hour)
+
+        # Hour rollover: reset slot cursor.
+        if getattr(self, "_active_hour_key", None) != hour_key:
+            self._clock_slot_cursor = 0
+            self._active_hour_key = hour_key
+
+        try:
+            clock_row = self._db.get_active_clock(dow, hour)
+        except Exception as exc:
+            log.debug(f"pick_next_song: get_active_clock failed: {exc}")
+            return None
+        if not clock_row:
+            return None
+
+        clock_id = int(clock_row["id"])
+        try:
+            slots = self._db.get_clock_slots(clock_id)
+        except Exception as exc:
+            log.debug(f"pick_next_song: get_clock_slots failed: {exc}")
+            return None
+        if not slots:
+            return None
+
+        n = len(slots)
+        cursor = int(getattr(self, "_clock_slot_cursor", 0)) % n
+        for offset in range(n):
+            idx = (cursor + offset) % n
+            slot = slots[idx]
+            stype = (slot["slot_type"] or "").strip().lower()
+            if stype == "song":
+                song = self._pick_song_for_slot(slot)
+                if song is not None:
+                    self._clock_slot_cursor = (idx + 1) % n
+                    return {
+                        "song":     song,
+                        "clock_id": clock_id,
+                        "slot_idx": idx,
+                    }
+            # Phase E TODO: dispatch break / jingle / sweeper / station_id
+            # / voice_track here. For now they're skipped at this layer —
+            # ad spots fire via spot_due, jingles via Instant Jingles, etc.
+        return None
+
+    def _pick_song_for_slot(self, slot) -> Optional[dict]:
+        """Random song for a Song slot. Filters by category / energy /
+        vocal; falls back to fallback_category_id, then to any song."""
+        import random
+        category_id = slot["category_id"] if "category_id" in slot.keys() else None
+        energy = slot["energy_pref"] if "energy_pref" in slot.keys() else None
+        vocal = slot["vocal_pref"] if "vocal_pref" in slot.keys() else None
+        try:
+            songs = self._db.get_songs(
+                category_id=category_id,
+                energy=energy if energy and energy != "Any" else None,
+                vocal=vocal if vocal and vocal != "Any" else None,
+                limit=80,
+            )
+        except Exception as exc:
+            log.debug(f"_pick_song_for_slot: get_songs failed: {exc}")
+            songs = []
+        if not songs:
+            fb_id = (slot["fallback_category_id"]
+                     if "fallback_category_id" in slot.keys() else None)
+            if fb_id:
+                try:
+                    songs = self._db.get_songs(category_id=int(fb_id), limit=80)
+                except Exception:
+                    songs = []
+        if not songs:
+            try:
+                songs = self._db.get_songs(limit=80)
+            except Exception:
+                songs = []
+        if not songs:
+            return None
+        return dict(random.choice(songs))
 
     # ── Diagnostics ──────────────────────────────────────────────────────
 

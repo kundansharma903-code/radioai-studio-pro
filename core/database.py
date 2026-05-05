@@ -243,6 +243,21 @@ class Database:
 
     # ── Broadcast Log ─────────────────────────────────────────────────────────
 
+    def _ensure_broadcast_log_columns(self) -> None:
+        """Phase F2 — clock_id + slot_idx columns on broadcast_log
+        distinguish scheduler-driven plays from manual ones. Idempotent."""
+        conn = self._conn()
+        cols = {r[1] for r in conn.execute(
+            "PRAGMA table_info(broadcast_log)").fetchall()}
+        adds = [
+            ("clock_id",  "INTEGER REFERENCES clocks(id)"),
+            ("slot_idx",  "INTEGER"),
+        ]
+        for col, decl in adds:
+            if col not in cols:
+                conn.execute(f"ALTER TABLE broadcast_log ADD COLUMN {col} {decl}")
+        conn.commit()
+
     def log_play(
         self,
         entry_type: str,
@@ -251,19 +266,25 @@ class Database:
         duration_ms: int = 0,
         deck: str = "A",
         was_manual: int = 0,
+        clock_id: Optional[int] = None,
+        slot_idx: Optional[int] = None,
     ) -> None:
+        self._ensure_broadcast_log_columns()
         conn = self._conn()
         conn.execute(
             """
             INSERT INTO broadcast_log
                 (entry_type, song_id, campaign_id, duration_ms,
                  deck, was_manual, operator,
+                 clock_id, slot_idx,
                  played_at, actual_time)
             VALUES (?, ?, ?, ?, ?, ?, 'AI AUTO',
+                    ?, ?,
                     datetime('now','localtime'),
                     datetime('now','localtime'))
             """,
-            [entry_type, song_id, campaign_id, duration_ms, deck, was_manual],
+            [entry_type, song_id, campaign_id, duration_ms, deck, was_manual,
+             clock_id, slot_idx],
         )
         conn.commit()
 

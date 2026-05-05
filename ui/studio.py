@@ -1777,9 +1777,30 @@ class Studio(QWidget):
         self._apply_playing_state(song)
         self._update_status_pills()
 
+        # Phase F2: scheduler-driven plays write a broadcast_log row.
+        # Manual deck plays (no _clock_id annotation) stay unlogged per
+        # the Phase D5 design — broadcast_log is the airtime ledger,
+        # auditioning shouldn't pollute it.
+        clock_id = song.get("_clock_id")
+        slot_idx = song.get("_slot_idx")
+        if clock_id is not None:
+            try:
+                self._db.log_play(
+                    entry_type="song",
+                    song_id=int(song.get("id")) if song.get("id") else None,
+                    duration_ms=int(self._current_duration_ms),
+                    deck="A",
+                    was_manual=0,
+                    clock_id=int(clock_id),
+                    slot_idx=int(slot_idx) if slot_idx is not None else None,
+                )
+            except Exception as exc:
+                log.warning(f"[studio] song log_play failed: {exc}")
+
         log.info(
             f"[studio] deck play ch={cid} song_id={song.get('id')} "
-            f"{song.get('title')!r} dur_ms={self._current_duration_ms}")
+            f"{song.get('title')!r} dur_ms={self._current_duration_ms}"
+            + (f" — scheduler clock_id={clock_id}" if clock_id else ""))
 
     # ── Transport handlers ───────────────────────────────────────────────
 
@@ -1956,16 +1977,42 @@ class Studio(QWidget):
         self._update_status_pills()
 
     def _compute_next_song(self, after_id: Optional[int]) -> Optional[dict]:
-        """Phase D5: locate the next playable song after `after_id` in
-        the in-memory queue (Q2 — D5 uses the queue loaded at init;
-        dynamic refresh deferred to D6/Phase E).
+        """Phase D5 + F2: scheduler-driven pick when running, in-memory
+        queue otherwise.
+
+        Path 1 (F2): if the scheduler is running AND auto_schedule has a
+        clock for the current hour, pick a song from that clock's slot
+        list. Returns the song dict annotated with `_clock_id` +
+        `_slot_idx` so the caller can write a broadcast_log row that
+        attributes the airing to its clock.
+
+        Path 2 (D5): the in-memory queue (loaded at init). Used when no
+        scheduler, no clock for current hour, or empty clock.
 
         Returns the full song dict (id, title, artist, file_path,
-        duration_ms, ...) or None if the queue is empty or `after_id`
-        is the last item.
+        duration_ms, ...) or None if no playable next song exists."""
+        # Path 1: scheduler-driven (F2)
+        if self._scheduler is not None and self._scheduler.is_running():
+            try:
+                from datetime import datetime as _dt
+                picked = self._scheduler.pick_next_song(_dt.now())
+            except Exception as exc:
+                log.warning(f"[studio] scheduler.pick_next_song: {exc}")
+                picked = None
+            if picked is not None:
+                song = picked.get("song")
+                if song:
+                    song = dict(song)
+                    song["_clock_id"] = picked.get("clock_id")
+                    song["_slot_idx"] = picked.get("slot_idx")
+                    log.info(
+                        f"[studio] scheduler picked song_id={song.get('id')} "
+                        f"clock_id={song['_clock_id']} slot_idx={song['_slot_idx']}")
+                    return song
+            # Falls through to Path 2 — scheduler had no assignment for
+            # this hour, autonomous mode takes over.
 
-        If `after_id` is None, returns the first song (used by spot
-        EOS when the spot fired before any deck song was loaded)."""
+        # Path 2: in-memory queue (D5)
         if not self._queue_songs:
             return None
         if after_id is None:

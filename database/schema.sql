@@ -345,7 +345,9 @@ CREATE TABLE IF NOT EXISTS broadcast_log (
     variance_ms    INTEGER DEFAULT 0,
     deck           TEXT    DEFAULT 'A',
     was_manual     INTEGER DEFAULT 0,
-    operator       TEXT    DEFAULT 'AI AUTO'
+    operator       TEXT    DEFAULT 'AI AUTO',
+    clock_id       INTEGER REFERENCES clocks(id),   -- F2 (scheduler driven)
+    slot_idx       INTEGER                          -- F2 (slot in clock)
 );
 
 -- ════════════════════════════════════════════════════════════════════
