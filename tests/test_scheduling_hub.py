@@ -19,10 +19,13 @@ from PyQt6.QtCore import QObject, pyqtSignal
 
 from core.database import Database
 from ui.scheduling_hub import (
-    SchedulingHub, _TileCard, _StudioLauncher, _LiveTimePill,
-    _StatusFooter, _ActiveStationCard,
+    SchedulingHub, _TileCard, _StudioLauncher, _StatusFooter,
     _TILE_SPECS_LEFT, _TILE_SPECS_RIGHT_TOP,
 )
+# Header / LiveTimePill / ActiveStationCard moved to app_chrome (refactor
+# that landed alongside the Playlists screen).
+from ui.widgets.app_chrome import LiveTimePill as _LiveTimePill
+from ui.widgets.app_chrome import _ActiveStationCard
 
 
 class _FakeScheduler(QObject):
