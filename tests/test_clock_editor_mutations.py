@@ -184,3 +184,106 @@ def test_save_clock_slots_migrates_new_columns(qtbot):
         "PRAGMA table_info(clock_slots)").fetchall()}
     assert "fallback_category_id" in cols
     assert "pin_to_time" in cols
+    # F2.3 columns also present after the second migration.
+    assert "duration_seconds" in cols
+    assert "ref_text" in cols
+
+
+# ── F2.3 (Figma 59:2 full rewrite) ─────────────────────────────────────
+
+
+def test_six_slot_types_selectable(editor):
+    """Clicking a slot-type pill replaces the current slot's type while
+    preserving compatible fields. All 6 Figma 59:2 types are reachable."""
+    from ui.clock_editor import SLOT_TYPES
+
+    editor._on_add_slot()
+    idx = editor._selected_slot_idx
+    assert editor._slots[idx]["slot_type"] == "Song"
+
+    for t in SLOT_TYPES:
+        editor._on_type_pill_clicked(t)
+        assert editor._slots[idx]["slot_type"] == t, \
+            f"pill {t!r} did not switch slot_type"
+    # Round-trip back to Song.
+    editor._on_type_pill_clicked("Song")
+    assert editor._slots[idx]["slot_type"] == "Song"
+
+
+def test_per_type_property_panel(editor):
+    """The right-panel QStackedWidget switches to the per-type page when
+    a slot of that type is selected. Each page has the fields the type's
+    property panel calls for (e.g. Break has duration; Voice Track has
+    label + duration)."""
+    editor._on_add_slot()
+    se = editor._editor
+
+    # Song slot → page 0; the Energy combo should have entries.
+    se.set_slot(editor._slots[-1], slot_index=editor._selected_slot_idx)
+    assert se._stack.currentIndex() == 0
+    assert se._sn_energy.count() > 0
+    assert se._sn_cat.count() >= 1   # at least the "(none)" placeholder
+
+    # Switch to Break — duration combo should be on page 1.
+    editor._on_type_pill_clicked("Break")
+    se.set_slot(editor._slots[-1], slot_index=editor._selected_slot_idx)
+    assert se._stack.currentIndex() == 1
+    assert se._br_dur.count() > 0
+
+    # Switch to Voice Track — label line + duration combo on page 5.
+    editor._on_type_pill_clicked("Voice Track")
+    se.set_slot(editor._slots[-1], slot_index=editor._selected_slot_idx)
+    assert se._stack.currentIndex() == 5
+    assert se._vt_dur.count() > 0
+
+
+def test_category_dropdown_populates(editor):
+    """The Song page's Category combo is populated from db.get_categories()
+    plus a leading '(none)' sentinel. Same source feeds Sweeper + Fallback."""
+    se = editor._editor
+    db_count = len(list(editor._db.get_categories()))
+    # Leading "(none)" + every DB category.
+    assert se._sn_cat.count() == 1 + db_count
+    assert se._sn_cat.itemData(0) is None
+    # Fallback Category mirrors the same source.
+    assert se._sn_fallback.count() == 1 + db_count
+    # Sweeper category page uses the same.
+    assert se._sw_cat.count() == 1 + db_count
+
+
+def test_clocks_list_active_state(editor):
+    """Sidebar populate() marks exactly the currently-loaded clock active."""
+    sb = editor._sidebar
+    # populate() runs in _refresh_clocks_list during init; if the DB has
+    # at least one clock, exactly one row is marked active.
+    actives = [r for r in sb._rows if r._active]
+    if not sb._rows:
+        pytest.skip("no clocks in DB to test active state")
+    assert len(actives) == 1
+    assert int(actives[0]._clock["id"]) == editor._current_clock_id
+
+
+def test_duplicate_rename_delete(editor, qtbot):
+    """Duplicate clones; rename mutates name; delete refuses to drop the
+    last clock. End-state: one extra clock, then renamed, then deleted."""
+    db = editor._db
+    src_id = editor._current_clock_id
+    pre = len(db.get_all_clocks())
+
+    # Duplicate
+    new_id = db.duplicate_clock(src_id)
+    assert new_id != src_id
+    assert len(db.get_all_clocks()) == pre + 1
+    new_clock = db.get_clock(new_id)
+    assert "(copy)" in (new_clock["name"] or "")
+
+    # Rename via save_clock (the rename action's underlying call)
+    db.save_clock(new_id, {"name": "Renamed Test Clock"})
+    assert db.get_clock(new_id)["name"] == "Renamed Test Clock"
+
+    # Delete the duplicate — leaves the original intact.
+    db.delete_clock(new_id)
+    assert len(db.get_all_clocks()) == pre
+    assert db.get_clock(new_id) is None
+    # And src clock is still there.
+    assert db.get_clock(src_id) is not None

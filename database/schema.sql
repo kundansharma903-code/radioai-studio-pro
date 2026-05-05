@@ -237,7 +237,9 @@ CREATE TABLE IF NOT EXISTS clock_slots (
     sweeper_position    TEXT    DEFAULT 'START_OF_SONG',
     item_id             INTEGER DEFAULT 0,  -- specific song/jingle if locked
     fallback_category_id INTEGER REFERENCES categories(id),  -- F2.2.1 (Figma 59:2)
-    pin_to_time         INTEGER NOT NULL DEFAULT 0           -- F2.2.1 (Figma 59:2)
+    pin_to_time         INTEGER NOT NULL DEFAULT 0,          -- F2.2.1 (Figma 59:2)
+    duration_seconds    INTEGER,                             -- F2.3   (Break + VT)
+    ref_text            TEXT                                 -- F2.3   (Station ID ref / VT label)
 );
 
 -- 24×7 grid: which clock plays which day+hour range.

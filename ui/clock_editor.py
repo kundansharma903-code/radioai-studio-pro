@@ -1,40 +1,30 @@
 """
-RadioAI Studio Pro — Clock Editor (Figma 165:2).
+RadioAI Studio Pro — Clock Editor (Figma 59:2).
 
-Phase F2.1: skeleton + real DB load + Save flow. Slot mutations
-(Add/Insert/Delete/Move) are stubs — wired in F2.3. Drag-and-drop
-reorder also F2.3.
+Phase F2.3: full rewrite from the old 165:2 layout to 59:2.
 
-Layout
-------
-  HEADER  y=0..50    — brand · nav (Control Panel | Scheduling |
-                       Clock Editor) · live clock · station · Open Studio CTA
-  LEFT    x=0..220   — Tab bar (Songs/Jingles/Spots/Sweepers/Events)
-                     · Sub-tab (Category active; Specific Song/Artist greyed)
-                     · Categories list · Properties · Scales
-                     · "N Songs" counter · Reset / Preview (visual chrome only)
-  CENTER  x=220..1020 — Clock name + time range + comments
-                     · 5 counters (Songs/Breaks/Jingles/Sweepers/Total)
-                     · Action toolbar (Change · Delete · +Add · Insert ·
-                       ↑Up · ↓Down · ✦AI Optimise · ▶Preview · ✓Validate ·
-                       💾Save Clock)
-                     · Slot list (real DB data; click to select)
-  RIGHT   x=1020..1440 — Slot properties form (dropdowns)
-                     · Apply Changes · Remove Slot
-                     · Overview card · Category Slots distribution
-  STATUS  y=868..900 — pills (AUTO MODE / AI Active / 8 Clocks / Log Ready)
+Layout (1440 × 900)
+-------------------
+  HEADER     1440 ×  72   y=  0..72  — RadioAI/STUDIO PRO + screen title
+                                       block + clock + station + Open Studio
+  CONTENT    1440 × 778   y= 72..850
+    LEFT      240 × 778   x=  0..240  — MY CLOCKS list + Duplicate/Rename/Delete
+    CENTER    760 × 778   x=240..1000 — Action toolbar + 2-row timeline
+                                       + SELECTED slot detail card
+    RIGHT     440 × 778   x=1000..1440 — SLOT PROPERTIES + overview + categories
+                                        + per-type form (6 types) + AI Optimiser
+  STATUSBAR  1440 ×  50   y=850..900  — Pills + version + Open Studio CTA
 
 ═════════════════════════════════════════════════════════════════════════════
 PERFORMANCE NOTES — DO NOT VIOLATE  (inherited from Studio + Spot Programming)
 ═════════════════════════════════════════════════════════════════════════════
-  1. event.rect() CLIPPING — slot list is the tallest custom-paint surface.
-     paintEvent of _SlotList must respect the dirty rect when scrolled.
+  1. event.rect() CLIPPING — the timeline is the tallest custom-paint surface.
+     paintEvent of _Timeline must respect the dirty rect when scrolled.
   2. NO bare self.update() in mouseMoveEvent — bounded update(rect) only.
   3. NO db calls in paintEvent — caller-side only.
   4. NO nested QScrollArea — Clock Editor is hosted in MainWindow's outer
-     scroll. Internal scrolls would create the layout-storm trap.
-  5. NO setMouseTracking(True) unless specifically needed.
-  6. Any list >2000px tall: setFixedHeight only.
+     scroll. Internal scrolls would re-create the layout-storm trap.
+  5. NO setMouseTracking(True) unless cursor change is needed.
 ═════════════════════════════════════════════════════════════════════════════
 """
 
@@ -43,26 +33,24 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QRect, QRectF, QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, QRect, QRectF, QPoint, QTimer, pyqtSignal
 from PyQt6.QtGui import (
-    QPainter, QColor, QPen, QBrush, QLinearGradient, QPainterPath, QFont,
-    QCursor,
+    QPainter, QColor, QPen, QBrush, QLinearGradient, QFont, QCursor,
+    QMouseEvent,
 )
 from PyQt6.QtWidgets import (
     QWidget, QFrame, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
-    QScrollArea, QSizePolicy, QLineEdit, QComboBox,
+    QLineEdit, QComboBox, QStackedWidget, QInputDialog, QMessageBox,
+    QSizePolicy,
 )
 
 from ui.widgets._tokens import (
     inter, mono, rgba,
-    BG_BASE, BG_DARK, BG_PANEL, BG_CARD, BG_CARD_DK, BG_ELEVATED, BG_PURPLE_DK,
+    BG_BASE, BG_DARK, BG_PANEL, BG_CARD, BG_CARD_DK, BG_ELEVATED,
     TEXT_PRI, TEXT_SEC, TEXT_MUTED, TEXT_DIM,
-    CYAN, CYAN_LIGHT,
-    PURPLE, PURPLE_LIGHT, PURPLE_DARK,
-    GREEN, GREEN_LIGHT,
-    AMBER, AMBER_LIGHT,
-    RED, RED_LIGHT,
-    PINK, PINK_LIGHT,
+    CYAN, CYAN_LIGHT, PURPLE, PURPLE_LIGHT, PURPLE_DARK,
+    GREEN, GREEN_LIGHT, AMBER, AMBER_LIGHT,
+    RED, RED_LIGHT, PINK, PINK_LIGHT, TEAL, TEAL_LIGHT,
 )
 
 log = logging.getLogger("ClockEditor")
@@ -70,40 +58,43 @@ log = logging.getLogger("ClockEditor")
 
 # ── Layout constants ───────────────────────────────────────────────────────
 
-WINDOW_W = 1440
-WINDOW_H = 900
-HEADER_H = 50
-STATUS_H = 32
+WINDOW_W   = 1440
+WINDOW_H   = 900
+HEADER_H   = 72
+STATUS_H   = 50
 
 LEFT_X  = 0
-LEFT_W  = 220
-CENTER_X = LEFT_X + LEFT_W              # 220
-CENTER_W = 800
-RIGHT_X  = CENTER_X + CENTER_W          # 1020
-RIGHT_W  = WINDOW_W - RIGHT_X           # 420
+LEFT_W  = 240
+CENTER_X = LEFT_X + LEFT_W              # 240
+CENTER_W = 760
+RIGHT_X  = CENTER_X + CENTER_W          # 1000
+RIGHT_W  = WINDOW_W - RIGHT_X           # 440
+
+CONTENT_Y = HEADER_H
+CONTENT_H = WINDOW_H - HEADER_H - STATUS_H   # 778
+
+BORDER = "#1c1f38"
 
 
-# ── Slot type → color/label helpers ─────────────────────────────────────────
+# ── Slot type metadata (per Figma 59:2 legend) ──────────────────────────────
 
+SLOT_TYPES = ("Song", "Break", "Jingle", "Station ID", "Sweeper", "Voice Track")
+
+# Color per Figma 59:2 spec; legacy 'Spot' kept as RED for any pre-migration row.
 SLOT_TYPE_COLORS = {
-    # F2.1+F2.2 set (kept for backwards compat with shipped UI + tests).
-    "Song":         CYAN,
-    "song":         CYAN,
-    "Jingle":       PURPLE,
-    "jingle":       PURPLE,
-    "Sweeper":      AMBER,
-    "sweeper":      AMBER,
-    "Spot":         RED,
-    "spot":         RED,
-    # F2.3 groundwork — additional types from Figma 59:2 redesign.
-    # UI surfaces for these land when the Figma 59:2 layout is built;
-    # extending the palette now lets save/load round-trip them safely.
-    "Break":        GREEN,
-    "break":        GREEN,
-    "Station ID":   PINK,
-    "station_id":   PINK,
-    "Voice Track":  CYAN_LIGHT,
-    "voice_track":  CYAN_LIGHT,
+    "Song":         AMBER,    "song":        AMBER,
+    "Break":        GREEN,    "break":       GREEN,
+    "Jingle":       CYAN,     "jingle":      CYAN,
+    "Station ID":   PINK,     "station_id":  PINK,
+    "Sweeper":      PURPLE,   "sweeper":     PURPLE,
+    "Voice Track":  TEAL,     "voice_track": TEAL,
+    "Spot":         RED,      "spot":        RED,    # legacy; migrate on save
+}
+
+# Two-letter badge prefixes (Figma legend pills).
+SLOT_TYPE_BADGE = {
+    "Song": "S", "Break": "B", "Jingle": "J",
+    "Station ID": "ID", "Sweeper": "SW", "Voice Track": "VT",
 }
 
 
@@ -112,11 +103,20 @@ def _slot_type_color(slot_type: str) -> str:
 
 
 def _normalize_slot_type(s: str) -> str:
-    """Canonicalize stored slot_type to title case."""
+    """Canonicalize stored slot_type to one of SLOT_TYPES (or pass through)."""
     if not s:
         return "Song"
     s = s.strip()
-    return s[:1].upper() + s[1:].lower() if s else "Song"
+    # Special-case the multi-word ones (case-insensitive match).
+    low = s.lower().replace("_", " ")
+    for canonical in SLOT_TYPES:
+        if canonical.lower() == low:
+            return canonical
+    # Legacy 'Spot' is recognised as such (caller may map to Break elsewhere).
+    if low == "spot":
+        return "Spot"
+    # Fallback — title-case single word.
+    return s[:1].upper() + s[1:].lower()
 
 
 def _fmt_minutes(seconds: int) -> str:
@@ -128,11 +128,15 @@ def _fmt_minutes(seconds: int) -> str:
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# HEADER
+# HEADER (1440×72) — RadioAI/STUDIO PRO + screen title + clock + station
 # ════════════════════════════════════════════════════════════════════════════
 
-class _ClockEditorHeader(QFrame):
-    """Top bar — brand + nav tabs + clock + station + Open Studio CTA."""
+class _Header(QFrame):
+    """Top bar matching Figma 59:14/15 spec — fixed RadioAI overlap.
+
+    RadioAI (18px Bold) at x=75 y=14, STUDIO PRO (9px Semi Bold) at x=75 y=36.
+    Logo dot at x=14 y=24 (12×12).  Nav buttons inline with logo.
+    """
 
     control_panel_clicked = pyqtSignal()
     studio_clicked        = pyqtSignal()
@@ -142,9 +146,10 @@ class _ClockEditorHeader(QFrame):
         self.setFixedHeight(HEADER_H)
         self.setStyleSheet(
             f"QFrame {{ background: {BG_PANEL}; "
-            f"border-bottom: 1px solid {rgba('#ffffff', 0.06)}; }}"
+            f"border-bottom: 1px solid {BORDER}; }}"
         )
-        # Live clock
+
+        # Live clock state
         self._clock_text = "00:00:00"
         self._timer = QTimer(self)
         self._timer.setInterval(1000)
@@ -152,33 +157,30 @@ class _ClockEditorHeader(QFrame):
         self._timer.start()
         self._tick_clock()
 
-        # Nav: Control Panel button (real)
+        # Nav buttons (Control Panel | Scheduling | Clock Editor active)
         cp_btn = QPushButton("Control Panel", self)
-        cp_btn.setGeometry(180, 12, 110, 26)
+        cp_btn.setGeometry(220, 22, 110, 28)
         cp_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         cp_btn.setFont(inter(10, QFont.Weight.Medium))
         cp_btn.setStyleSheet(self._nav_qss(active=False))
         cp_btn.clicked.connect(self.control_panel_clicked.emit)
 
-        # Nav: Scheduling (visual — placeholder for Hub)
         sched_btn = QPushButton("Scheduling", self)
-        sched_btn.setGeometry(296, 12, 92, 26)
+        sched_btn.setGeometry(336, 22, 92, 28)
         sched_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         sched_btn.setFont(inter(10, QFont.Weight.Medium))
         sched_btn.setStyleSheet(self._nav_qss(active=False))
-        # No handler in F2.1 — Hub is F3 territory
+        # No handler — Hub is F3 territory
 
-        # Nav: Clock Editor (active)
         ce_btn = QPushButton("Clock Editor", self)
-        ce_btn.setGeometry(394, 12, 108, 26)
+        ce_btn.setGeometry(434, 22, 108, 28)
         ce_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         ce_btn.setFont(inter(10, QFont.Weight.DemiBold))
         ce_btn.setStyleSheet(self._nav_qss(active=True))
-        # No handler — already on this screen
 
         # Open Studio CTA (top-right)
         st_btn = QPushButton("▶  Open Studio", self)
-        st_btn.setGeometry(WINDOW_W - 220, 8, 200, 34)
+        st_btn.setGeometry(WINDOW_W - 220, 18, 200, 36)
         st_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         st_btn.setFont(inter(11, QFont.Weight.Bold, letter_spacing=0.4))
         st_btn.setStyleSheet(
@@ -212,524 +214,1155 @@ class _ClockEditorHeader(QFrame):
     def _tick_clock(self):
         from datetime import datetime
         self._clock_text = datetime.now().strftime("%H:%M:%S")
-        self.update(QRect(540, 0, 220, HEADER_H))
+        self.update(QRect(680, 0, 220, HEADER_H))
 
     def paintEvent(self, _e):
         super().paintEvent(_e)
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        # Logo dot + RadioAI brand
+        # Logo dot
         p.setBrush(QColor(PURPLE)); p.setPen(Qt.PenStyle.NoPen)
         p.drawEllipse(14, HEADER_H // 2 - 6, 12, 12)
+
+        # RadioAI (18px Bold) at x=75 y=14 + STUDIO PRO (9px Semi) at x=75 y=36
+        # — per Figma 59:14/15 spec; fixes the overlap from the old 50px header.
         p.setPen(QColor(TEXT_PRI))
-        p.setFont(inter(14, QFont.Weight.Black, letter_spacing=0.5))
-        p.drawText(QRectF(34, 0, 90, HEADER_H),
+        p.setFont(inter(18, QFont.Weight.Black, letter_spacing=0.4))
+        p.drawText(QRectF(75, 14, 200, 22),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                    "RadioAI")
         p.setPen(QColor(TEXT_MUTED))
-        p.setFont(inter(7, QFont.Weight.Bold, letter_spacing=1.4))
-        p.drawText(QRectF(34, 26, 130, 14),
-                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
-                   "BROADCAST AUTOMATION")
+        p.setFont(inter(9, QFont.Weight.DemiBold, letter_spacing=1.6))
+        p.drawText(QRectF(75, 36, 200, 18),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   "STUDIO PRO")
+
+        # Screen title block (just right of nav)
+        p.setPen(QColor(TEXT_PRI))
+        p.setFont(inter(15, QFont.Weight.Bold, letter_spacing=0.2))
+        p.drawText(QRectF(560, 14, 280, 22),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   "Clock Editor")
+        p.setPen(QColor(TEXT_MUTED))
+        p.setFont(inter(9))
+        p.drawText(QRectF(560, 38, 360, 16),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   "Design hourly broadcast templates — define what plays each hour")
 
         # Live clock (mono, large)
         p.setPen(QColor(TEXT_PRI))
         p.setFont(mono(18, bold=True))
-        p.drawText(QRectF(540, 0, 220, HEADER_H),
-                   Qt.AlignmentFlag.AlignCenter, self._clock_text)
-
-        # Date subtitle
-        from datetime import datetime
-        date_text = datetime.now().strftime("%A, %d %B %Y")
+        p.drawText(QRectF(WINDOW_W - 410, 14, 180, 24),
+                   Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                   self._clock_text)
         p.setPen(QColor(TEXT_MUTED))
-        p.setFont(inter(8))
-        p.drawText(QRectF(540, 28, 220, 16),
-                   Qt.AlignmentFlag.AlignCenter, date_text)
-
-        # ACTIVE STATION pill
-        pill = QRectF(WINDOW_W - 410, 11, 175, 28)
-        p.setBrush(QColor("#0c0e1c")); p.setPen(Qt.PenStyle.NoPen)
-        p.drawRoundedRect(pill, 14, 14)
-        bc = QColor("#ffffff"); bc.setAlphaF(0.10)
-        p.setPen(QPen(bc, 1)); p.setBrush(Qt.BrushStyle.NoBrush)
-        p.drawRoundedRect(pill, 14, 14)
-        p.setPen(QColor(TEXT_MUTED))
-        p.setFont(inter(7, QFont.Weight.Bold, letter_spacing=1.0))
-        p.drawText(pill.adjusted(12, 4, -10, -14),
-                   Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
-                   "ACTIVE STATION")
-        p.setPen(QColor(CYAN_LIGHT))
-        p.setFont(inter(11, QFont.Weight.Bold))
-        p.drawText(pill.adjusted(12, 0, -10, 0),
-                   Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
-                   "  KISS FM 91.5")
+        p.setFont(inter(9))
+        p.drawText(QRectF(WINDOW_W - 410, 38, 180, 16),
+                   Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                   "KISS FM 91.5")
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# LEFT SIDEBAR — visual-only chrome (per Q3 — wired in F2.2 if Specific
-# Song/Artist modes land)
+# CLOCKS LIST SIDEBAR (240×778) — replaces the old filter UI entirely
 # ════════════════════════════════════════════════════════════════════════════
 
-class _LeftSidebar(QFrame):
+class _ClockRow(QFrame):
+    """One row in the MY CLOCKS list. Click → emits selected(clock_id)."""
+
+    clicked = pyqtSignal(int)
+
+    def __init__(self, clock: dict, is_active: bool, parent=None):
+        super().__init__(parent)
+        self._clock = dict(clock)
+        self._active = bool(is_active)
+        self.setFixedHeight(54)
+        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+
+    def mousePressEvent(self, e: QMouseEvent) -> None:
+        if e.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit(int(self._clock.get("id", 0)))
+
+    def paintEvent(self, _e):
+        super().paintEvent(_e)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = self.rect().adjusted(8, 4, -8, -4)
+
+        # Background (active = elevated, hover handled by stylesheet via :hover
+        # would be ideal but for custom QPainter we just draw active state).
+        bg = BG_ELEVATED if self._active else BG_CARD_DK
+        p.setBrush(QColor(bg))
+        accent = _slot_type_color("Song") if self._active else BORDER
+        p.setPen(QPen(QColor(accent), 1))
+        p.drawRoundedRect(QRectF(rect), 6, 6)
+
+        # Active indicator dot
+        if self._active:
+            p.setBrush(QColor(AMBER)); p.setPen(Qt.PenStyle.NoPen)
+            p.drawEllipse(QRectF(rect.x() + 8, rect.y() + 14, 8, 8))
+            text_x = rect.x() + 24
+        else:
+            text_x = rect.x() + 12
+
+        # Clock name
+        p.setPen(QColor(TEXT_PRI if self._active else TEXT_SEC))
+        p.setFont(inter(11, QFont.Weight.DemiBold))
+        p.drawText(QRectF(text_x, rect.y() + 6, rect.width() - 24, 18),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   str(self._clock.get("name") or "—"))
+
+        # Time range subtitle
+        ts = self._clock.get("time_start") or ""
+        te = self._clock.get("time_end") or ""
+        time_str = f"{ts} – {te}" if (ts or te) else "00:00 – 24:00"
+        p.setPen(QColor(TEXT_MUTED))
+        p.setFont(mono(9, bold=False))
+        p.drawText(QRectF(text_x, rect.y() + 24, rect.width() - 60, 14),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   time_str)
+
+        # Slot count badge (right side)
+        n = int(self._clock.get("slot_count") or 0)
+        p.setPen(QColor(TEXT_DIM))
+        p.setFont(inter(10, QFont.Weight.Bold))
+        p.drawText(QRectF(rect.right() - 32, rect.y() + 6, 26, 36),
+                   Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                   str(n))
+
+
+class _ClocksListSidebar(QFrame):
+    """MY CLOCKS list + +New + Duplicate/Rename/Delete actions."""
+
+    clock_selected      = pyqtSignal(int)   # row clicked
+    new_clock_requested = pyqtSignal()
+    duplicate_requested = pyqtSignal()
+    rename_requested    = pyqtSignal()
+    delete_requested    = pyqtSignal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedSize(LEFT_W, WINDOW_H - HEADER_H - STATUS_H)
+        self.setFixedSize(LEFT_W, CONTENT_H)
         self.setStyleSheet(
             f"QFrame {{ background: {BG_DARK}; "
-            f"border-right: 1px solid {rgba('#ffffff', 0.06)}; }}"
+            f"border-right: 1px solid {BORDER}; }}"
         )
+
         v = QVBoxLayout(self)
-        v.setContentsMargins(8, 8, 8, 8); v.setSpacing(6)
+        v.setContentsMargins(8, 14, 8, 12); v.setSpacing(6)
 
-        # Top tab bar (filter scope)
-        tab_row = QHBoxLayout(); tab_row.setSpacing(2); tab_row.setContentsMargins(0, 0, 0, 0)
-        for i, label in enumerate(["Songs", "Jingles", "Spots", "Sweepers", "Events"]):
-            b = self._tab_btn(label, active=(i == 0))
-            tab_row.addWidget(b)
-        v.addLayout(tab_row)
+        # Header row: "MY CLOCKS"  +  [+ New]
+        header_row = QHBoxLayout(); header_row.setSpacing(6)
+        header = QLabel("MY CLOCKS")
+        header.setFont(inter(8, QFont.Weight.Black, letter_spacing=1.6))
+        header.setStyleSheet(f"color: {TEXT_MUTED}; background: transparent;")
+        header_row.addWidget(header)
+        header_row.addStretch()
+        new_btn = QPushButton("+ New")
+        new_btn.setFixedHeight(24)
+        new_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        new_btn.setFont(inter(9, QFont.Weight.DemiBold))
+        new_btn.setStyleSheet(
+            f"QPushButton {{ background: {rgba(CYAN, 0.16)}; "
+            f"color: {CYAN_LIGHT}; "
+            f"border: 1px solid {rgba(CYAN, 0.32)}; "
+            f"border-radius: 4px; padding: 0 8px; }}"
+            f"QPushButton:hover {{ background: {rgba(CYAN, 0.26)}; }}"
+        )
+        new_btn.clicked.connect(self.new_clock_requested.emit)
+        header_row.addWidget(new_btn)
+        v.addLayout(header_row)
 
-        # Sub-tab bar (mode)
-        sub_row = QHBoxLayout(); sub_row.setSpacing(2); sub_row.setContentsMargins(0, 0, 0, 0)
-        for i, label in enumerate(["Category", "Specific Song", "Specific Artist"]):
-            b = self._tab_btn(label, active=(i == 0),
-                              disabled=(i > 0))   # Q4: only Category enabled
-            sub_row.addWidget(b)
-        v.addLayout(sub_row)
-
-        # Categories section
-        v.addWidget(self._section_label("CATEGORIES"))
-        self._cats_box = QFrame(); self._cats_box.setStyleSheet("background: transparent;")
-        self._cats_layout = QVBoxLayout(self._cats_box)
-        self._cats_layout.setContentsMargins(0, 0, 0, 0); self._cats_layout.setSpacing(2)
-        v.addWidget(self._cats_box)
-
-        # Properties section
-        v.addWidget(self._section_label("PROPERTIES"))
-        for label, value in [("Vocal Type", "Vocal (All)")]:
-            v.addWidget(self._filter_pill(label, value))
-
-        # Scales section
-        v.addWidget(self._section_label("SCALES"))
-        for label, value in [("Time Period", "Year (All)"),
-                             ("Priority",    "Priority (All)"),
-                             ("BPM",         "BPM (All)"),
-                             ("Year",        "Year (All)")]:
-            v.addWidget(self._filter_pill(label, value))
+        # Rows holder
+        self._rows_box = QFrame(); self._rows_box.setStyleSheet("background: transparent;")
+        self._rows_layout = QVBoxLayout(self._rows_box)
+        self._rows_layout.setContentsMargins(0, 6, 0, 6); self._rows_layout.setSpacing(4)
+        v.addWidget(self._rows_box)
 
         v.addStretch()
 
-        # Songs Found counter card
-        self._songs_count_lbl = QLabel("— Songs", self)
-        v.addWidget(self._make_counter_card())
-
-        # Reset / Preview row
-        bot = QHBoxLayout(); bot.setSpacing(4)
-        for label, color in [("↻  Reset Filters", TEXT_MUTED),
-                             ("▶  Preview Songs", GREEN)]:
+        # Action row at the bottom — Duplicate / Rename / Delete
+        for label, color, signal in [
+            ("Duplicate", CYAN_LIGHT, self.duplicate_requested),
+            ("Rename",    AMBER,      self.rename_requested),
+            ("Delete",    RED,        self.delete_requested),
+        ]:
             b = QPushButton(label)
             b.setFixedHeight(28)
             b.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-            b.setFont(inter(9, QFont.Weight.DemiBold))
+            b.setFont(inter(10, QFont.Weight.DemiBold))
             b.setStyleSheet(
                 f"QPushButton {{ background: {rgba(color, 0.14)}; "
                 f"color: {color}; "
-                f"border: 1px solid {rgba(color, 0.30)}; "
-                f"border-radius: 5px; padding: 0 6px; }}"
-                f"QPushButton:hover {{ background: {rgba(color, 0.22)}; }}"
+                f"border: 1px solid {rgba(color, 0.32)}; "
+                f"border-radius: 5px; padding: 0 8px; }}"
+                f"QPushButton:hover {{ background: {rgba(color, 0.24)}; }}"
+                f"QPushButton:disabled {{ background: rgba(255,255,255,0.02); "
+                f"color: {TEXT_DIM}; border-color: rgba(255,255,255,0.04); }}"
             )
-            b.clicked.connect(
-                lambda _c=False, n=label: log.info(
-                    f"[clock-editor] sidebar action {n!r} (visual-only — F2.2)"))
-            bot.addWidget(b)
-        v.addLayout(bot)
+            b.clicked.connect(signal.emit)
+            v.addWidget(b)
 
-    def populate_categories(self, categories: list[dict]) -> None:
+        self._rows: list[_ClockRow] = []
+
+    def populate(self, clocks: list[dict], active_id: Optional[int]) -> None:
         # Clear existing
-        for i in reversed(range(self._cats_layout.count())):
-            w = self._cats_layout.itemAt(i).widget()
-            if w:
-                w.setParent(None)
-        for cat in categories[:6]:
-            row = QLabel(f"  {cat.get('name', '—')}")
-            row.setFixedHeight(22)
-            row.setFont(inter(9))
-            row.setStyleSheet(
-                f"color: {TEXT_PRI}; "
-                f"background: {rgba('#ffffff', 0.02)}; "
-                f"border-left: 2px solid {cat.get('color', TEXT_MUTED)}; "
-                f"border-radius: 3px;")
-            self._cats_layout.addWidget(row)
-
-    def set_song_count(self, n: int) -> None:
-        self._songs_count_lbl.setText(f"{n:,} Songs" if n > 0 else "— Songs")
-
-    def _section_label(self, text: str) -> QLabel:
-        lbl = QLabel(text)
-        lbl.setFont(inter(7, QFont.Weight.Black, letter_spacing=1.4))
-        lbl.setStyleSheet(f"color: {TEXT_MUTED}; "
-                           f"background: transparent; padding-top: 8px;")
-        return lbl
-
-    def _filter_pill(self, label: str, value: str) -> QFrame:
-        f = QFrame()
-        f.setFixedHeight(26)
-        f.setStyleSheet(
-            f"QFrame {{ background: {rgba('#ffffff', 0.02)}; "
-            f"border: 1px solid {rgba('#ffffff', 0.06)}; "
-            f"border-radius: 4px; }}"
-        )
-        v = QVBoxLayout(f)
-        v.setContentsMargins(8, 1, 8, 1); v.setSpacing(0)
-        sub = QLabel(label); sub.setFont(inter(7, QFont.Weight.Medium, letter_spacing=0.4))
-        sub.setStyleSheet(f"color: {TEXT_DIM}; background: transparent;")
-        val = QLabel(value); val.setFont(inter(9, QFont.Weight.Medium))
-        val.setStyleSheet(f"color: {TEXT_SEC}; background: transparent;")
-        v.addWidget(sub); v.addWidget(val)
-        return f
-
-    def _tab_btn(self, label: str, active: bool, disabled: bool = False) -> QPushButton:
-        b = QPushButton(label)
-        b.setFixedHeight(26)
-        b.setFont(inter(8, QFont.Weight.DemiBold))
-        b.setCursor(QCursor(Qt.CursorShape.PointingHandCursor)
-                     if not disabled else QCursor(Qt.CursorShape.ArrowCursor))
-        if disabled:
-            b.setEnabled(False)
-            b.setToolTip("Coming in Phase F polish")
-            b.setStyleSheet(
-                f"QPushButton {{ background: {rgba('#ffffff', 0.02)}; "
-                f"color: {TEXT_DIM}; "
-                f"border: 1px solid {rgba('#ffffff', 0.04)}; "
-                f"border-radius: 4px; padding: 0 6px; }}"
-            )
-        elif active:
-            b.setStyleSheet(
-                f"QPushButton {{ background: {rgba(CYAN, 0.18)}; "
-                f"color: {CYAN_LIGHT}; "
-                f"border: 1px solid {rgba(CYAN, 0.40)}; "
-                f"border-radius: 4px; padding: 0 6px; }}"
-            )
-        else:
-            b.setStyleSheet(
-                f"QPushButton {{ background: {rgba('#ffffff', 0.04)}; "
-                f"color: {TEXT_SEC}; "
-                f"border: 1px solid {rgba('#ffffff', 0.06)}; "
-                f"border-radius: 4px; padding: 0 6px; }}"
-                f"QPushButton:hover {{ color: {TEXT_PRI}; "
-                f"border-color: {rgba('#ffffff', 0.20)}; }}"
-            )
-        return b
-
-    def _make_counter_card(self) -> QFrame:
-        f = QFrame()
-        f.setFixedHeight(60)
-        f.setStyleSheet(
-            f"QFrame {{ background: {rgba(CYAN, 0.14)}; "
-            f"border: 1px solid {rgba(CYAN, 0.30)}; "
-            f"border-radius: 6px; }}"
-        )
-        v = QVBoxLayout(f)
-        v.setContentsMargins(10, 8, 10, 8); v.setSpacing(2)
-        sub = QLabel("Songs Found")
-        sub.setFont(inter(7, QFont.Weight.Bold, letter_spacing=1.0))
-        sub.setStyleSheet(f"color: {TEXT_MUTED}; background: transparent;")
-        self._songs_count_lbl.setFont(mono(15, bold=True))
-        self._songs_count_lbl.setStyleSheet(f"color: {CYAN_LIGHT}; background: transparent;")
-        v.addWidget(sub); v.addWidget(self._songs_count_lbl)
-        return f
+        for r in self._rows:
+            r.setParent(None); r.deleteLater()
+        self._rows.clear()
+        for clk in clocks:
+            row = _ClockRow(clk, is_active=(int(clk.get("id") or 0) == int(active_id or 0)))
+            row.clicked.connect(self.clock_selected.emit)
+            self._rows_layout.addWidget(row)
+            self._rows.append(row)
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# CENTER — Clock name + counters + toolbar + slot list
+# TIMELINE (760×778) — action toolbar + 2-row horizontal timeline + detail
 # ════════════════════════════════════════════════════════════════════════════
 
-class _SlotRow(QFrame):
-    """One row in the slot list. State-driven via set_data()."""
+class _TimelineGrid(QWidget):
+    """Two-row horizontal slot grid.  Row 1 = 0-30 min, Row 2 = 30-60 min.
 
-    ROW_H = 36
+    Slot blocks have width proportional to their estimated duration.  Click
+    inside a block selects it and emits slot_clicked(index).
+    """
 
-    clicked = pyqtSignal(int)   # slot_idx within working copy
+    SLOT_DEFAULT_SECONDS = {
+        "Song": 210, "Break": 60, "Jingle": 12,
+        "Station ID": 8, "Sweeper": 8, "Voice Track": 30, "Spot": 60,
+    }
 
-    def __init__(self, idx: int, parent=None):
+    slot_clicked = pyqtSignal(int)
+
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self._idx = idx
-        self._slot: dict = {}
-        self._is_selected = False
-        self._is_break = False
-        self.setFixedHeight(self.ROW_H)
-        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self._slots: list[dict] = []
+        self._selected_idx: Optional[int] = None
+        # (idx, QRect) for hit testing — recomputed on every paint.
+        self._hit_rects: list[tuple[int, QRect]] = []
+        self.setMinimumHeight(280)
 
-    def set_data(self, slot: dict, is_selected: bool = False) -> None:
-        self._slot = slot or {}
-        self._is_selected = is_selected
-        self._is_break = bool(slot.get("is_break", 0)) or \
-            _normalize_slot_type(slot.get("slot_type", "")) == "Spot"
+    def set_slots(self, slots: list[dict], selected_idx: Optional[int]) -> None:
+        self._slots = list(slots or [])
+        self._selected_idx = selected_idx
         self.update()
 
-    def mousePressEvent(self, e):
-        if e.button() == Qt.MouseButton.LeftButton:
-            self.clicked.emit(self._idx)
-        super().mousePressEvent(e)
+    def _slot_seconds(self, slot: dict) -> int:
+        explicit = slot.get("duration_seconds")
+        if explicit:
+            return int(explicit)
+        return self.SLOT_DEFAULT_SECONDS.get(
+            _normalize_slot_type(slot.get("slot_type", "")), 60)
 
-    def paintEvent(self, _e):
+    def mousePressEvent(self, e: QMouseEvent) -> None:
+        if e.button() != Qt.MouseButton.LeftButton:
+            return
+        for idx, r in self._hit_rects:
+            if r.contains(e.pos()):
+                self.slot_clicked.emit(idx)
+                return
+
+    def paintEvent(self, evt):
+        super().paintEvent(evt)
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        w, h = self.width(), self.height()
-        rect = QRectF(0, 0, w, h)
+        dirty = evt.rect()    # Performance: clip painting to the dirty rect.
+        self._hit_rects = []
 
-        # Background
-        if self._is_selected:
-            tint = QColor(CYAN); tint.setAlphaF(0.14)
-            p.fillRect(rect, tint)
-            p.fillRect(QRectF(0, 0, 3, h), QColor(CYAN))
+        w = self.width()
+        h = self.height()
+        row_h = 110
+        gap_y = 18
+        # Row band backgrounds
+        for row in (0, 1):
+            band = QRectF(8, 8 + row * (row_h + gap_y), w - 16, row_h)
+            if not dirty.intersects(band.toRect()):
+                continue
+            p.setBrush(QColor(BG_CARD_DK)); p.setPen(QPen(QColor(BORDER), 1))
+            p.drawRoundedRect(band, 6, 6)
+
+            # Minute ticks (0/15/30 for row 0; 30/45/60 for row 1)
+            for tick in range(0, 31, 5):
+                x = band.x() + 8 + (band.width() - 16) * tick / 30.0
+                p.setPen(QPen(QColor(TEXT_DIM), 1))
+                p.drawLine(int(x), int(band.bottom()) - 2,
+                           int(x), int(band.bottom()) + 2)
+                if tick % 15 == 0:
+                    label_min = tick + (30 if row == 1 else 0)
+                    p.setPen(QColor(TEXT_MUTED))
+                    p.setFont(mono(8, bold=False))
+                    p.drawText(QRectF(x - 14, band.bottom() + 2, 28, 14),
+                               Qt.AlignmentFlag.AlignCenter,
+                               f"{label_min:02d}")
+
+        # Slot blocks
+        # Lay out cumulatively: each slot takes proportional width within its
+        # row.  We compute total seconds for row 1 and row 2 separately based
+        # on cumulative slot durations crossing the 30-min boundary.
+        cumulative_s = 0
+        seconds_per_pixel_row = (30 * 60) / max(1, w - 32)  # 30 min per row, 16px L+R padding
+        for idx, slot in enumerate(self._slots):
+            sec = self._slot_seconds(slot)
+            # Decide which row this slot starts in.
+            row_start = 0 if cumulative_s < 30 * 60 else 1
+            offset_in_row = cumulative_s - (1800 if row_start == 1 else 0)
+            row_y = 8 + row_start * (row_h + gap_y)
+            block_x = 16 + offset_in_row / seconds_per_pixel_row
+            block_w = max(28, sec / seconds_per_pixel_row)
+            # Clip block_w so we don't run off the row.
+            row_max_x = 8 + (w - 16) - 8
+            if block_x + block_w > row_max_x:
+                block_w = row_max_x - block_x
+            block = QRect(int(block_x), int(row_y) + 14, int(block_w), row_h - 28)
+            if dirty.intersects(block):
+                self._draw_slot_block(p, idx, slot, block)
+            self._hit_rects.append((idx, block))
+            cumulative_s += sec
+            # Stop drawing after row 2 fills (60 min = 3600s)
+            if cumulative_s >= 3600:
+                # Render a small overflow indicator if more slots remain
+                if idx < len(self._slots) - 1:
+                    p.setPen(QColor(AMBER))
+                    p.setFont(inter(9, QFont.Weight.DemiBold))
+                    p.drawText(QRectF(8, h - 22, w - 16, 16),
+                               Qt.AlignmentFlag.AlignRight,
+                               f"+{len(self._slots) - idx - 1} slots overflow")
+                break
+
+    def _draw_slot_block(self, p: QPainter, idx: int, slot: dict, block: QRect) -> None:
+        """Paint a single slot block.  Selected slot gets a thicker border."""
+        slot_type = _normalize_slot_type(slot.get("slot_type", ""))
+        color = _slot_type_color(slot_type)
+        rect = QRectF(block)
+        is_selected = (idx == self._selected_idx)
+
+        # Body — fill with the slot color at low alpha (selected = stronger).
+        body_color = QColor(color)
+        body_color.setAlphaF(0.32 if is_selected else 0.20)
+        p.setBrush(body_color)
+        border_color = QColor(color)
+        p.setPen(QPen(border_color, 2 if is_selected else 1))
+        p.drawRoundedRect(rect, 5, 5)
+
+        # Top accent bar
+        accent = QRectF(rect.x() + 1, rect.y() + 1, rect.width() - 2, 4)
+        p.setBrush(QColor(color)); p.setPen(Qt.PenStyle.NoPen)
+        p.drawRoundedRect(accent, 2, 2)
+
+        # Label (category name if Song; type label otherwise)
+        cat_name = slot.get("cat_name") or slot.get("category_name") or ""
+        if slot_type == "Song" and cat_name:
+            label = cat_name
+        elif slot_type == "Voice Track" and slot.get("ref_text"):
+            label = str(slot["ref_text"])[:20]
         else:
-            zebra = "#0d0f1c" if self._idx % 2 else "#0a0c18"
-            p.fillRect(rect, QColor(zebra))
-
-        slot_type = _normalize_slot_type(self._slot.get("slot_type", "Song"))
-        type_color = _slot_type_color(slot_type)
-
-        # # column (16-32)
+            label = slot_type
+        p.setPen(QColor(TEXT_PRI))
+        p.setFont(inter(9, QFont.Weight.DemiBold))
+        p.drawText(rect.adjusted(6, 8, -6, -6),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
+                   label)
+        # Index footer
         p.setPen(QColor(TEXT_MUTED))
-        p.setFont(inter(9, QFont.Weight.Bold))
-        p.drawText(QRectF(8, 0, 22, h),
-                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                   str(self._idx + 1))
-
-        # TYPE pill (32-110)
-        pill_w = 70
-        pill = QRectF(36, h / 2 - 10, pill_w, 20)
-        bg = QColor(type_color); bg.setAlphaF(0.20)
-        p.setBrush(bg); p.setPen(Qt.PenStyle.NoPen)
-        p.drawRoundedRect(pill, 4, 4)
-        p.setPen(QColor(type_color))
-        p.setFont(inter(8, QFont.Weight.Bold, letter_spacing=0.5))
-        p.drawText(pill, Qt.AlignmentFlag.AlignCenter, slot_type)
-
-        # DESCRIPTION (right of pill, takes most space)
-        desc = self._compose_description()
-        p.setPen(QColor(TEXT_PRI if self._is_selected else TEXT_SEC))
-        p.setFont(inter(9, QFont.Weight.Medium))
-        fm = p.fontMetrics()
-        desc_x = 36 + pill_w + 12
-        desc_w = w - desc_x - 80   # leave 80 for category pill
-        elided = fm.elidedText(desc, Qt.TextElideMode.ElideRight, int(desc_w))
-        p.drawText(QRectF(desc_x, 0, desc_w, h),
-                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                   elided)
-
-        # CATEGORY pill (right edge)
-        cat_name = self._slot.get("cat_name") or "—"
-        cat_color = self._slot.get("cat_color") or TEXT_MUTED
-        cat_pill_w = 70
-        cat_pill = QRectF(w - cat_pill_w - 8, h / 2 - 8, cat_pill_w, 16)
-        cbg = QColor(cat_color); cbg.setAlphaF(0.18)
-        p.setBrush(cbg); p.setPen(Qt.PenStyle.NoPen)
-        p.drawRoundedRect(cat_pill, 4, 4)
-        p.setPen(QColor(cat_color))
-        p.setFont(inter(7, QFont.Weight.Bold, letter_spacing=0.4))
-        p.drawText(cat_pill, Qt.AlignmentFlag.AlignCenter,
-                   fm.elidedText(cat_name, Qt.TextElideMode.ElideRight, cat_pill_w - 8))
-
-        # Hairline separator
-        sep = QColor(255, 255, 255, 10)
-        p.setPen(QPen(sep, 1))
-        p.drawLine(0, h - 1, w, h - 1)
-
-    def _compose_description(self) -> str:
-        slot_type = _normalize_slot_type(self._slot.get("slot_type", "Song"))
-        if slot_type == "Song":
-            return f"Song: from {self._slot.get('cat_name') or 'Any'} category"
-        if slot_type == "Jingle":
-            return f"Jingle: {self._slot.get('cat_name') or 'Any'}"
-        if slot_type == "Sweeper":
-            pos = self._slot.get("sweeper_position", "START_OF_SONG")
-            return f"Sweeper: @{pos}"
-        if slot_type == "Spot":
-            return "Spot Break: campaign-driven (~2 min)"
-        return slot_type or "—"
+        p.setFont(mono(8, bold=False))
+        p.drawText(rect.adjusted(6, 0, -6, -4),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom,
+                   f"#{idx + 1}")
 
 
-# ════════════════════════════════════════════════════════════════════════════
-# RIGHT panel — Slot Properties + Overview + Distribution
-# ════════════════════════════════════════════════════════════════════════════
+class _Timeline(QFrame):
+    """Center column: action toolbar (top), 2-row timeline (middle), and a
+    SELECTED slot detail card (bottom amber band per Figma 59:2)."""
 
-class _SlotPropertiesPanel(QFrame):
-    """Form for editing the selected slot."""
+    add_slot          = pyqtSignal()
+    ai_optimise       = pyqtSignal()
+    preview           = pyqtSignal()
+    validate          = pyqtSignal()
+    save_clock        = pyqtSignal()
+    slot_selected     = pyqtSignal(int)
 
-    apply_clicked  = pyqtSignal(dict)   # data dict to apply to slot
-    remove_clicked = pyqtSignal()
-
-    def __init__(self, categories: list[dict], parent=None):
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self._categories = categories or []
-        self.setStyleSheet("background: transparent;")
-        v = QVBoxLayout(self)
-        v.setContentsMargins(12, 12, 12, 12); v.setSpacing(8)
+        self.setFixedSize(CENTER_W, CONTENT_H)
+        self.setStyleSheet(
+            f"QFrame {{ background: {BG_BASE}; "
+            f"border-right: 1px solid {BORDER}; }}"
+        )
 
-        title = QLabel("SLOT PROPERTIES")
+        v = QVBoxLayout(self)
+        v.setContentsMargins(14, 14, 14, 14); v.setSpacing(12)
+
+        # Title block: clock name + subtitle + comments
+        self._name_label = QLabel("CLOCK")
+        self._name_label.setFont(inter(15, QFont.Weight.Black, letter_spacing=1.0))
+        self._name_label.setStyleSheet(f"color: {TEXT_PRI}; background: transparent;")
+        v.addWidget(self._name_label)
+        self._subtitle_label = QLabel("00:00–00:00 · 0 min · 0 slots")
+        self._subtitle_label.setFont(inter(10))
+        self._subtitle_label.setStyleSheet(f"color: {TEXT_MUTED}; background: transparent;")
+        v.addWidget(self._subtitle_label)
+
+        # Action toolbar
+        bar = QHBoxLayout(); bar.setSpacing(8)
+        for label, color, signal in [
+            ("+ Add Slot",  AMBER,        self.add_slot),
+            ("AI Optimise", PURPLE_LIGHT, self.ai_optimise),
+            ("Preview",     CYAN_LIGHT,   self.preview),
+            ("Validate",    GREEN,        self.validate),
+            ("Save Clock",  GREEN_LIGHT,  self.save_clock),
+        ]:
+            b = QPushButton(label)
+            b.setFixedHeight(30)
+            b.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+            b.setFont(inter(10, QFont.Weight.DemiBold))
+            b.setStyleSheet(
+                f"QPushButton {{ background: {rgba(color, 0.16)}; "
+                f"color: {color}; "
+                f"border: 1px solid {rgba(color, 0.36)}; "
+                f"border-radius: 5px; padding: 0 12px; }}"
+                f"QPushButton:hover {{ background: {rgba(color, 0.26)}; }}"
+            )
+            b.clicked.connect(signal.emit)
+            bar.addWidget(b)
+        bar.addStretch()
+        v.addLayout(bar)
+
+        # Timeline grid (custom paint)
+        self._grid = _TimelineGrid()
+        self._grid.slot_clicked.connect(self.slot_selected.emit)
+        v.addWidget(self._grid)
+
+        # Selected slot detail card (amber band)
+        self._detail = QFrame()
+        self._detail.setFixedHeight(60)
+        self._detail.setStyleSheet(
+            f"QFrame {{ background: {rgba(AMBER, 0.10)}; "
+            f"border: 1px solid {rgba(AMBER, 0.40)}; "
+            f"border-left: 4px solid {AMBER}; "
+            f"border-radius: 6px; }}"
+        )
+        d = QHBoxLayout(self._detail)
+        d.setContentsMargins(14, 8, 14, 8); d.setSpacing(0)
+        self._detail_title = QLabel("Click a slot to edit it")
+        self._detail_title.setFont(inter(11, QFont.Weight.DemiBold))
+        self._detail_title.setStyleSheet(f"color: {AMBER}; background: transparent;")
+        d.addWidget(self._detail_title)
+        v.addWidget(self._detail)
+
+        # Slot type legend
+        legend = QHBoxLayout(); legend.setSpacing(8)
+        legend_lbl = QLabel("SLOT TYPES:")
+        legend_lbl.setFont(inter(8, QFont.Weight.Black, letter_spacing=1.4))
+        legend_lbl.setStyleSheet(f"color: {TEXT_MUTED}; background: transparent;")
+        legend.addWidget(legend_lbl)
+        for t in SLOT_TYPES:
+            pill = QLabel(f" {SLOT_TYPE_BADGE[t]}  {t} ")
+            pill.setFixedHeight(22)
+            pill.setFont(inter(9, QFont.Weight.DemiBold))
+            color = _slot_type_color(t)
+            pill.setStyleSheet(
+                f"QLabel {{ background: {rgba(color, 0.20)}; "
+                f"color: {color}; "
+                f"border: 1px solid {rgba(color, 0.40)}; "
+                f"border-radius: 4px; padding: 0 8px; }}"
+            )
+            legend.addWidget(pill)
+        legend.addStretch()
+        v.addLayout(legend)
+
+        v.addStretch()
+
+    def set_clock_meta(self, name: str, time_start: str, time_end: str,
+                       slot_count: int) -> None:
+        self._name_label.setText((name or "CLOCK").upper())
+        ts = time_start or "00:00"; te = time_end or "00:00"
+        self._subtitle_label.setText(f"{ts}–{te} · 60 min · {slot_count} slots")
+
+    def set_slots(self, slots: list[dict], selected_idx: Optional[int]) -> None:
+        self._grid.set_slots(slots, selected_idx)
+        if selected_idx is None or selected_idx >= len(slots):
+            self._detail_title.setText("Click a slot to edit it")
+            return
+        slot = slots[selected_idx]
+        stype = _normalize_slot_type(slot.get("slot_type", ""))
+        cat = slot.get("cat_name") or slot.get("category_name") or "—"
+        energy = slot.get("energy_pref") or "Any"
+        self._detail_title.setText(
+            f"SELECTED: Slot {selected_idx + 1} — {stype} / {cat} / {energy} Energy"
+        )
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# SLOT EDITOR PANEL (440×778) — properties + overview + categories + AI
+# ════════════════════════════════════════════════════════════════════════════
+
+class _SlotEditor(QFrame):
+    """Right column. Composed of stacked blocks; per-type form lives in a
+    QStackedWidget that switches when the slot_type pill is clicked."""
+
+    apply_clicked      = pyqtSignal(dict)   # emits {field: value} for the slot
+    remove_clicked     = pyqtSignal()
+    type_pill_clicked  = pyqtSignal(str)    # new slot_type
+    auto_optimise      = pyqtSignal()       # stub toast (Phase E)
+
+    def __init__(self, categories: list[dict], pallets: list[dict], parent=None):
+        super().__init__(parent)
+        self.setFixedSize(RIGHT_W, CONTENT_H)
+        self.setStyleSheet(
+            f"QFrame#se {{ background: {BG_PANEL}; "
+            f"border-left: 1px solid {BORDER}; }}"
+        )
+        self.setObjectName("se")
+
+        self._categories = list(categories or [])
+        self._pallets    = list(pallets or [])
+        self._cat_lookup = {int(c["id"]): dict(c) for c in self._categories}
+
+        self._slot: Optional[dict] = None
+        self._slot_idx: Optional[int] = None
+        self._block_signals = False
+
+        v = QVBoxLayout(self)
+        v.setContentsMargins(14, 14, 14, 14); v.setSpacing(10)
+
+        # Header
+        h = QLabel("SLOT PROPERTIES")
+        h.setFont(inter(10, QFont.Weight.Black, letter_spacing=1.6))
+        h.setStyleSheet(f"color: {TEXT_PRI}; background: transparent;")
+        v.addWidget(h)
+        sub = QLabel("Click any slot to edit")
+        sub.setFont(inter(9))
+        sub.setStyleSheet(f"color: {TEXT_MUTED}; background: transparent;")
+        v.addWidget(sub)
+
+        # Overview block
+        self._overview = self._build_overview_block()
+        v.addWidget(self._overview)
+
+        # Category slots block
+        self._cat_block, self._cat_rows_layout = self._build_category_block()
+        v.addWidget(self._cat_block)
+
+        # Editing block: heading + type pills + per-type stacked form
+        v.addWidget(self._build_editing_heading())
+        v.addWidget(self._build_type_pills_row())
+        self._stack = QStackedWidget()
+        self._stack.setStyleSheet("background: transparent;")
+        self._page_song        = self._build_song_page()
+        self._page_break       = self._build_break_page()
+        self._page_jingle      = self._build_jingle_page()
+        self._page_station_id  = self._build_station_id_page()
+        self._page_sweeper     = self._build_sweeper_page()
+        self._page_voice_track = self._build_voice_track_page()
+        for w in (self._page_song, self._page_break, self._page_jingle,
+                  self._page_station_id, self._page_sweeper,
+                  self._page_voice_track):
+            self._stack.addWidget(w)
+        v.addWidget(self._stack)
+
+        # Apply / Remove buttons
+        btn_row = QHBoxLayout(); btn_row.setSpacing(8)
+        self._apply_btn = QPushButton("Apply Changes")
+        self._apply_btn.setFixedHeight(32)
+        self._apply_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self._apply_btn.setFont(inter(11, QFont.Weight.Bold))
+        self._apply_btn.setStyleSheet(
+            f"QPushButton {{ background: {rgba(AMBER, 0.20)}; "
+            f"color: {AMBER}; "
+            f"border: 1px solid {rgba(AMBER, 0.50)}; "
+            f"border-radius: 6px; }}"
+            f"QPushButton:hover {{ background: {rgba(AMBER, 0.30)}; }}"
+        )
+        self._apply_btn.clicked.connect(self._on_apply_clicked)
+        btn_row.addWidget(self._apply_btn)
+
+        self._remove_btn = QPushButton("Remove Slot")
+        self._remove_btn.setFixedHeight(32)
+        self._remove_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self._remove_btn.setFont(inter(11, QFont.Weight.Bold))
+        self._remove_btn.setStyleSheet(
+            f"QPushButton {{ background: {rgba(RED, 0.18)}; "
+            f"color: {RED}; "
+            f"border: 1px solid {rgba(RED, 0.40)}; "
+            f"border-radius: 6px; }}"
+            f"QPushButton:hover {{ background: {rgba(RED, 0.28)}; }}"
+        )
+        self._remove_btn.clicked.connect(self.remove_clicked.emit)
+        btn_row.addWidget(self._remove_btn)
+        v.addLayout(btn_row)
+
+        # AI Optimiser block (purple)
+        v.addWidget(self._build_ai_optimiser_block())
+
+        v.addStretch()
+
+    # ── builders ──────────────────────────────────────────────────────────
+
+    def _build_overview_block(self) -> QFrame:
+        f = QFrame()
+        f.setStyleSheet(
+            f"QFrame {{ background: {BG_CARD}; "
+            f"border: 1px solid {BORDER}; border-radius: 6px; }}"
+        )
+        v = QVBoxLayout(f); v.setContentsMargins(10, 8, 10, 8); v.setSpacing(6)
+        title = QLabel("CLOCK OVERVIEW")
         title.setFont(inter(8, QFont.Weight.Black, letter_spacing=1.4))
-        title.setStyleSheet(f"color: {TEXT_MUTED}; background: transparent;")
+        title.setStyleSheet(f"color: {CYAN_LIGHT}; background: transparent;")
         v.addWidget(title)
 
-        self._editing_lbl = QLabel("EDITING: (no slot selected)")
-        self._editing_lbl.setFont(inter(9, QFont.Weight.Bold))
-        self._editing_lbl.setStyleSheet(f"color: {CYAN_LIGHT}; background: transparent;")
-        v.addWidget(self._editing_lbl)
-
-        self._slot_type_combo = self._make_combo("Slot Type",
-            ["Song", "Jingle", "Sweeper", "Spot"])
-        v.addWidget(self._make_field("Slot Type", self._slot_type_combo))
-
-        cat_names = ["(none)"] + [c.get("name", "—") for c in self._categories]
-        self._category_combo = self._make_combo("Category", cat_names)
-        v.addWidget(self._make_field("Category", self._category_combo))
-
-        self._energy_combo = self._make_combo("Energy",
-            ["Any", "Low", "Medium", "High"])
-        v.addWidget(self._make_field("Energy", self._energy_combo))
-
-        self._vocal_combo = self._make_combo("Vocal", ["Any", "Vocal", "Instrumental"])
-        v.addWidget(self._make_field("Vocal", self._vocal_combo))
-
-        self._priority_combo = self._make_combo("Priority",
-            ["Normal", "Low", "High"])
-        v.addWidget(self._make_field("Priority", self._priority_combo))
-
-        self._sep_combo = self._make_combo("Separation",
-            ["Use Default", "30 min", "1 hour", "2 hours", "4 hours"])
-        v.addWidget(self._make_field("Separation", self._sep_combo))
-
-        # Apply / Remove
-        apply_btn = QPushButton("✓  Apply Changes")
-        apply_btn.setFixedHeight(34)
-        apply_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        apply_btn.setFont(inter(11, QFont.Weight.DemiBold))
-        apply_btn.setStyleSheet(
-            f"QPushButton {{ background: qlineargradient("
-            f"x1:0,y1:0,x2:0,y2:1, stop:0 {AMBER_LIGHT}, stop:1 {AMBER}); "
-            f"color: white; border: none; border-radius: 6px; }}"
-            f"QPushButton:hover {{ background: {AMBER}; }}"
-        )
-        apply_btn.clicked.connect(self._on_apply_clicked)
-        v.addWidget(apply_btn)
-
-        rm_btn = QPushButton("✕  Remove Slot")
-        rm_btn.setFixedHeight(28)
-        rm_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        rm_btn.setFont(inter(10, QFont.Weight.DemiBold))
-        rm_btn.setStyleSheet(
-            f"QPushButton {{ background: {rgba(RED, 0.14)}; "
-            f"color: {RED_LIGHT}; "
-            f"border: 1px solid {rgba(RED, 0.30)}; "
-            f"border-radius: 5px; }}"
-            f"QPushButton:hover {{ background: {rgba(RED, 0.24)}; }}"
-        )
-        rm_btn.clicked.connect(self.remove_clicked.emit)
-        v.addWidget(rm_btn)
-        v.addStretch()
-        self._enable_form(False)
-
-    def set_slot(self, slot: Optional[dict], slot_index: Optional[int] = None) -> None:
-        if slot is None:
-            self._editing_lbl.setText("EDITING: (no slot selected)")
-            self._enable_form(False)
-            return
-        slot_type = _normalize_slot_type(slot.get("slot_type", "Song"))
-        idx_label = f"Slot {slot_index + 1}" if slot_index is not None else "Slot"
-        self._editing_lbl.setText(f"EDITING: {idx_label} — {slot_type}")
-        self._slot_type_combo.setCurrentText(slot_type)
-        cat_id = slot.get("category_id")
-        cat_name = "(none)"
-        for c in self._categories:
-            if c.get("id") == cat_id:
-                cat_name = c.get("name") or "(none)"
-                break
-        self._category_combo.setCurrentText(cat_name)
-        self._energy_combo.setCurrentText(slot.get("energy_pref") or "Any")
-        self._vocal_combo.setCurrentText(slot.get("vocal_pref") or "Any")
-        self._priority_combo.setCurrentText(slot.get("priority_pref") or "Normal")
-        # Separation displayed as text — store as raw int in slot
-        self._sep_combo.setCurrentText(self._sep_to_label(slot.get("separation_override")))
-        self._enable_form(True)
-
-    def _enable_form(self, enabled: bool) -> None:
-        for w in (self._slot_type_combo, self._category_combo,
-                  self._energy_combo, self._vocal_combo,
-                  self._priority_combo, self._sep_combo):
-            w.setEnabled(enabled)
-
-    @staticmethod
-    def _sep_to_label(minutes: Optional[int]) -> str:
-        m = int(minutes or 0)
-        if m == 30:    return "30 min"
-        if m == 60:    return "1 hour"
-        if m == 120:   return "2 hours"
-        if m == 240:   return "4 hours"
-        return "Use Default"
-
-    @staticmethod
-    def _label_to_sep(label: str) -> int:
-        return {"30 min": 30, "1 hour": 60, "2 hours": 120, "4 hours": 240}\
-            .get(label, 0)
-
-    def _on_apply_clicked(self):
-        cat_name = self._category_combo.currentText()
-        cat_id = None
-        for c in self._categories:
-            if c.get("name") == cat_name:
-                cat_id = c.get("id"); break
-        data = {
-            "slot_type":           self._slot_type_combo.currentText(),
-            "category_id":         cat_id,
-            "energy_pref":         self._energy_combo.currentText(),
-            "vocal_pref":          self._vocal_combo.currentText(),
-            "priority_pref":       self._priority_combo.currentText(),
-            "separation_override": self._label_to_sep(self._sep_combo.currentText()),
-        }
-        self.apply_clicked.emit(data)
-
-    def _make_field(self, label: str, widget: QWidget) -> QFrame:
-        f = QFrame(); f.setStyleSheet("background: transparent;")
-        v = QVBoxLayout(f)
-        v.setContentsMargins(0, 0, 0, 0); v.setSpacing(2)
-        lbl = QLabel(label.upper())
-        lbl.setFont(inter(7, QFont.Weight.Bold, letter_spacing=0.8))
-        lbl.setStyleSheet(f"color: {TEXT_MUTED}; background: transparent;")
-        v.addWidget(lbl); v.addWidget(widget)
+        row = QHBoxLayout(); row.setSpacing(0)
+        self._overview_stats: dict[str, QLabel] = {}
+        for label in ("Songs", "Breaks", "Jingles", "Total"):
+            cell = QVBoxLayout(); cell.setSpacing(2)
+            value = QLabel("0"); value.setFont(inter(15, QFont.Weight.Black))
+            value.setStyleSheet(f"color: {TEXT_PRI}; background: transparent;")
+            value.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            cap = QLabel(label); cap.setFont(inter(8, QFont.Weight.Medium, letter_spacing=0.6))
+            cap.setStyleSheet(f"color: {TEXT_MUTED}; background: transparent;")
+            cap.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            cell.addWidget(value); cell.addWidget(cap)
+            row.addLayout(cell, 1)
+            self._overview_stats[label] = value
+        v.addLayout(row)
         return f
 
-    def _make_combo(self, _label: str, items: list[str]) -> QComboBox:
+    def _build_category_block(self) -> tuple[QFrame, QVBoxLayout]:
+        f = QFrame()
+        f.setStyleSheet(
+            f"QFrame {{ background: {BG_CARD}; "
+            f"border: 1px solid {BORDER}; border-radius: 6px; }}"
+        )
+        v = QVBoxLayout(f); v.setContentsMargins(10, 8, 10, 8); v.setSpacing(6)
+        title = QLabel("CATEGORY SLOTS")
+        title.setFont(inter(8, QFont.Weight.Black, letter_spacing=1.4))
+        title.setStyleSheet(f"color: {AMBER}; background: transparent;")
+        v.addWidget(title)
+        rows = QVBoxLayout(); rows.setSpacing(4); rows.setContentsMargins(0, 0, 0, 0)
+        v.addLayout(rows)
+        return f, rows
+
+    def _build_editing_heading(self) -> QLabel:
+        self._editing_heading = QLabel("EDITING: (no slot selected)")
+        self._editing_heading.setFont(inter(9, QFont.Weight.Black, letter_spacing=1.4))
+        self._editing_heading.setStyleSheet(
+            f"color: {TEXT_MUTED}; background: transparent;")
+        return self._editing_heading
+
+    def _build_type_pills_row(self) -> QFrame:
+        f = QFrame(); f.setStyleSheet("background: transparent;")
+        h = QHBoxLayout(f); h.setContentsMargins(0, 0, 0, 0); h.setSpacing(4)
+        self._type_pills: dict[str, QPushButton] = {}
+        for t in SLOT_TYPES:
+            b = QPushButton(t)
+            b.setFixedHeight(24)
+            b.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+            b.setFont(inter(8, QFont.Weight.DemiBold))
+            color = _slot_type_color(t)
+            b.setStyleSheet(self._pill_qss(color, active=False))
+            b.clicked.connect(lambda _c=False, _t=t: self._on_type_pill_clicked(_t))
+            h.addWidget(b)
+            self._type_pills[t] = b
+        return f
+
+    @staticmethod
+    def _pill_qss(color: str, active: bool) -> str:
+        if active:
+            return (
+                f"QPushButton {{ background: {rgba(color, 0.32)}; "
+                f"color: {color}; "
+                f"border: 1px solid {color}; "
+                f"border-radius: 4px; padding: 0 4px; }}"
+            )
+        return (
+            f"QPushButton {{ background: {rgba(color, 0.10)}; "
+            f"color: {color}; "
+            f"border: 1px solid {rgba(color, 0.30)}; "
+            f"border-radius: 4px; padding: 0 4px; }}"
+            f"QPushButton:hover {{ background: {rgba(color, 0.22)}; }}"
+        )
+
+    # ── per-type pages ───────────────────────────────────────────────────
+
+    def _make_field(self, label: str) -> QVBoxLayout:
+        lay = QVBoxLayout(); lay.setSpacing(2); lay.setContentsMargins(0, 4, 0, 0)
+        cap = QLabel(label); cap.setFont(inter(8, QFont.Weight.Medium, letter_spacing=0.6))
+        cap.setStyleSheet(f"color: {TEXT_MUTED}; background: transparent;")
+        lay.addWidget(cap)
+        return lay
+
+    def _styled_combo(self) -> QComboBox:
         c = QComboBox()
-        c.addItems(items)
         c.setFixedHeight(28)
-        c.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         c.setFont(inter(10))
         c.setStyleSheet(
-            f"QComboBox {{ background: #0e1020; color: {TEXT_PRI}; "
-            f"border: 1px solid {rgba('#ffffff', 0.06)}; border-radius: 4px; "
-            f"padding: 0 8px; }}"
-            f"QComboBox:hover {{ border: 1px solid {rgba(CYAN, 0.40)}; }}"
-            f"QComboBox QAbstractItemView {{ background: #0e1020; "
+            f"QComboBox {{ background: {BG_CARD_DK}; "
             f"color: {TEXT_PRI}; "
-            f"selection-background-color: {rgba(CYAN, 0.25)}; "
-            f"border: 1px solid {rgba('#ffffff', 0.10)}; }}"
+            f"border: 1px solid {BORDER}; "
+            f"border-radius: 4px; padding: 0 8px; }}"
+            f"QComboBox:hover {{ border-color: {rgba(CYAN, 0.40)}; }}"
+            f"QComboBox::drop-down {{ border: none; width: 18px; }}"
+            f"QComboBox QAbstractItemView {{ background: {BG_CARD_DK}; "
+            f"color: {TEXT_PRI}; selection-background-color: {rgba(CYAN, 0.20)}; }}"
         )
         return c
 
+    def _styled_line(self) -> QLineEdit:
+        e = QLineEdit()
+        e.setFixedHeight(28)
+        e.setFont(inter(10))
+        e.setStyleSheet(
+            f"QLineEdit {{ background: {BG_CARD_DK}; "
+            f"color: {TEXT_PRI}; "
+            f"border: 1px solid {BORDER}; "
+            f"border-radius: 4px; padding: 0 8px; }}"
+            f"QLineEdit:focus {{ border-color: {rgba(CYAN, 0.60)}; }}"
+        )
+        return e
+
+    def _pin_to_time_toggle(self) -> tuple[QFrame, QPushButton]:
+        f = QFrame(); f.setStyleSheet(
+            f"QFrame {{ background: {BG_CARD_DK}; "
+            f"border: 1px solid {BORDER}; border-radius: 4px; }}"
+        )
+        h = QHBoxLayout(f); h.setContentsMargins(10, 4, 10, 4); h.setSpacing(0)
+        lbl = QLabel("Pin to Exact Time")
+        lbl.setFont(inter(9, QFont.Weight.DemiBold))
+        lbl.setStyleSheet(f"color: {TEXT_PRI}; background: transparent;")
+        h.addWidget(lbl); h.addStretch()
+        btn = QPushButton("OFF"); btn.setCheckable(True); btn.setFixedSize(48, 22)
+        btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        btn.setFont(inter(8, QFont.Weight.Bold))
+        btn.setStyleSheet(
+            f"QPushButton {{ background: {rgba('#ffffff', 0.06)}; "
+            f"color: {TEXT_MUTED}; border: 1px solid {BORDER}; "
+            f"border-radius: 11px; }}"
+            f"QPushButton:checked {{ background: {rgba(GREEN, 0.30)}; "
+            f"color: {GREEN_LIGHT}; border-color: {GREEN}; }}"
+        )
+        btn.toggled.connect(lambda on: btn.setText("ON" if on else "OFF"))
+        h.addWidget(btn)
+        return f, btn
+
+    def _build_song_page(self) -> QWidget:
+        page = QWidget(); page.setStyleSheet("background: transparent;")
+        v = QVBoxLayout(page); v.setContentsMargins(0, 4, 0, 0); v.setSpacing(6)
+
+        # Category
+        l = self._make_field("Category"); self._sn_cat = self._styled_combo()
+        self._sn_cat.addItem("(none)", userData=None)
+        for c in self._categories:
+            self._sn_cat.addItem(str(c.get("name") or ""), userData=int(c["id"]))
+        l.addWidget(self._sn_cat); v.addLayout(l)
+        # Energy
+        l = self._make_field("Energy"); self._sn_energy = self._styled_combo()
+        for e in ("Any", "Low", "Mid", "High"):
+            self._sn_energy.addItem(e, userData=e)
+        l.addWidget(self._sn_energy); v.addLayout(l)
+        # Vocal
+        l = self._make_field("Vocal"); self._sn_vocal = self._styled_combo()
+        for e in ("Any", "Vocal", "Instrumental"):
+            self._sn_vocal.addItem(e, userData=e)
+        l.addWidget(self._sn_vocal); v.addLayout(l)
+        # Priority
+        l = self._make_field("Priority"); self._sn_prio = self._styled_combo()
+        for e in ("Low", "Normal", "High"):
+            self._sn_prio.addItem(e, userData=e)
+        l.addWidget(self._sn_prio); v.addLayout(l)
+        # Separation
+        l = self._make_field("Separation"); self._sn_sep = self._styled_combo()
+        for label, val in [("Use Default", None), ("15 min", 15), ("30 min", 30),
+                           ("1 hour", 60), ("2 hours", 120)]:
+            self._sn_sep.addItem(label, userData=val)
+        l.addWidget(self._sn_sep); v.addLayout(l)
+        # Fallback Category
+        l = self._make_field("Fallback Category"); self._sn_fallback = self._styled_combo()
+        self._sn_fallback.addItem("None (Skip slot)", userData=None)
+        for c in self._categories:
+            self._sn_fallback.addItem(str(c.get("name") or ""), userData=int(c["id"]))
+        l.addWidget(self._sn_fallback); v.addLayout(l)
+        # Pin to time
+        pin_frame, self._sn_pin = self._pin_to_time_toggle()
+        v.addWidget(pin_frame)
+        return page
+
+    def _build_break_page(self) -> QWidget:
+        page = QWidget(); page.setStyleSheet("background: transparent;")
+        v = QVBoxLayout(page); v.setContentsMargins(0, 4, 0, 0); v.setSpacing(6)
+        l = self._make_field("Duration"); self._br_dur = self._styled_combo()
+        for label, sec in [("15 sec", 15), ("30 sec", 30), ("60 sec", 60),
+                           ("90 sec", 90), ("2 min", 120), ("3 min", 180)]:
+            self._br_dur.addItem(label, userData=sec)
+        l.addWidget(self._br_dur); v.addLayout(l)
+        pin_frame, self._br_pin = self._pin_to_time_toggle()
+        v.addWidget(pin_frame)
+        v.addStretch()
+        return page
+
+    def _build_jingle_page(self) -> QWidget:
+        page = QWidget(); page.setStyleSheet("background: transparent;")
+        v = QVBoxLayout(page); v.setContentsMargins(0, 4, 0, 0); v.setSpacing(6)
+        l = self._make_field("Pallet"); self._jn_pallet = self._styled_combo()
+        self._jn_pallet.addItem("(any)", userData=None)
+        for p in self._pallets:
+            self._jn_pallet.addItem(str(p.get("name") or ""), userData=int(p["id"]))
+        l.addWidget(self._jn_pallet); v.addLayout(l)
+        pin_frame, self._jn_pin = self._pin_to_time_toggle()
+        v.addWidget(pin_frame)
+        v.addStretch()
+        return page
+
+    def _build_station_id_page(self) -> QWidget:
+        page = QWidget(); page.setStyleSheet("background: transparent;")
+        v = QVBoxLayout(page); v.setContentsMargins(0, 4, 0, 0); v.setSpacing(6)
+        l = self._make_field("ID Reference"); self._st_ref = self._styled_line()
+        self._st_ref.setPlaceholderText("e.g. KISS-FM-LIVE-15s")
+        l.addWidget(self._st_ref); v.addLayout(l)
+        v.addStretch()
+        return page
+
+    def _build_sweeper_page(self) -> QWidget:
+        page = QWidget(); page.setStyleSheet("background: transparent;")
+        v = QVBoxLayout(page); v.setContentsMargins(0, 4, 0, 0); v.setSpacing(6)
+        l = self._make_field("Sweeper Category"); self._sw_cat = self._styled_combo()
+        self._sw_cat.addItem("(any sweeper)", userData=None)
+        for c in self._categories:
+            self._sw_cat.addItem(str(c.get("name") or ""), userData=int(c["id"]))
+        l.addWidget(self._sw_cat); v.addLayout(l)
+        v.addStretch()
+        return page
+
+    def _build_voice_track_page(self) -> QWidget:
+        page = QWidget(); page.setStyleSheet("background: transparent;")
+        v = QVBoxLayout(page); v.setContentsMargins(0, 4, 0, 0); v.setSpacing(6)
+        l = self._make_field("Label"); self._vt_label = self._styled_line()
+        self._vt_label.setPlaceholderText("e.g. Show open / weather tag")
+        l.addWidget(self._vt_label); v.addLayout(l)
+        l = self._make_field("Duration"); self._vt_dur = self._styled_combo()
+        for label, sec in [("10 sec", 10), ("20 sec", 20), ("30 sec", 30),
+                           ("45 sec", 45), ("60 sec", 60)]:
+            self._vt_dur.addItem(label, userData=sec)
+        l.addWidget(self._vt_dur); v.addLayout(l)
+        v.addStretch()
+        return page
+
+    def _build_ai_optimiser_block(self) -> QFrame:
+        f = QFrame()
+        f.setStyleSheet(
+            f"QFrame {{ background: {rgba(PURPLE, 0.10)}; "
+            f"border: 1px solid {rgba(PURPLE, 0.36)}; border-radius: 6px; }}"
+        )
+        v = QVBoxLayout(f); v.setContentsMargins(10, 8, 10, 8); v.setSpacing(6)
+        title = QLabel("AI OPTIMISER")
+        title.setFont(inter(8, QFont.Weight.Black, letter_spacing=1.4))
+        title.setStyleSheet(f"color: {PURPLE_LIGHT}; background: transparent;")
+        v.addWidget(title)
+
+        self._ai_cards: dict[str, QFrame] = {}
+        for label, default_color in [("Rotation", AMBER),
+                                     ("Energy",   GREEN),
+                                     ("Breaks",   CYAN_LIGHT)]:
+            card = QFrame()
+            card.setStyleSheet(
+                f"QFrame {{ background: {rgba(default_color, 0.10)}; "
+                f"border-left: 3px solid {default_color}; "
+                f"border-radius: 3px; }}"
+            )
+            ch = QVBoxLayout(card); ch.setContentsMargins(8, 4, 8, 4); ch.setSpacing(0)
+            head = QLabel(f"{label} —"); head.setFont(inter(9, QFont.Weight.Bold))
+            head.setStyleSheet(f"color: {default_color}; background: transparent;")
+            sub = QLabel("Computing…"); sub.setFont(inter(9))
+            sub.setStyleSheet(f"color: {TEXT_SEC}; background: transparent;")
+            ch.addWidget(head); ch.addWidget(sub)
+            self._ai_cards[label] = card
+            self._ai_cards[label + "_head"] = head
+            self._ai_cards[label + "_sub"] = sub
+            v.addWidget(card)
+
+        opt_btn = QPushButton("Auto-Optimise This Clock")
+        opt_btn.setFixedHeight(28)
+        opt_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        opt_btn.setFont(inter(10, QFont.Weight.DemiBold))
+        opt_btn.setStyleSheet(
+            f"QPushButton {{ background: {rgba(PURPLE, 0.20)}; "
+            f"color: {PURPLE_LIGHT}; "
+            f"border: 1px solid {rgba(PURPLE, 0.50)}; "
+            f"border-radius: 5px; }}"
+            f"QPushButton:hover {{ background: {rgba(PURPLE, 0.30)}; }}"
+        )
+        opt_btn.clicked.connect(self.auto_optimise.emit)
+        v.addWidget(opt_btn)
+        return f
+
+    # ── public API ──────────────────────────────────────────────────────
+
+    def set_clock_meta(self, slots: list[dict]) -> None:
+        """Populate the OVERVIEW + CATEGORY SLOTS blocks from the slot list."""
+        n_song = sum(1 for s in slots if _normalize_slot_type(s.get("slot_type", "")) == "Song")
+        n_break = sum(1 for s in slots if _normalize_slot_type(s.get("slot_type", "")) in ("Break", "Spot"))
+        n_jingle = sum(1 for s in slots if _normalize_slot_type(s.get("slot_type", "")) == "Jingle")
+        # Total seconds (rough estimate)
+        defaults = _TimelineGrid.SLOT_DEFAULT_SECONDS
+        total_s = 0
+        for s in slots:
+            if s.get("duration_seconds"):
+                total_s += int(s["duration_seconds"])
+            else:
+                total_s += defaults.get(_normalize_slot_type(s.get("slot_type", "")), 60)
+        self._overview_stats["Songs"].setText(str(n_song))
+        self._overview_stats["Breaks"].setText(str(n_break))
+        self._overview_stats["Jingles"].setText(str(n_jingle))
+        self._overview_stats["Total"].setText(_fmt_minutes(total_s))
+
+        # Category distribution — clear + rebuild
+        for i in reversed(range(self._cat_rows_layout.count())):
+            w = self._cat_rows_layout.itemAt(i).widget()
+            if w:
+                w.setParent(None); w.deleteLater()
+        # Aggregate count by category_id (Song slots only)
+        counts: dict[int, int] = {}
+        for s in slots:
+            if _normalize_slot_type(s.get("slot_type", "")) != "Song":
+                continue
+            cid = s.get("category_id")
+            if not cid:
+                continue
+            counts[int(cid)] = counts.get(int(cid), 0) + 1
+        if not counts:
+            empty = QLabel("(no song slots assigned to a category)")
+            empty.setFont(inter(9)); empty.setStyleSheet(
+                f"color: {TEXT_MUTED}; background: transparent;")
+            self._cat_rows_layout.addWidget(empty)
+        else:
+            max_n = max(counts.values()) or 1
+            for cid, n in sorted(counts.items(), key=lambda kv: -kv[1]):
+                cat = self._cat_lookup.get(cid, {})
+                color = cat.get("color") or AMBER
+                row = self._make_cat_row(str(cat.get("name") or "—"), n, max_n, color)
+                self._cat_rows_layout.addWidget(row)
+
+        # AI optimiser cards — simple deterministic copy from real numbers
+        rot_status = "OK" if n_song >= 8 else "Low"
+        rot_color = GREEN if rot_status == "OK" else AMBER
+        self._ai_cards["Rotation_head"].setText(f"Rotation — {rot_status}")
+        self._ai_cards["Rotation_head"].setStyleSheet(
+            f"color: {rot_color}; background: transparent;")
+        self._ai_cards["Rotation_sub"].setText(
+            f"{n_song} song slots · {len(counts)} categories represented")
+
+        n_high = sum(1 for s in slots
+                     if _normalize_slot_type(s.get("slot_type", "")) == "Song"
+                     and s.get("energy_pref") == "High")
+        self._ai_cards["Energy_head"].setText("Energy — OK" if n_high >= 1 else "Energy — Flat")
+        self._ai_cards["Energy_sub"].setText(
+            f"{n_high} high-energy song slots in this clock")
+
+        self._ai_cards["Breaks_head"].setText(
+            "Breaks — Good" if n_break >= 2 else "Breaks — Sparse")
+        self._ai_cards["Breaks_sub"].setText(
+            f"{n_break} break/spot slots — target 3 per hour")
+
+    def set_slot(self, slot: Optional[dict], slot_index: Optional[int] = None) -> None:
+        """Bind the form to `slot` (None = no selection)."""
+        self._slot = dict(slot) if slot else None
+        self._slot_idx = slot_index
+        self._block_signals = True
+        try:
+            if not slot:
+                self._editing_heading.setText("EDITING: (no slot selected)")
+                self._apply_btn.setEnabled(False)
+                self._remove_btn.setEnabled(False)
+                # Reset all type pills to inactive
+                for t, b in self._type_pills.items():
+                    b.setStyleSheet(self._pill_qss(_slot_type_color(t), active=False))
+                return
+
+            self._apply_btn.setEnabled(True)
+            self._remove_btn.setEnabled(True)
+            stype = _normalize_slot_type(slot.get("slot_type", ""))
+            # Treat legacy 'Spot' as Break for editor-page selection
+            page_type = "Break" if stype == "Spot" else stype
+            self._editing_heading.setText(
+                f"EDITING: Slot {(slot_index or 0) + 1} — {page_type}")
+            self._editing_heading.setStyleSheet(
+                f"color: {_slot_type_color(page_type)}; background: transparent;")
+
+            # Type pill active state
+            for t, b in self._type_pills.items():
+                b.setStyleSheet(self._pill_qss(_slot_type_color(t), active=(t == page_type)))
+
+            # Switch stacked page
+            page_idx = {"Song": 0, "Break": 1, "Jingle": 2,
+                        "Station ID": 3, "Sweeper": 4, "Voice Track": 5}.get(page_type, 0)
+            self._stack.setCurrentIndex(page_idx)
+
+            # Populate each page's fields with current slot data
+            if page_type == "Song":
+                self._select_combo_data(self._sn_cat, slot.get("category_id"))
+                self._select_combo_data(self._sn_energy, slot.get("energy_pref") or "Any")
+                self._select_combo_data(self._sn_vocal, slot.get("vocal_pref") or "Any")
+                self._select_combo_data(self._sn_prio, slot.get("priority_pref") or "Normal")
+                self._select_combo_data(self._sn_sep, slot.get("separation_override"))
+                self._select_combo_data(self._sn_fallback, slot.get("fallback_category_id"))
+                self._sn_pin.setChecked(bool(slot.get("pin_to_time")))
+            elif page_type == "Break":
+                dur = int(slot.get("duration_seconds") or 60)
+                self._select_combo_data(self._br_dur, dur)
+                self._br_pin.setChecked(bool(slot.get("pin_to_time")))
+            elif page_type == "Jingle":
+                self._select_combo_data(self._jn_pallet, slot.get("category_id"))
+                self._jn_pin.setChecked(bool(slot.get("pin_to_time")))
+            elif page_type == "Station ID":
+                self._st_ref.setText(slot.get("ref_text") or "")
+            elif page_type == "Sweeper":
+                self._select_combo_data(self._sw_cat, slot.get("category_id"))
+            elif page_type == "Voice Track":
+                self._vt_label.setText(slot.get("ref_text") or "")
+                dur = int(slot.get("duration_seconds") or 30)
+                self._select_combo_data(self._vt_dur, dur)
+        finally:
+            self._block_signals = False
+
+    @staticmethod
+    def _select_combo_data(combo: QComboBox, value) -> None:
+        for i in range(combo.count()):
+            if combo.itemData(i) == value:
+                combo.setCurrentIndex(i)
+                return
+        if combo.count() > 0:
+            combo.setCurrentIndex(0)
+
+    # ── handlers ────────────────────────────────────────────────────────
+
+    def _on_type_pill_clicked(self, slot_type: str) -> None:
+        if self._block_signals:
+            return
+        self.type_pill_clicked.emit(slot_type)
+
+    def _on_apply_clicked(self) -> None:
+        if self._slot is None or self._slot_idx is None:
+            return
+        stype = _normalize_slot_type(self._slot.get("slot_type", ""))
+        page_type = "Break" if stype == "Spot" else stype
+        out = dict(self._slot)
+        out["slot_type"] = page_type
+        if page_type == "Song":
+            out["category_id"]         = self._sn_cat.currentData()
+            out["energy_pref"]         = self._sn_energy.currentData() or "Any"
+            out["vocal_pref"]          = self._sn_vocal.currentData() or "Any"
+            out["priority_pref"]       = self._sn_prio.currentData() or "Normal"
+            out["separation_override"] = self._sn_sep.currentData()
+            out["fallback_category_id"] = self._sn_fallback.currentData()
+            out["pin_to_time"]         = 1 if self._sn_pin.isChecked() else 0
+        elif page_type == "Break":
+            out["duration_seconds"] = int(self._br_dur.currentData() or 60)
+            out["pin_to_time"]      = 1 if self._br_pin.isChecked() else 0
+            out["is_break"]         = 1
+        elif page_type == "Jingle":
+            out["category_id"]  = self._jn_pallet.currentData()
+            out["pin_to_time"]  = 1 if self._jn_pin.isChecked() else 0
+        elif page_type == "Station ID":
+            out["ref_text"]     = self._st_ref.text().strip()
+        elif page_type == "Sweeper":
+            out["category_id"]  = self._sw_cat.currentData()
+        elif page_type == "Voice Track":
+            out["ref_text"]         = self._vt_label.text().strip()
+            out["duration_seconds"] = int(self._vt_dur.currentData() or 30)
+        self.apply_clicked.emit(out)
+
+    def _make_cat_row(self, name: str, n: int, max_n: int, color: str) -> QFrame:
+        f = QFrame(); f.setStyleSheet("background: transparent;")
+        f.setFixedHeight(20)
+        h = QHBoxLayout(f); h.setContentsMargins(0, 0, 0, 0); h.setSpacing(6)
+        nm = QLabel(name); nm.setFont(inter(9, QFont.Weight.Medium))
+        nm.setFixedWidth(110)
+        nm.setStyleSheet(f"color: {TEXT_PRI}; background: transparent;")
+        h.addWidget(nm)
+        bar_box = QFrame(); bar_box.setFixedHeight(8)
+        bar_box.setStyleSheet(
+            f"QFrame {{ background: {rgba(color, 0.18)}; border-radius: 3px; }}"
+        )
+        bar_box.setMinimumWidth(120)
+        # Inner fill
+        from PyQt6.QtWidgets import QGraphicsOpacityEffect  # noqa  (kept for ref)
+        # We use a child widget for fill; simpler than effects.
+        inner = QFrame(bar_box)
+        inner.setStyleSheet(
+            f"QFrame {{ background: {color}; border-radius: 3px; }}"
+        )
+        # Set inner geometry deferred — use a one-shot QTimer so layout completes.
+        def _resize_inner(b=bar_box, i=inner, n=n, m=max_n):
+            ratio = max(0.05, n / max(1, m))
+            i.setGeometry(0, 0, int(b.width() * ratio), b.height())
+        QTimer.singleShot(0, _resize_inner)
+        h.addWidget(bar_box, 1)
+        cnt = QLabel(f"{n} slots"); cnt.setFont(mono(8, bold=False))
+        cnt.setStyleSheet(f"color: {TEXT_MUTED}; background: transparent;")
+        cnt.setFixedWidth(50); cnt.setAlignment(Qt.AlignmentFlag.AlignRight)
+        h.addWidget(cnt)
+        return f
+
 
 # ════════════════════════════════════════════════════════════════════════════
-# Main screen
+# STATUS BAR (1440×50)
+# ════════════════════════════════════════════════════════════════════════════
+
+class _StatusBar(QFrame):
+
+    studio_clicked = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(STATUS_H)
+        self.setStyleSheet(
+            f"QFrame {{ background: {BG_PANEL}; "
+            f"border-top: 1px solid {BORDER}; }}"
+        )
+        h = QHBoxLayout(self); h.setContentsMargins(14, 8, 14, 8); h.setSpacing(8)
+        for label, color in [("AUTO MODE", GREEN),
+                             ("AI Active", PURPLE_LIGHT),
+                             ("Log Ready", CYAN_LIGHT)]:
+            pill = QLabel(label)
+            pill.setFixedHeight(24)
+            pill.setFont(inter(8, QFont.Weight.Black, letter_spacing=1.4))
+            pill.setStyleSheet(
+                f"QLabel {{ background: {rgba(color, 0.16)}; "
+                f"color: {color}; "
+                f"border: 1px solid {rgba(color, 0.40)}; "
+                f"border-radius: 12px; padding: 0 12px; }}"
+            )
+            h.addWidget(pill)
+        h.addStretch()
+        self._clocks_label = QLabel("0 Clocks")
+        self._clocks_label.setFont(inter(9, QFont.Weight.DemiBold))
+        self._clocks_label.setStyleSheet(f"color: {TEXT_MUTED}; background: transparent;")
+        h.addWidget(self._clocks_label)
+        version = QLabel("Clock Editor · RadioAI Studio v1.0.0")
+        version.setFont(inter(9))
+        version.setStyleSheet(f"color: {TEXT_DIM}; background: transparent;")
+        h.addWidget(version)
+        st_btn = QPushButton("Open Studio")
+        st_btn.setFixedHeight(28); st_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        st_btn.setFont(inter(9, QFont.Weight.Bold))
+        st_btn.setStyleSheet(
+            f"QPushButton {{ background: {rgba(PURPLE, 0.18)}; "
+            f"color: {PURPLE_LIGHT}; "
+            f"border: 1px solid {rgba(PURPLE, 0.40)}; "
+            f"border-radius: 5px; padding: 0 14px; }}"
+            f"QPushButton:hover {{ background: {rgba(PURPLE, 0.28)}; }}"
+        )
+        st_btn.clicked.connect(self.studio_clicked.emit)
+        h.addWidget(st_btn)
+
+    def set_clock_count(self, n: int) -> None:
+        self._clocks_label.setText(f"{n} Clock{'s' if n != 1 else ''}")
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# CLOCK EDITOR — top-level (orchestrates header + sidebar + timeline + editor)
 # ════════════════════════════════════════════════════════════════════════════
 
 class ClockEditor(QWidget):
-    """Clock Editor — broadcast clock template builder (Figma 165:2).
-
-    Phase F2.1: layout chrome + real DB clock load + edit selected slot
-    properties + Save persistence. Slot mutations (Add/Insert/Delete/
-    Move) wired in F2.3.
-    """
 
     breadcrumb_clicked = pyqtSignal(str)    # 'control_panel'
     studio_clicked     = pyqtSignal()
@@ -738,267 +1371,121 @@ class ClockEditor(QWidget):
         super().__init__(parent)
         self._db = db
         self.setFixedSize(WINDOW_W, WINDOW_H)
-        self.setStyleSheet(
-            "background: qlineargradient("
-            "x1:0,y1:0,x2:1,y2:1, stop:0 #0a0d1a, stop:0.5 #06080f, stop:1 #020308);"
-        )
+        self.setStyleSheet(f"QWidget {{ background: {BG_BASE}; }}")
 
-        # State
-        self._categories: list[dict] = []
-        self._all_clocks: list[dict] = []
-        self._current_clock_id: Optional[int] = None
-        self._slots: list[dict] = []        # working copy
-        self._selected_slot_idx: Optional[int] = None
-        self._slot_rows: list[_SlotRow] = []
-        # Phase F2.2: dirty tracking — set by mutations + name/time edits;
-        # reset by Save / Load. Used for the discard-confirmation dialog.
-        self._is_dirty: bool = False
-        self._original_clock_name: str = ""
-        self._original_time_start: str = ""
-        self._original_time_end: str = ""
-
-        # Pre-load reference data
+        # Migrate any legacy 'Spot' rows on first mount.
         try:
-            self._categories = [dict(r) for r in self._db.get_categories()]
-            self._all_clocks = [dict(r) for r in self._db.get_all_clocks()]
+            n = self._db.migrate_spot_to_break()
+            if n:
+                log.info(f"[clock-editor] migrated {n} 'Spot' rows → 'Break'")
         except Exception as exc:
-            log.warning(f"reference-data load failed: {exc}")
+            log.warning(f"[clock-editor] spot→break migration skipped: {exc}")
 
-        self._build_header()
-        self._build_left_sidebar()
-        self._build_center()
-        self._build_right()
-        self._build_status_bar()
+        # Categories + pallets (one read; passed to SlotEditor for dropdowns).
+        try:
+            categories = [dict(r) for r in self._db.get_categories()]
+        except Exception:
+            categories = []
+        try:
+            pallets = [dict(r) for r in self._db.get_pallets()]
+        except Exception:
+            pallets = []
 
-        # Initial clock — pick the first one with slots, else first
-        initial = next((c for c in self._all_clocks
-                        if c.get("slot_count", 0) > 0), None)
-        if initial is None and self._all_clocks:
-            initial = self._all_clocks[0]
-        if initial:
-            self._load_clock(int(initial["id"]))
-        else:
-            self._show_no_clocks_state()
+        # Working state (preserved field names for F2.2 mutation tests)
+        self._slots: list[dict] = []
+        self._selected_slot_idx: Optional[int] = None
+        self._is_dirty: bool = False
+        self._current_clock_id: Optional[int] = None
 
-        log.info("ClockEditor ready (Figma 165:2)")
-
-    # ── Layout ────────────────────────────────────────────────────────────
-
-    def _build_header(self):
-        self._header = _ClockEditorHeader(self)
+        # Build widgets ────────────────────────────────────────────────────
+        self._header = _Header(self)
         self._header.setGeometry(0, 0, WINDOW_W, HEADER_H)
         self._header.control_panel_clicked.connect(
             lambda: self.breadcrumb_clicked.emit("control_panel"))
         self._header.studio_clicked.connect(self.studio_clicked.emit)
 
-    def _build_left_sidebar(self):
-        body_y = HEADER_H
-        body_h = WINDOW_H - HEADER_H - STATUS_H
-        self._sidebar = _LeftSidebar(self)
-        self._sidebar.setGeometry(LEFT_X, body_y, LEFT_W, body_h)
-        self._sidebar.populate_categories(self._categories)
-        # Songs count — total enabled songs in library (cheap)
+        self._sidebar = _ClocksListSidebar(self)
+        self._sidebar.setGeometry(LEFT_X, CONTENT_Y, LEFT_W, CONTENT_H)
+        self._sidebar.clock_selected.connect(self._on_clock_selected)
+        self._sidebar.new_clock_requested.connect(self._on_new_clock)
+        self._sidebar.duplicate_requested.connect(self._on_duplicate_clock)
+        self._sidebar.rename_requested.connect(self._on_rename_clock)
+        self._sidebar.delete_requested.connect(self._on_delete_clock)
+
+        self._timeline = _Timeline(self)
+        self._timeline.setGeometry(CENTER_X, CONTENT_Y, CENTER_W, CONTENT_H)
+        self._timeline.add_slot.connect(self._on_add_slot)
+        self._timeline.ai_optimise.connect(self._on_auto_optimise_toast)
+        self._timeline.preview.connect(self._on_preview_stub)
+        self._timeline.validate.connect(self._on_validate_stub)
+        self._timeline.save_clock.connect(self._on_save_clock)
+        self._timeline.slot_selected.connect(self._on_slot_selected)
+
+        self._editor = _SlotEditor(categories, pallets, self)
+        self._editor.setGeometry(RIGHT_X, CONTENT_Y, RIGHT_W, CONTENT_H)
+        self._editor.apply_clicked.connect(self._on_apply_slot_changes)
+        self._editor.remove_clicked.connect(self._on_remove_selected_slot)
+        self._editor.type_pill_clicked.connect(self._on_type_pill_clicked)
+        self._editor.auto_optimise.connect(self._on_auto_optimise_toast)
+
+        self._status = _StatusBar(self)
+        self._status.setGeometry(0, WINDOW_H - STATUS_H, WINDOW_W, STATUS_H)
+        self._status.studio_clicked.connect(self.studio_clicked.emit)
+
+        # Initial population
+        self._refresh_clocks_list(select_first=True)
+
+        log.info("ClockEditor ready (Figma 59:2)")
+
+    # ── slot factories ────────────────────────────────────────────────────
+
+    @staticmethod
+    def _new_song_slot() -> dict:
+        """Default Song slot. F2.2 tests rely on this name + fields."""
+        return {
+            "slot_type":           "Song",
+            "category_id":         None,
+            "energy_pref":         "Any",
+            "vocal_pref":          "Any",
+            "priority_pref":       "Normal",
+            "separation_override": None,
+            "is_break":            0,
+            "sweeper_position":    None,
+            "item_id":             0,
+            "fallback_category_id": None,
+            "pin_to_time":         0,
+            "duration_seconds":    None,
+            "ref_text":            None,
+        }
+
+    @staticmethod
+    def _new_slot_for_type(slot_type: str) -> dict:
+        base = ClockEditor._new_song_slot()
+        base["slot_type"] = slot_type
+        if slot_type == "Break":
+            base["is_break"] = 1
+            base["duration_seconds"] = 60
+        elif slot_type == "Voice Track":
+            base["duration_seconds"] = 30
+            base["ref_text"] = ""
+        elif slot_type == "Station ID":
+            base["ref_text"] = ""
+        elif slot_type == "Sweeper":
+            base["sweeper_position"] = "START_OF_SONG"
+        return base
+
+    # ── data load / save ──────────────────────────────────────────────────
+
+    def _refresh_clocks_list(self, select_first: bool = False) -> None:
         try:
-            row = self._db._conn().execute(
-                "SELECT COUNT(*) FROM songs WHERE is_enabled=1").fetchone()
-            self._sidebar.set_song_count(int(row[0] or 0))
-        except Exception:
-            pass
-
-    def _build_center(self):
-        body_y = HEADER_H
-        pad = 14
-        x0 = CENTER_X + pad
-        w  = CENTER_W - 2 * pad
-        y  = body_y + pad
-
-        # Clock name + time range row
-        name_row = QFrame(self)
-        name_row.setGeometry(x0, y, w, 50)
-        name_row.setStyleSheet("background: transparent;")
-        nh = QHBoxLayout(name_row)
-        nh.setContentsMargins(0, 0, 0, 0); nh.setSpacing(10)
-
-        # Clock name input
-        name_frame = QFrame(); name_frame.setStyleSheet("background: transparent;")
-        nv = QVBoxLayout(name_frame); nv.setContentsMargins(0, 0, 0, 0); nv.setSpacing(2)
-        name_lbl = QLabel("CLOCK NAME")
-        name_lbl.setFont(inter(7, QFont.Weight.Bold, letter_spacing=1.0))
-        name_lbl.setStyleSheet(f"color: {TEXT_MUTED}; background: transparent;")
-        nv.addWidget(name_lbl)
-        self._name_input = QLineEdit()
-        self._name_input.setFixedHeight(28)
-        self._name_input.setFont(inter(11, QFont.Weight.Bold))
-        self._name_input.setStyleSheet(self._lineedit_qss())
-        self._name_input.setPlaceholderText("(no clock loaded)")
-        self._name_input.textEdited.connect(self._on_field_edited)
-        nv.addWidget(self._name_input)
-        nh.addWidget(name_frame, stretch=2)
-
-        # Time range
-        time_frame = QFrame(); time_frame.setStyleSheet("background: transparent;")
-        tv = QVBoxLayout(time_frame); tv.setContentsMargins(0, 0, 0, 0); tv.setSpacing(2)
-        time_lbl = QLabel("TIME RANGE  (HH:MM → HH:MM)")
-        time_lbl.setFont(inter(7, QFont.Weight.Bold, letter_spacing=1.0))
-        time_lbl.setStyleSheet(f"color: {TEXT_MUTED}; background: transparent;")
-        tv.addWidget(time_lbl)
-        time_inputs = QFrame(); time_inputs.setStyleSheet("background: transparent;")
-        ti = QHBoxLayout(time_inputs); ti.setContentsMargins(0, 0, 0, 0); ti.setSpacing(6)
-        self._time_start_input = QLineEdit()
-        self._time_start_input.setFixedHeight(28); self._time_start_input.setFixedWidth(70)
-        self._time_start_input.setFont(mono(10, bold=True))
-        self._time_start_input.setStyleSheet(self._lineedit_qss())
-        self._time_start_input.setPlaceholderText("06:00")
-        self._time_start_input.textEdited.connect(self._on_field_edited)
-        ti.addWidget(self._time_start_input)
-        arrow = QLabel("→"); arrow.setFont(inter(12, QFont.Weight.Bold))
-        arrow.setStyleSheet(f"color: {TEXT_MUTED}; background: transparent;")
-        ti.addWidget(arrow)
-        self._time_end_input = QLineEdit()
-        self._time_end_input.setFixedHeight(28); self._time_end_input.setFixedWidth(70)
-        self._time_end_input.setFont(mono(10, bold=True))
-        self._time_end_input.setStyleSheet(self._lineedit_qss())
-        self._time_end_input.setPlaceholderText("10:00")
-        self._time_end_input.textEdited.connect(self._on_field_edited)
-        ti.addWidget(self._time_end_input)
-        ti.addStretch()
-        tv.addWidget(time_inputs)
-        nh.addWidget(time_frame, stretch=2)
-        y += 56
-
-        # Counters strip
-        counters = QFrame(self); counters.setGeometry(x0, y, w, 44)
-        counters.setStyleSheet("background: transparent;")
-        ch = QHBoxLayout(counters); ch.setContentsMargins(0, 0, 0, 0); ch.setSpacing(8)
-        self._counter_widgets: dict[str, QLabel] = {}
-        for label, color in [("Songs", CYAN), ("Breaks", RED),
-                             ("Jingles", PURPLE), ("Sweepers", AMBER),
-                             ("Total", GREEN_LIGHT)]:
-            ch.addWidget(self._make_counter_widget(label, color))
-        y += 50
-
-        # Action toolbar
-        toolbar = QFrame(self); toolbar.setGeometry(x0, y, w, 36)
-        toolbar.setStyleSheet("background: transparent;")
-        th = QHBoxLayout(toolbar); th.setContentsMargins(0, 0, 0, 0); th.setSpacing(4)
-        self._action_buttons: dict[str, QPushButton] = {}
-        actions = [
-            ("change",      "↻  Change",       CYAN,    self._on_change_clock),
-            ("delete",      "✕  Delete",       RED,     self._on_delete_clock_stub),
-            ("add",         "+  Add",          GREEN,   self._on_add_slot),
-            ("insert",      "↳  Insert",       AMBER,   self._on_insert_slot),
-            ("up",          "↑  Move Up",      AMBER,   self._on_move_up),
-            ("down",        "↓  Move Down",    AMBER,   self._on_move_down),
-            ("ai_optimise", "✦  AI Optimise",  PURPLE,  self._on_ai_optimise_stub),
-            ("preview",     "▶  Preview",      GREEN,   self._on_preview_stub),
-            ("validate",    "✓  Validate",     CYAN,    self._on_validate_stub),
-            ("save",        "💾  Save Clock",  GREEN,   self._on_save_clock),
-        ]
-        for key, label, color, handler in actions:
-            b = QPushButton(label); b.setFixedHeight(34)
-            b.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-            b.setFont(inter(9, QFont.Weight.DemiBold))
-            b.setStyleSheet(self._toolbar_btn_qss(color))
-            b.clicked.connect(handler)
-            self._action_buttons[key] = b
-            th.addWidget(b)
-        y += 42
-
-        # Slot list (scroll area)
-        slots_h = WINDOW_H - HEADER_H - STATUS_H - (y - body_y) - pad
-        list_frame = QFrame(self); list_frame.setGeometry(x0, y, w, slots_h)
-        list_frame.setStyleSheet(
-            f"QFrame {{ background: {BG_DARK}; "
-            f"border: 1px solid {rgba('#ffffff', 0.06)}; "
-            f"border-radius: 6px; }}"
-        )
-        scroll = QScrollArea(list_frame)
-        scroll.setGeometry(0, 0, w, slots_h)
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setStyleSheet(
-            "QScrollArea { background: transparent; border: none; }"
-            f"QScrollBar:vertical {{ background: transparent; width: 6px; }}"
-            f"QScrollBar::handle:vertical {{ background: {rgba(PURPLE, 0.45)}; "
-            f"border-radius: 3px; min-height: 24px; }}"
-            "QScrollBar::add-line, QScrollBar::sub-line { height: 0; }"
-        )
-        self._slot_body = QFrame(); self._slot_body.setStyleSheet("background: transparent;")
-        self._slot_body_layout = QVBoxLayout(self._slot_body)
-        self._slot_body_layout.setContentsMargins(0, 0, 0, 0)
-        self._slot_body_layout.setSpacing(0)
-        self._slot_body_layout.addStretch()
-        scroll.setWidget(self._slot_body)
-
-    def _make_counter_widget(self, label: str, color: str) -> QFrame:
-        f = QFrame(); f.setFixedHeight(44)
-        f.setStyleSheet(
-            f"QFrame {{ background: {rgba(color, 0.10)}; "
-            f"border: 1px solid {rgba(color, 0.30)}; "
-            f"border-radius: 5px; }}"
-        )
-        v = QVBoxLayout(f); v.setContentsMargins(10, 4, 10, 4); v.setSpacing(0)
-        sub = QLabel(label.upper())
-        sub.setFont(inter(7, QFont.Weight.Bold, letter_spacing=1.0))
-        sub.setStyleSheet(f"color: {TEXT_MUTED}; background: transparent;")
-        val = QLabel("0")
-        val.setFont(mono(15, bold=True))
-        val.setStyleSheet(f"color: {color}; background: transparent;")
-        v.addWidget(sub); v.addWidget(val)
-        self._counter_widgets[label] = val
-        return f
-
-    def _build_right(self):
-        body_y = HEADER_H
-        body_h = WINDOW_H - HEADER_H - STATUS_H
-        wrap = QFrame(self); wrap.setGeometry(RIGHT_X, body_y, RIGHT_W, body_h)
-        wrap.setStyleSheet(
-            f"QFrame {{ background: {BG_DARK}; "
-            f"border-left: 1px solid {rgba('#ffffff', 0.06)}; }}"
-        )
-        v = QVBoxLayout(wrap)
-        v.setContentsMargins(0, 0, 0, 0); v.setSpacing(0)
-
-        self._props_panel = _SlotPropertiesPanel(self._categories)
-        self._props_panel.apply_clicked.connect(self._on_apply_slot_changes)
-        self._props_panel.remove_clicked.connect(self._on_remove_selected_slot)
-        v.addWidget(self._props_panel)
-
-    def _build_status_bar(self):
-        bar = QFrame(self); bar.setGeometry(0, WINDOW_H - STATUS_H, WINDOW_W, STATUS_H)
-        bar.setStyleSheet(
-            f"QFrame {{ background: {BG_PANEL}; "
-            f"border-top: 1px solid {rgba('#ffffff', 0.06)}; }}"
-        )
-        # Simple paint — pills + center text
-        from datetime import datetime
-        bar_paint = _ClockEditorStatusBar(bar)
-        bar_paint.setGeometry(0, 0, WINDOW_W, STATUS_H)
-
-    @staticmethod
-    def _lineedit_qss() -> str:
-        return (
-            f"QLineEdit {{ background: #0e1020; color: {TEXT_PRI}; "
-            f"border: 1px solid {rgba('#ffffff', 0.06)}; border-radius: 4px; "
-            f"padding: 0 10px; "
-            f"selection-background-color: {rgba(CYAN, 0.25)}; }}"
-            f"QLineEdit:focus {{ border: 1px solid {rgba(CYAN, 0.50)}; }}"
-        )
-
-    @staticmethod
-    def _toolbar_btn_qss(color: str) -> str:
-        return (
-            f"QPushButton {{ background: {rgba(color, 0.14)}; "
-            f"color: {color}; "
-            f"border: 1px solid {rgba(color, 0.30)}; "
-            f"border-radius: 5px; padding: 0 10px; }}"
-            f"QPushButton:hover {{ background: {rgba(color, 0.24)}; }}"
-            f"QPushButton:disabled {{ background: rgba(255,255,255,0.02); "
-            f"color: {TEXT_DIM}; border-color: rgba(255,255,255,0.04); }}"
-        )
-
-    # ── State management ──────────────────────────────────────────────────
+            clocks = [dict(r) for r in self._db.get_all_clocks()]
+        except Exception as exc:
+            log.warning(f"clocks list load failed: {exc}")
+            clocks = []
+        self._sidebar.populate(clocks, active_id=self._current_clock_id)
+        self._status.set_clock_count(len(clocks))
+        if select_first and clocks and self._current_clock_id is None:
+            self._load_clock(int(clocks[0]["id"]))
 
     def _load_clock(self, clock_id: int) -> None:
         try:
@@ -1010,51 +1497,36 @@ class ClockEditor(QWidget):
         except Exception as exc:
             log.warning(f"clock load {clock_id} failed: {exc}")
             return
-
         clock = dict(clock_row)
         self._current_clock_id = int(clock["id"])
         self._slots = [dict(r) for r in slot_rows]
         self._selected_slot_idx = None
-
-        name = clock.get("name") or ""
-        time_start = clock.get("time_start") or ""
-        time_end = clock.get("time_end") or ""
-        self._name_input.setText(name)
-        self._time_start_input.setText(time_start)
-        self._time_end_input.setText(time_end)
-
-        # Phase F2.2: capture originals for dirty comparison
-        self._original_clock_name = name
-        self._original_time_start = time_start
-        self._original_time_end = time_end
         self._is_dirty = False
 
-        self._rebuild_slot_rows()
-        self._refresh_counters()
-        self._props_panel.set_slot(None)
+        self._timeline.set_clock_meta(
+            clock.get("name") or "",
+            clock.get("time_start") or "",
+            clock.get("time_end") or "",
+            len(self._slots),
+        )
+        self._timeline.set_slots(self._slots, self._selected_slot_idx)
+        self._editor.set_clock_meta(self._slots)
+        self._editor.set_slot(None)
+
+        # Refresh sidebar to update active highlight + counts
+        self._refresh_clocks_list(select_first=False)
 
         log.info(
             f"[clock-editor] loaded clock id={clock_id} "
             f"name={clock.get('name')!r} slots={len(self._slots)}")
 
-    def _on_field_edited(self, _text: str = "") -> None:
-        """Called on any name/time input edit. Marks dirty."""
-        self._is_dirty = True
-
     def _confirm_discard_if_dirty(self, action_label: str = "continue") -> bool:
-        """Phase F2.2 / Q4: if working copy has unsaved changes, prompt
-        the user to confirm discarding before action_label proceeds.
-        Returns True to continue, False to cancel."""
         if not self._is_dirty:
             return True
-        # Use QMessageBox for the confirmation — simpler than a custom
-        # dialog for a yes/no prompt
-        from PyQt6.QtWidgets import QMessageBox
         box = QMessageBox(self)
         box.setWindowTitle("Discard unsaved changes?")
-        box.setText(
-            "This clock has unsaved changes.\n\n"
-            f"{action_label.capitalize()} will discard them.")
+        box.setText("This clock has unsaved changes.\n\n"
+                    f"{action_label.capitalize()} will discard them.")
         box.setIcon(QMessageBox.Icon.Warning)
         box.setStandardButtons(
             QMessageBox.StandardButton.Discard
@@ -1062,269 +1534,218 @@ class ClockEditor(QWidget):
         box.setDefaultButton(QMessageBox.StandardButton.Cancel)
         return box.exec() == QMessageBox.StandardButton.Discard
 
-    def _show_no_clocks_state(self) -> None:
-        self._name_input.setPlaceholderText("(no clocks in DB — create one in F6)")
-        self._refresh_counters()
+    def _refresh_views(self) -> None:
+        """Push current _slots state to timeline + editor blocks."""
+        self._timeline.set_slots(self._slots, self._selected_slot_idx)
+        self._editor.set_clock_meta(self._slots)
+        if self._selected_slot_idx is None:
+            self._editor.set_slot(None)
+        else:
+            slot = self._slots[self._selected_slot_idx]
+            # Decorate with cat_name for the SELECTED detail card
+            cid = slot.get("category_id")
+            if cid:
+                cat = next(
+                    (dict(c) for c in self._db.get_categories()
+                     if int(c["id"]) == int(cid)),
+                    {})
+                slot = dict(slot); slot["cat_name"] = cat.get("name") or ""
+            self._editor.set_slot(slot, slot_index=self._selected_slot_idx)
 
-    def _rebuild_slot_rows(self) -> None:
-        # Remove existing rows
-        for r in self._slot_rows:
-            r.setParent(None); r.deleteLater()
-        self._slot_rows.clear()
-        # Insert new rows BEFORE the stretch (which is the last item)
-        stretch_idx = self._slot_body_layout.count() - 1
-        for i, slot in enumerate(self._slots):
-            row = _SlotRow(i, self._slot_body)
-            row.set_data(slot, is_selected=(i == self._selected_slot_idx))
-            row.clicked.connect(self._on_slot_row_clicked)
-            self._slot_body_layout.insertWidget(stretch_idx + i, row)
-            self._slot_rows.append(row)
+    # ── event handlers ────────────────────────────────────────────────────
 
-    def _refresh_counters(self) -> None:
-        n_song = sum(1 for s in self._slots
-                     if _normalize_slot_type(s.get("slot_type", "")) == "Song")
-        n_break = sum(1 for s in self._slots
-                      if _normalize_slot_type(s.get("slot_type", "")) == "Spot"
-                      or s.get("is_break"))
-        n_jingle = sum(1 for s in self._slots
-                       if _normalize_slot_type(s.get("slot_type", "")) == "Jingle")
-        n_sweeper = sum(1 for s in self._slots
-                        if _normalize_slot_type(s.get("slot_type", "")) == "Sweeper")
-        # Total minutes: rough estimate (3:30 per song, 2 min per break,
-        # 8s sweeper, 12s jingle). Phase F4 will use real audio durations.
-        total_s = (n_song * 210 + n_break * 120
-                   + n_sweeper * 8 + n_jingle * 12)
-        for label, val in [
-            ("Songs", str(n_song)), ("Breaks", str(n_break)),
-            ("Jingles", str(n_jingle)), ("Sweepers", str(n_sweeper)),
-            ("Total", _fmt_minutes(total_s)),
-        ]:
-            if label in self._counter_widgets:
-                self._counter_widgets[label].setText(val)
+    def _on_clock_selected(self, clock_id: int) -> None:
+        if clock_id == self._current_clock_id:
+            return
+        if not self._confirm_discard_if_dirty("loading another clock"):
+            return
+        self._load_clock(clock_id)
 
-    # ── Handlers ──────────────────────────────────────────────────────────
+    def _on_new_clock(self) -> None:
+        if not self._confirm_discard_if_dirty("creating a new clock"):
+            return
+        try:
+            new_id = self._db.create_clock("New Clock")
+        except Exception as exc:
+            log.warning(f"create_clock failed: {exc}")
+            return
+        self._load_clock(new_id)
 
-    def _on_slot_row_clicked(self, idx: int) -> None:
+    def _on_duplicate_clock(self) -> None:
+        if self._current_clock_id is None:
+            return
+        if not self._confirm_discard_if_dirty("duplicating this clock"):
+            return
+        try:
+            new_id = self._db.duplicate_clock(self._current_clock_id)
+        except Exception as exc:
+            log.warning(f"duplicate_clock failed: {exc}")
+            return
+        self._load_clock(new_id)
+
+    def _on_rename_clock(self) -> None:
+        if self._current_clock_id is None:
+            return
+        current = self._db.get_clock(self._current_clock_id)
+        old_name = (current["name"] if current else "") or ""
+        new_name, ok = QInputDialog.getText(
+            self, "Rename clock", "New name:", QLineEdit.EchoMode.Normal, old_name)
+        if not ok or not new_name.strip():
+            return
+        try:
+            self._db.save_clock(self._current_clock_id, {"name": new_name.strip()})
+        except Exception as exc:
+            log.warning(f"rename failed: {exc}")
+            return
+        self._load_clock(self._current_clock_id)
+
+    def _on_delete_clock(self) -> None:
+        if self._current_clock_id is None:
+            return
+        box = QMessageBox(self)
+        box.setWindowTitle("Delete clock?")
+        box.setText("Delete this clock and all its slots?\n\nThis cannot be undone.")
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setStandardButtons(
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        if box.exec() != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self._db.delete_clock(self._current_clock_id)
+        except ValueError as exc:
+            QMessageBox.information(self, "Cannot delete", str(exc))
+            return
+        except Exception as exc:
+            log.warning(f"delete_clock failed: {exc}")
+            return
+        self._current_clock_id = None
+        self._slots = []
+        self._is_dirty = False
+        self._refresh_clocks_list(select_first=True)
+
+    def _on_slot_selected(self, idx: int) -> None:
         if idx < 0 or idx >= len(self._slots):
             return
         self._selected_slot_idx = idx
-        for i, row in enumerate(self._slot_rows):
-            row.set_data(self._slots[i], is_selected=(i == idx))
-        self._props_panel.set_slot(self._slots[idx], slot_index=idx)
+        self._refresh_views()
 
-    def _on_change_clock(self) -> None:
-        """Phase F2.2 / Q3 + Q4: open the modal clock picker. If the
-        working copy is dirty, prompt the user to confirm discarding
-        first."""
-        if not self._confirm_discard_if_dirty("Switching clocks"):
+    def _on_type_pill_clicked(self, slot_type: str) -> None:
+        if self._selected_slot_idx is None:
             return
-        from ui.dialogs.clock_picker_dialog import ClockPickerDialog
-        dlg = ClockPickerDialog(
-            db=self._db, current_clock_id=self._current_clock_id,
-            parent=self.window())
-        dlg.clock_picked.connect(lambda cid: self._load_clock(int(cid)))
-        dlg.exec()
+        # Replace the slot dict with a fresh one of the new type, preserving
+        # any compatible fields (category_id, pin_to_time).
+        old = self._slots[self._selected_slot_idx]
+        new = self._new_slot_for_type(slot_type)
+        for k in ("category_id", "pin_to_time"):
+            if k in old and old[k] is not None:
+                new[k] = old[k]
+        self._slots[self._selected_slot_idx] = new
+        self._is_dirty = True
+        self._refresh_views()
 
-    def _on_save_clock(self) -> None:
-        if self._current_clock_id is None:
-            log.warning("[clock-editor] save: no clock loaded")
+    def _on_apply_slot_changes(self, data: dict) -> None:
+        if self._selected_slot_idx is None:
             return
-        try:
-            self._db.save_clock(self._current_clock_id, {
-                "name":       self._name_input.text().strip() or "Untitled",
-                "time_start": self._time_start_input.text().strip(),
-                "time_end":   self._time_end_input.text().strip(),
-            })
-            self._db.save_clock_slots(self._current_clock_id, self._slots)
-            log.info(
-                f"[clock-editor] saved clock id={self._current_clock_id} "
-                f"({len(self._slots)} slots)")
-            # Reset dirty after successful persistence
-            self._original_clock_name = self._name_input.text()
-            self._original_time_start = self._time_start_input.text()
-            self._original_time_end = self._time_end_input.text()
-            self._is_dirty = False
-            # Refresh in-memory clocks list (for picker)
-            self._all_clocks = [dict(r) for r in self._db.get_all_clocks()]
-        except Exception as exc:
-            log.warning(f"[clock-editor] save failed: {exc}")
+        self._slots[self._selected_slot_idx].update(data)
+        self._is_dirty = True
+        self._refresh_views()
 
-    # ── Phase F2.2: Slot mutations (working-copy only; persists on Save) ──
+    def _on_remove_selected_slot(self) -> None:
+        self._on_delete_slot()
 
-    @staticmethod
-    def _new_song_slot() -> dict:
-        """Fresh slot template — Q1 default: Song with 'Any' filters."""
-        return {
-            "slot_type":           "Song",
-            "category_id":         None,
-            "energy_pref":         "Any",
-            "vocal_pref":          "Any",
-            "priority_pref":       "Normal",
-            "separation_override": 0,
-            "is_break":            0,
-            "sweeper_position":    "START_OF_SONG",
-            "item_id":             0,
-            "cat_name":            None,
-            "cat_color":           None,
-        }
+    # ── F2.2 mutation API (preserved names for tests) ─────────────────────
 
     def _on_add_slot(self) -> None:
-        """Append a new Song slot at the end of the working copy."""
         slot = self._new_song_slot()
         self._slots.append(slot)
         self._selected_slot_idx = len(self._slots) - 1
         self._is_dirty = True
-        self._rebuild_slot_rows()
-        self._refresh_counters()
-        self._props_panel.set_slot(slot, slot_index=self._selected_slot_idx)
-        log.info(f"[clock-editor] +Add → slot {self._selected_slot_idx + 1}")
+        self._refresh_views()
 
     def _on_insert_slot(self) -> None:
-        """Q2: insert AT the current selection (push others down).
-        If no selection, append at end (same behavior as Add)."""
+        idx = self._selected_slot_idx if self._selected_slot_idx is not None else len(self._slots)
         slot = self._new_song_slot()
-        if self._selected_slot_idx is None:
-            self._slots.append(slot)
-            self._selected_slot_idx = len(self._slots) - 1
-        else:
-            insert_at = self._selected_slot_idx
-            self._slots.insert(insert_at, slot)
-            self._selected_slot_idx = insert_at
+        self._slots.insert(idx, slot)
+        self._selected_slot_idx = idx
         self._is_dirty = True
-        self._rebuild_slot_rows()
-        self._refresh_counters()
-        self._props_panel.set_slot(slot, slot_index=self._selected_slot_idx)
-        log.info(f"[clock-editor] Insert → slot {self._selected_slot_idx + 1}")
+        self._refresh_views()
 
     def _on_delete_slot(self) -> None:
-        """Remove the selected slot. Picks the previous neighbor (or
-        next if removed slot was at index 0) as the new selection."""
         if self._selected_slot_idx is None:
             return
         idx = self._selected_slot_idx
         del self._slots[idx]
-        self._is_dirty = True
         if not self._slots:
             self._selected_slot_idx = None
-            self._props_panel.set_slot(None)
         else:
-            new_idx = max(0, idx - 1)
-            self._selected_slot_idx = new_idx
-            self._props_panel.set_slot(self._slots[new_idx], slot_index=new_idx)
-        self._rebuild_slot_rows()
-        self._refresh_counters()
-        log.info(f"[clock-editor] Delete slot {idx + 1}")
-
-    def _on_remove_selected_slot(self) -> None:
-        """Right-panel "Remove Slot" button — same behavior as Delete."""
-        self._on_delete_slot()
+            self._selected_slot_idx = max(0, idx - 1)
+        self._is_dirty = True
+        self._refresh_views()
 
     def _on_move_up(self) -> None:
-        """Swap selected slot with previous. No-op at index 0."""
         if self._selected_slot_idx is None or self._selected_slot_idx == 0:
             return
-        i = self._selected_slot_idx
-        self._slots[i - 1], self._slots[i] = self._slots[i], self._slots[i - 1]
-        self._selected_slot_idx = i - 1
+        idx = self._selected_slot_idx
+        self._slots[idx - 1], self._slots[idx] = self._slots[idx], self._slots[idx - 1]
+        self._selected_slot_idx = idx - 1
         self._is_dirty = True
-        self._rebuild_slot_rows()
-        self._refresh_counters()
-        self._props_panel.set_slot(
-            self._slots[self._selected_slot_idx],
-            slot_index=self._selected_slot_idx)
-        log.info(f"[clock-editor] Move Up: {i + 1} → {i}")
+        self._refresh_views()
 
     def _on_move_down(self) -> None:
-        """Swap selected slot with next. No-op at last index."""
-        if self._selected_slot_idx is None:
+        if self._selected_slot_idx is None or self._selected_slot_idx >= len(self._slots) - 1:
             return
-        i = self._selected_slot_idx
-        if i >= len(self._slots) - 1:
-            return
-        self._slots[i + 1], self._slots[i] = self._slots[i], self._slots[i + 1]
-        self._selected_slot_idx = i + 1
+        idx = self._selected_slot_idx
+        self._slots[idx + 1], self._slots[idx] = self._slots[idx], self._slots[idx + 1]
+        self._selected_slot_idx = idx + 1
         self._is_dirty = True
-        self._rebuild_slot_rows()
-        self._refresh_counters()
-        self._props_panel.set_slot(
-            self._slots[self._selected_slot_idx],
-            slot_index=self._selected_slot_idx)
-        log.info(f"[clock-editor] Move Down: {i + 1} → {i + 2}")
+        self._refresh_views()
 
-    # Apply Changes from properties panel — also marks dirty
-    def _on_apply_slot_changes(self, data: dict) -> None:
-        if self._selected_slot_idx is None:
+    # ── save / stubs ─────────────────────────────────────────────────────
+
+    def _on_save_clock(self) -> None:
+        if self._current_clock_id is None:
             return
-        # Resolve cat_name/cat_color from category_id for visual row update
-        cat_id = data.get("category_id")
-        for c in self._categories:
-            if c.get("id") == cat_id:
-                data["cat_name"]  = c.get("name")
-                data["cat_color"] = c.get("color")
-                break
+        try:
+            self._db.save_clock_slots(self._current_clock_id, self._slots)
+        except Exception as exc:
+            log.warning(f"save_clock_slots failed: {exc}")
+            QMessageBox.warning(self, "Save failed", str(exc))
+            return
+        self._is_dirty = False
+        log.info(f"[clock-editor] saved clock id={self._current_clock_id} "
+                 f"slots={len(self._slots)}")
+        self._refresh_clocks_list(select_first=False)
+
+    def _on_auto_optimise_toast(self) -> None:
+        QMessageBox.information(
+            self, "Auto-Optimise",
+            "Auto-Optimise is wired to the Anthropic Claude API.\n\n"
+            "Phase E AI integration — coming after Phase F polish.")
+
+    def _on_preview_stub(self) -> None:
+        QMessageBox.information(
+            self, "Preview",
+            "Clock Preview — Phase F polish.\n\nWill play through the clock "
+            "in the Studio deck without committing it to the broadcast log.")
+
+    def _on_validate_stub(self) -> None:
+        # Cheap deterministic check: at least 6 song slots and 1 break.
+        n_song = sum(1 for s in self._slots
+                     if _normalize_slot_type(s.get("slot_type", "")) == "Song")
+        n_break = sum(1 for s in self._slots
+                      if _normalize_slot_type(s.get("slot_type", "")) in ("Break", "Spot"))
+        problems = []
+        if n_song < 6:
+            problems.append(f"only {n_song} song slot(s) — target 8–14")
+        if n_break < 1:
+            problems.append("no breaks scheduled")
+        if not problems:
+            QMessageBox.information(
+                self, "Validate",
+                "Clock looks healthy.\n\n"
+                f"{n_song} songs · {n_break} breaks · {len(self._slots)} total slots.")
         else:
-            data["cat_name"] = None
-            data["cat_color"] = None
-        self._slots[self._selected_slot_idx].update(data)
-        self._is_dirty = True
-        row = self._slot_rows[self._selected_slot_idx]
-        row.set_data(self._slots[self._selected_slot_idx], is_selected=True)
-        self._refresh_counters()
-        log.info(
-            f"[clock-editor] slot {self._selected_slot_idx + 1} updated: {data}")
-
-    # ── Stubs (F2.4 polish — real impl is Phase E) ────────────────────────
-
-    def _on_delete_clock_stub(self):
-        log.info("[clock-editor] Delete-Clock stub (F4 / Phase E)")
-
-    def _on_ai_optimise_stub(self):
-        log.info(
-            "[clock-editor] AI Optimise will run in Phase E (Anthropic API)")
-
-    def _on_preview_stub(self):
-        log.info("[clock-editor] Preview (F2.4 stub)")
-
-    def _on_validate_stub(self):
-        log.info(
-            "[clock-editor] Validate: all checks passed "
-            "(validation impl: Phase E)")
-
-
-# ════════════════════════════════════════════════════════════════════════════
-# Status bar (mirrors Studio's pattern, stripped down)
-# ════════════════════════════════════════════════════════════════════════════
-
-class _ClockEditorStatusBar(QFrame):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFixedHeight(STATUS_H)
-        self.setStyleSheet("background: transparent;")
-
-    def paintEvent(self, _e):
-        super().paintEvent(_e)
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        # Pills
-        x = 12
-        for label, color in [
-            ("AUTO MODE",   PURPLE_LIGHT),
-            ("AI Active",   GREEN),
-            ("8 Clocks",    CYAN),
-            ("Log Ready",   AMBER),
-        ]:
-            p.setFont(inter(8, QFont.Weight.Bold, letter_spacing=0.6))
-            tw = p.fontMetrics().horizontalAdvance(label) + 16
-            pill = QRectF(x, (STATUS_H - 18) / 2, tw, 18)
-            bg = QColor(color); bg.setAlphaF(0.18)
-            p.setBrush(bg); p.setPen(Qt.PenStyle.NoPen)
-            p.drawRoundedRect(pill, 8, 8)
-            p.setPen(QColor(color))
-            p.drawText(pill, Qt.AlignmentFlag.AlignCenter, label)
-            x += tw + 6
-        # Center text
-        p.setPen(QColor(TEXT_MUTED))
-        p.setFont(inter(9, QFont.Weight.Medium))
-        p.drawText(QRectF(0, 0, self.width(), self.height()),
-                   Qt.AlignmentFlag.AlignCenter,
-                   "Clock Editor  ·  KissFM Studio v2.0")
+            QMessageBox.warning(
+                self, "Validate — issues found",
+                "This clock may not air well:\n\n• " + "\n• ".join(problems))

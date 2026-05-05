@@ -142,7 +142,7 @@ class AIDailyScheduler:
                             if jingle:
                                 self._save_log(date_str, hour, position, jingle[0], "jingle")
 
-                    elif stype == "Spot":
+                    elif stype in ("Spot", "Break"):
                         self._save_log(date_str, hour, position, 0, "spot")
 
                     position += 1

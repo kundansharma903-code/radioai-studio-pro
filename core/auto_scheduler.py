@@ -145,7 +145,7 @@ class AutoScheduler:
             cat_name = r[9] or ""
             cat_color = r[10] or "#8B5CF6"
 
-            if slot_type == "spot":
+            if slot_type in ("spot", "break"):
                 queue.append(self._make_break_marker())
                 continue
 
@@ -205,7 +205,7 @@ class AutoScheduler:
                     queue.append(jingle)
                     items_added += 1
 
-            elif stype == "Spot":
+            elif stype in ("Spot", "Break"):
                 queue.append(self._make_break_marker())
                 items_added += 1
 

@@ -368,19 +368,112 @@ class Database:
         conn.commit()
 
     def _ensure_clock_slots_columns(self) -> None:
-        """Add the F2.2.1 columns (Figma 59:2 redesign groundwork) if
-        missing. Idempotent — safe to call on every save_clock_slots."""
+        """Add the F2.2.1 + F2.3 columns (Figma 59:2 redesign) if missing.
+        Idempotent — safe to call on every save_clock_slots."""
         conn = self._conn()
         cols = {r[1] for r in conn.execute(
             "PRAGMA table_info(clock_slots)").fetchall()}
         adds = [
             ("fallback_category_id", "INTEGER REFERENCES categories(id)"),
             ("pin_to_time",          "INTEGER NOT NULL DEFAULT 0"),
+            # F2.3 (Figma 59:2 per-type panels)
+            ("duration_seconds",     "INTEGER"),  # Break + Voice Track
+            ("ref_text",             "TEXT"),     # Station ID ref / VT label
         ]
         for col, decl in adds:
             if col not in cols:
                 conn.execute(f"ALTER TABLE clock_slots ADD COLUMN {col} {decl}")
         conn.commit()
+
+    def create_clock(self, name: str = "New Clock") -> int:
+        """Insert a fresh empty clock with safe defaults.
+        Returns the new clock id. Used by the Clock Editor's '+ New' action."""
+        conn = self._conn()
+        cur = conn.execute(
+            "INSERT INTO clocks (name, time_start, time_end, day_mask, "
+            "is_active) VALUES (?, '00:00', '01:00', 127, 1)",
+            [name or "New Clock"],
+        )
+        conn.commit()
+        return int(cur.lastrowid)
+
+    def duplicate_clock(self, clock_id: int) -> int:
+        """Clone the clock plus its slots. Returns new clock id.
+
+        New name is "<original> (copy)". All slot fields are copied
+        verbatim except id (autoincrement) and clock_id (rebound).
+        Single transaction — rolls back if any insert fails."""
+        self._ensure_clock_slots_columns()
+        conn = self._conn()
+        src = self.get_clock(int(clock_id))
+        if src is None:
+            raise ValueError(f"clock {clock_id} not found")
+        src_slots = self.get_clock_slots(int(clock_id))
+        cols_present = {r[1] for r in conn.execute(
+            "PRAGMA table_info(clock_slots)").fetchall()}
+        try:
+            conn.execute("BEGIN")
+            cur = conn.execute(
+                "INSERT INTO clocks (name, time_start, time_end, day_mask, "
+                "description, is_active) VALUES (?, ?, ?, ?, ?, ?)",
+                [
+                    f"{src['name']} (copy)",
+                    src["time_start"], src["time_end"],
+                    src["day_mask"],
+                    src["description"] if "description" in src.keys() else None,
+                    src["is_active"] if "is_active" in src.keys() else 1,
+                ],
+            )
+            new_id = int(cur.lastrowid)
+            for slot in src_slots:
+                payload: dict = {"clock_id": new_id}
+                for k in cols_present:
+                    if k in ("id", "clock_id"):
+                        continue
+                    if k in slot.keys():
+                        payload[k] = slot[k]
+                cols = ", ".join(payload.keys())
+                ph   = ", ".join(["?"] * len(payload))
+                conn.execute(
+                    f"INSERT INTO clock_slots ({cols}) VALUES ({ph})",
+                    list(payload.values()),
+                )
+            conn.commit()
+            return new_id
+        except Exception:
+            conn.rollback()
+            raise
+
+    def delete_clock(self, clock_id: int) -> None:
+        """Delete a clock by exact id (FK ON DELETE CASCADE removes its
+        slots and any auto_schedule rows). Refuses to drop the very last
+        clock so the editor always has something to load."""
+        conn = self._conn()
+        total = conn.execute("SELECT COUNT(*) FROM clocks").fetchone()[0]
+        if int(total or 0) <= 1:
+            raise ValueError("cannot delete the last remaining clock")
+        cid = int(clock_id)
+        try:
+            conn.execute("BEGIN")
+            conn.execute("DELETE FROM clocks WHERE id = ?", [cid])
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+    def migrate_spot_to_break(self) -> int:
+        """Phase F2.3 — rename clock_slots.slot_type 'Spot'/'spot' to
+        'Break'. Idempotent: second call updates 0 rows. The auto and
+        AI schedulers were updated to accept either token, so calling
+        this on first ClockEditor mount is safe even if upstream code
+        somewhere still emits 'Spot'."""
+        conn = self._conn()
+        cur = conn.execute(
+            "UPDATE clock_slots SET slot_type='Break' "
+            "WHERE LOWER(slot_type) = 'spot'"
+        )
+        conn.commit()
+        return int(cur.rowcount or 0)
 
     def save_clock_slots(self, clock_id: int, slots: list) -> None:
         """Replace this clock's slot list with `slots`. DELETE+INSERT
@@ -400,7 +493,8 @@ class Database:
                          "vocal_pref", "priority_pref",
                          "separation_override", "position_minutes",
                          "is_break", "sweeper_position", "item_id",
-                         "fallback_category_id", "pin_to_time"):
+                         "fallback_category_id", "pin_to_time",
+                         "duration_seconds", "ref_text"):
                     if k in cols_present and k in slot:
                         payload[k] = slot[k]
                 cols = ", ".join(payload.keys())
