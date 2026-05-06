@@ -76,6 +76,12 @@ class SchedulerEngine(QObject):
     error_occurred     = pyqtSignal(str)
     started            = pyqtSignal()
     stopped            = pyqtSignal()
+    # Hour-boundary detection (additive — does not affect dispatch logic).
+    # Emits (clock_id, name) when the active clock for current
+    # (day_of_week, hour) changes. clock_id = -1, name = "" when no
+    # clock is assigned to the current cell. Deduped — re-emits only
+    # when the resolved clock genuinely changes from the previous tick.
+    active_clock_changed = pyqtSignal(int, str)
 
     # Lifecycle defaults
     DEFAULT_TICK_INTERVAL_MS = 1000
@@ -113,6 +119,14 @@ class SchedulerEngine(QObject):
         # rollover so each hour starts at slot 0.
         self._clock_slot_cursor: int = 0
         self._active_hour_key: Optional[tuple[int, int]] = None
+
+        # Active-clock tracking (Studio header indicator).
+        # `_active_clock_id is None` means "no tick has resolved yet" —
+        # current_active_clock() returns (None, "") for that pre-tick
+        # state. After the first tick a real id (or -1 for unassigned)
+        # is set, and active_clock_changed fires only on transitions.
+        self._active_clock_id: Optional[int] = None
+        self._active_clock_name: str = ""
 
     # ── Lifecycle ─────────────────────────────────────────────────────────
 
@@ -207,6 +221,78 @@ class SchedulerEngine(QObject):
                 self.error_occurred.emit(msg)
             except Exception:
                 pass
+        # Active-clock tracking is its own try/except so a DB blip on
+        # this path can never freeze the dispatch tick (which lives in
+        # _dispatch_due_events above). Broadcast safety: keep the
+        # 1Hz heartbeat alive at all costs.
+        self._check_active_clock_change()
+
+    # ── Active-clock tracking (Studio header indicator) ───────────────────
+
+    def _check_active_clock_change(self) -> None:
+        """Resolve the clock assigned to the current ``(weekday, hour)``
+        cell and fire ``active_clock_changed`` only when it differs from
+        the value cached on the previous tick. Hour-boundary detection
+        works automatically — at minute 00 of a new hour the resolved
+        clock changes (to either a different clock or to the no-clock
+        sentinel), and the dedupe lets it fire once per transition.
+
+        Day rollover handled implicitly: ``datetime.now().weekday()``
+        returns 0=Mon..6=Sun, so a Sunday→Monday boundary at midnight
+        picks Monday's cell on the very first post-rollover tick.
+
+        Wrapped in try/except — a transient DB error must NOT propagate
+        and freeze ``_on_tick``. Previous state is preserved on failure
+        so the indicator displays the last known clock until the next
+        successful resolve."""
+        try:
+            now = datetime.now()
+            dow = int(now.weekday())
+            hour = int(now.hour)
+            row = self._db.get_active_clock(dow, hour)
+            if row is None:
+                new_id = -1
+                new_name = ""
+            else:
+                try:
+                    new_id = int(row["id"])
+                except (KeyError, IndexError, TypeError, ValueError):
+                    new_id = -1
+                try:
+                    new_name = str(row["name"] or "")
+                except (KeyError, IndexError, TypeError):
+                    new_name = ""
+        except Exception as exc:
+            log.warning(f"active-clock check failed: "
+                        f"{type(exc).__name__}: {exc}")
+            return
+
+        # Dedupe — only emit on transitions. Pre-tick state is None so
+        # the first successful resolve always emits.
+        if (self._active_clock_id == new_id
+                and self._active_clock_name == new_name):
+            return
+        self._active_clock_id = new_id
+        self._active_clock_name = new_name
+        try:
+            self.active_clock_changed.emit(int(new_id), new_name)
+        except Exception:
+            # Cross-thread emit failures are non-fatal — the next
+            # transition will retry.
+            pass
+
+    def current_active_clock(self) -> tuple[Optional[int], str]:
+        """Read-only snapshot of the currently-resolved active clock.
+
+        Returns:
+            (clock_id, name) where ``clock_id`` is -1 when no clock is
+            assigned to the current cell, or ``None`` when no tick has
+            yet resolved (pre-start state). ``name`` is "" when the
+            clock_id has no readable name OR no clock is assigned.
+
+        Useful for the Studio header to seed its indicator at
+        construction without waiting for the first tick."""
+        return self._active_clock_id, self._active_clock_name
 
     def _dispatch_due_events(self) -> None:
         """Phase D4: real spot triggering.

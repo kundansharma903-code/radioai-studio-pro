@@ -155,6 +155,10 @@ class _Header(QWidget):
         self._auto_mode   = False
         self._signal_ok   = True
         self._stream_ok   = True
+        # Active Station card third line — defaults to the station
+        # location, replaced with the active clock name (prefixed "● ")
+        # when the scheduler resolves a clock for the current cell.
+        self._active_clock_name = ""
 
         # Cached fonts
         self._font_brand_big = inter(22, QFont.Weight.Black,
@@ -262,6 +266,19 @@ class _Header(QWidget):
             return
         self._stream_ok = bool(ok)
         self.update(QRect(1410, 12, 90, 32))
+
+    def set_active_clock(self, name: str) -> None:
+        """Update the Active Station card's third-line text to reflect
+        the clock currently assigned to this hour. Empty string ('')
+        means "no clock assigned" → the card falls back to its default
+        location text in paint. Repaint scoped to just the card."""
+        v = (name or "").strip()
+        if v == self._active_clock_name:
+            return
+        self._active_clock_name = v
+        # Active Station card lives at QRectF(1080, 8, 220, 56) per
+        # _paint_active_station — just repaint that region.
+        self.update(QRect(1080, 8, 220, 56))
 
     # ── Mouse ────────────────────────────────────────────────────────────
 
@@ -404,11 +421,19 @@ class _Header(QWidget):
         p.drawText(QRectF(card.x() + 12, card.y() + 20, 160, 18),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                    "KISS FM 91.5")
-        # Location
+        # Third line — active clock name when assigned, station
+        # location otherwise. Prefix '● ' on the active-clock variant
+        # so the operator distinguishes a live clock-driven hour from
+        # the idle fallback at a glance. Color stays TEXT_SEC for both
+        # variants so the visual rhythm of the card is unchanged.
+        if self._active_clock_name:
+            third_line_text = f"● {self._active_clock_name}"
+        else:
+            third_line_text = "Jaipur, Rajasthan"
         p.setPen(QColor(TEXT_SEC)); p.setFont(self._font_station_s)
         p.drawText(QRectF(card.x() + 12, card.y() + 38, 200, 14),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                   "Jaipur, Rajasthan")
+                   third_line_text)
         # Green pulse dot (right side, vertically centered)
         p.setPen(Qt.PenStyle.NoPen); p.setBrush(_qcolor_a(GREEN, 0.4))
         p.drawEllipse(QPointF(card.right() - 18, card.center().y()), 8, 8)
@@ -3269,6 +3294,16 @@ class Studio(QWidget):
                 self._load_upcoming_queue)
             self._scheduler.started.connect(self._load_upcoming_queue)
             self._scheduler.stopped.connect(self._load_upcoming_queue)
+            # Hour-boundary active-clock indicator. Signal fires only on
+            # transitions; clock_id == -1 + name == "" means "no clock
+            # assigned to this hour" — header falls back to the
+            # station-location text in that case. Defensive
+            # ``hasattr`` so older _FakeScheduler test doubles that
+            # predate this signal don't crash on construct — additive
+            # backward compat for the existing Phase B/C wiring tests.
+            if hasattr(self._scheduler, "active_clock_changed"):
+                self._scheduler.active_clock_changed.connect(
+                    self._on_active_clock_changed)
 
         # Phase A — InstantJingleEngine signal connections + jingle pad
         # bindings + 1-5 hotkeys + Esc-for-stop-all.
@@ -3289,6 +3324,11 @@ class Studio(QWidget):
                                        len(self._queue_songs))
         self._refresh_history()
         self._update_status_pills()
+        # Seed the Active Clock indicator from any value the scheduler
+        # has already cached. Safe pre-tick (returns (None, "")) — the
+        # header just shows the location fallback until the first
+        # active_clock_changed signal arrives.
+        self._seed_active_clock_indicator()
 
         log.info("Studio ready (Figma 312:2 — Premium Jazler Style)")
 
@@ -3783,6 +3823,36 @@ class Studio(QWidget):
     def _on_scheduler_next_break_in(self, seconds: int) -> None:
         if hasattr(self, "_next_break") and self._next_break is not None:
             self._next_break.set_countdown(seconds)
+
+    def _on_active_clock_changed(self, clock_id: int, name: str) -> None:
+        """Scheduler resolved a different clock for the current cell —
+        push the new name to the header. clock_id == -1 means "no clock
+        assigned" → empty string makes the header render its location
+        fallback."""
+        if not hasattr(self, "_header") or self._header is None:
+            return
+        if clock_id < 0:
+            self._header.set_active_clock("")
+        else:
+            self._header.set_active_clock(name or "")
+        log.info(
+            f"[studio] active clock → "
+            f"{'(none)' if clock_id < 0 else f'{name!r} (id={clock_id})'}")
+
+    def _seed_active_clock_indicator(self) -> None:
+        """Pull whatever active clock the scheduler has already cached
+        and push it to the header. Safe to call before any tick has
+        run — getter returns (None, "") in that case and the header
+        falls back to the location text."""
+        if self._scheduler is None or not hasattr(self, "_header"):
+            return
+        try:
+            cid, name = self._scheduler.current_active_clock()
+        except Exception as exc:
+            log.debug(f"[studio] seed active clock failed: {exc}")
+            return
+        if cid is not None and cid >= 0 and name:
+            self._header.set_active_clock(name)
 
     # ────────────────────────────────────────────────────────────────────
     # Idle / playing state coordinators (Step 2 — drive master-strip
