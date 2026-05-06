@@ -47,6 +47,7 @@ from typing import Optional
 
 from PyQt6.QtCore import (
     Qt, QRect, QRectF, QPoint, QPointF, QTimer, pyqtSignal,
+    QPropertyAnimation, pyqtProperty,
 )
 from PyQt6.QtGui import (
     QPainter, QColor, QPen, QBrush, QLinearGradient, QRadialGradient,
@@ -438,6 +439,10 @@ class _Header(QWidget):
 # ════════════════════════════════════════════════════════════════════════
 
 class _NowPlayer(QWidget):
+    # LIVE-dot pulse rect — repaints clip to this region only so the
+    # 25Hz animation never re-renders the full 836×88 panel.
+    _LIVE_DOT_RECT = QRect(160, 12, 110, 18)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedSize(836, 88)
@@ -447,6 +452,19 @@ class _NowPlayer(QWidget):
         self._elapsed_ms = 0
         self._total_ms = 0
         self._progress = 0.0    # 0..1
+
+        # Visual polish 4: LIVE dot pulse. Halo opacity animates over a
+        # 1500ms loop via QPropertyAnimation on the custom property.
+        # Setter stamps a partial-repaint of just the dot rect — the
+        # 836×88 NowPlayer NEVER fully redraws on each frame.
+        self._live_halo_alpha: float = 0.35
+        self._live_pulse_anim = QPropertyAnimation(self, b"liveHaloAlpha")
+        self._live_pulse_anim.setDuration(1500)
+        self._live_pulse_anim.setStartValue(0.30)
+        self._live_pulse_anim.setKeyValueAt(0.5, 0.70)
+        self._live_pulse_anim.setEndValue(0.30)
+        self._live_pulse_anim.setLoopCount(-1)
+        self._live_pulse_anim.start()
 
         # Pre-cached fonts
         self._font_now      = inter(8, QFont.Weight.Black, letter_spacing=1.6)
@@ -469,6 +487,19 @@ class _NowPlayer(QWidget):
             jitter = (rng.random() - 0.5) * 0.20
             bars.append(max(0.18, min(1.0, envelope + harmonic + jitter)))
         self._wf_bars = bars
+
+    # ── LIVE dot pulse property ──────────────────────────────────────────
+
+    def _get_live_halo_alpha(self) -> float:
+        return self._live_halo_alpha
+
+    def _set_live_halo_alpha(self, v: float) -> None:
+        self._live_halo_alpha = max(0.0, min(1.0, float(v)))
+        # Partial repaint — only the dot region. Skipping the full
+        # panel keeps the pulse cheap even at 60fps.
+        self.update(self._LIVE_DOT_RECT)
+
+    liveHaloAlpha = pyqtProperty(float, _get_live_halo_alpha, _set_live_halo_alpha)
 
     def set_track(self, title: str, artist_year: str,
                   total_ms: int) -> None:
@@ -513,6 +544,15 @@ class _NowPlayer(QWidget):
         # Vinyl (left, ~80h - centered)
         cx, cy = 56, 44
         rad_outer = 30
+        # Visual polish 3: ambient halo BEHIND the vinyl rings. Soft
+        # green falloff that gives the album-art region a glow without
+        # changing the existing concentric-ring composition.
+        halo_grad = QRadialGradient(QPointF(cx, cy), rad_outer + 12)
+        halo_grad.setColorAt(0.0, _qcolor_a(GREEN_LIGHT, 0.30))
+        halo_grad.setColorAt(0.6, _qcolor_a(GREEN, 0.12))
+        halo_grad.setColorAt(1.0, _qcolor_a(GREEN, 0.0))
+        p.setBrush(QBrush(halo_grad)); p.setPen(Qt.PenStyle.NoPen)
+        p.drawEllipse(QPointF(cx, cy), rad_outer + 12, rad_outer + 12)
         # Outer ring (green)
         for ring_r, alpha in [(rad_outer, 0.85), (rad_outer - 6, 0.55),
                                (rad_outer - 14, 0.30)]:
@@ -536,10 +576,20 @@ class _NowPlayer(QWidget):
         p.drawRoundedRect(pill.adjusted(0.5, 0.5, -0.5, -0.5), 4, 4)
         p.setPen(QColor(GREEN_LIGHT)); p.setFont(self._font_now)
         p.drawText(pill, Qt.AlignmentFlag.AlignCenter, "NOW")
-        # ● ON AIR · LIVE indicator
-        # Green dot
+        # ● ON AIR · LIVE indicator (visual polish 4: pulsing halo)
         if not self._idle:
-            p.setPen(Qt.PenStyle.NoPen); p.setBrush(QColor(GREEN_LIGHT))
+            # Outer halo — radial green glow whose alpha is driven by
+            # the QPropertyAnimation on liveHaloAlpha (1.5s loop). The
+            # halo sits behind a solid 4px green dot, identical to
+            # before for the dot itself.
+            halo = QRadialGradient(QPointF(166, 21), 12)
+            halo.setColorAt(0.0, _qcolor_a(GREEN_LIGHT, self._live_halo_alpha))
+            halo.setColorAt(0.5, _qcolor_a(GREEN, self._live_halo_alpha * 0.5))
+            halo.setColorAt(1.0, _qcolor_a(GREEN, 0.0))
+            p.setBrush(QBrush(halo)); p.setPen(Qt.PenStyle.NoPen)
+            p.drawEllipse(QPointF(166, 21), 12, 12)
+            # Solid dot
+            p.setBrush(QColor(GREEN_LIGHT))
             p.drawEllipse(QPointF(166, 21), 4, 4)
             p.setPen(QColor(GREEN_LIGHT)); p.setFont(self._font_onair)
             p.drawText(QRectF(176, 12, 100, 18),
@@ -3040,12 +3090,37 @@ class Studio(QWidget):
         # both this flag AND scheduler.start/stop together so the two
         # stay in lockstep.
         self._auto_advance_enabled: bool = True
+        # Visual polish 1: cached background gradients drawn from
+        # paintEvent. Linear base (top→bottom) + 3 large radial glow
+        # ellipses (purple TR, cyan BL, green mid) that give the
+        # screen its premium-broadcast atmospheric depth without
+        # adding any DOM widgets.
+        self._bg_linear = QLinearGradient(0, 0, 0, WINDOW_H)
+        self._bg_linear.setColorAt(0.0, QColor("#0a0d1a"))
+        self._bg_linear.setColorAt(0.5, QColor("#06080f"))
+        self._bg_linear.setColorAt(1.0, QColor("#020308"))
+        # Purple radial — top-right
+        self._bg_glow_purple = QRadialGradient(QPointF(1800, -200), 700)
+        c_purple_in  = QColor("#8b5cf6"); c_purple_in.setAlphaF(0.16)
+        c_purple_out = QColor("#8b5cf6"); c_purple_out.setAlphaF(0.0)
+        self._bg_glow_purple.setColorAt(0.0, c_purple_in)
+        self._bg_glow_purple.setColorAt(1.0, c_purple_out)
+        # Cyan radial — bottom-left
+        self._bg_glow_cyan = QRadialGradient(QPointF(100, 1100), 700)
+        c_cyan_in  = QColor("#06b6d4"); c_cyan_in.setAlphaF(0.14)
+        c_cyan_out = QColor("#06b6d4"); c_cyan_out.setAlphaF(0.0)
+        self._bg_glow_cyan.setColorAt(0.0, c_cyan_in)
+        self._bg_glow_cyan.setColorAt(1.0, c_cyan_out)
+        # Green radial — mid-screen subtle glow
+        self._bg_glow_green = QRadialGradient(QPointF(1100, 750), 600)
+        c_green_in  = QColor("#10b981"); c_green_in.setAlphaF(0.06)
+        c_green_out = QColor("#10b981"); c_green_out.setAlphaF(0.0)
+        self._bg_glow_green.setColorAt(0.0, c_green_in)
+        self._bg_glow_green.setColorAt(1.0, c_green_out)
         self.setFixedSize(WINDOW_W, WINDOW_H)
-        self.setStyleSheet(
-            "background: qlineargradient("
-            "x1:0,y1:0,x2:1,y2:1, stop:0 #0a0d1a, "
-            "stop:0.5 #06080f, stop:1 #020308);"
-        )
+        # Visual polish 1: bg now painted in paintEvent so we can
+        # composite the linear base + 3 radial glows. Stylesheet bg
+        # removed — it would have layered over the radial pass.
 
         # Phase D state (PRESERVED — names tested)
         self._playback_cid: Optional[int] = None
@@ -3065,6 +3140,9 @@ class Studio(QWidget):
         self._build_master_strip()
         self._build_body_placeholders()
         self._build_bottom_transport_placeholder()
+        # Visual polish 2: tinted drop shadows on every major panel so
+        # they float above the atmospheric bg with depth.
+        self._apply_panel_shadows()
 
         # Engine signal connections (PRESERVED)
         if self._engine is not None:
@@ -3177,6 +3255,40 @@ class Studio(QWidget):
 
         self._problems = _ProblemsPanel(self)
         self._problems.move(1584, BODY_Y + 712)
+
+    def _apply_panel_shadows(self) -> None:
+        """Attach a tinted drop shadow per major panel. The color is a
+        dark variant of the panel's accent so the halo reinforces the
+        panel's identity (NowPlayer green, Instant Jingles purple,
+        etc.). Single QGraphicsDropShadowEffect per widget — Qt's
+        graphics-effect pipeline only supports one effect per widget,
+        so we pick one that conveys both depth (offset) and accent
+        (color tint).
+
+        Performance: drop shadows are GPU-rendered; setting them on
+        nine 540h-820h panels is well within budget. Call once at
+        construction; effects persist for the widget lifetime."""
+        # (panel attribute, blur radius, RGBA color, dy offset)
+        shadow_specs: list[tuple[str, int, QColor, int]] = [
+            ("_now_player",       28, QColor(16, 185, 129, 110), 8),  # green
+            ("_next_chip",        20, QColor(244,  63,  94, 100), 6),  # rose
+            ("_upcoming",         28, QColor(245, 158,  11,  90), 8),  # amber
+            ("_libraries",        28, QColor( 6, 182, 212,  90), 8),   # cyan
+            ("_instant_jingles",  26, QColor(139,  92, 246, 110), 8),  # purple
+            ("_history_panel",    24, QColor(244,  63,  94,  90), 8),  # rose
+            ("_next_break",       24, QColor(245, 158,  11, 100), 8),  # amber
+            ("_rds",              22, QColor( 16, 185, 129,  90), 6),  # green
+            ("_problems",         20, QColor(245, 158,  11,  80), 6),  # amber
+        ]
+        for attr, blur, color, dy in shadow_specs:
+            widget = getattr(self, attr, None)
+            if widget is None:
+                continue
+            eff = QGraphicsDropShadowEffect(widget)
+            eff.setBlurRadius(blur)
+            eff.setColor(color)
+            eff.setOffset(0, dy)
+            widget.setGraphicsEffect(eff)
 
     def _build_bottom_transport_placeholder(self) -> None:
         self._bottom = _BottomTransport(self)
@@ -4196,6 +4308,29 @@ class Studio(QWidget):
         # set_signal/set_auto_mode/set_on_air are all change-gated so
         # repaint happens only when the state actually flips — cheap.
         self._update_status_pills()
+
+    # ────────────────────────────────────────────────────────────────────
+    # Visual polish — root paintEvent (atmospheric background)
+    # ────────────────────────────────────────────────────────────────────
+
+    def paintEvent(self, e: QPaintEvent) -> None:
+        """Compose the premium-broadcast background atmosphere:
+        linear deep-navy base + 3 large radial glow ellipses (purple
+        top-right, cyan bottom-left, green mid). All gradients are
+        cached in __init__; this method does pure draw calls and
+        clips to the dirty rect for partial repaints."""
+        p = QPainter(self)
+        p.setClipRect(e.rect())
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        # Linear base
+        p.fillRect(self.rect(), QBrush(self._bg_linear))
+        # 3 radial glows on top — composition mode SourceOver is the
+        # default but spelled out here for clarity that these are
+        # additive-feeling colored halos, not opaque overlays.
+        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+        p.fillRect(self.rect(), QBrush(self._bg_glow_purple))
+        p.fillRect(self.rect(), QBrush(self._bg_glow_cyan))
+        p.fillRect(self.rect(), QBrush(self._bg_glow_green))
 
     # ────────────────────────────────────────────────────────────────────
     # Lifecycle
