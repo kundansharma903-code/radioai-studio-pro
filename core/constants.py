@@ -12,14 +12,8 @@ APP_VERSION = "2.0.0"
 STATION     = "KISS FM 91.5"
 
 # ── Window ────────────────────────────────────────────────────────────────────
-# Raised to 1920×1080 to host the premium broadcast Studio (Figma 312:2).
-# Pre-existing 1440×900 screens (Hub, Playlists, AutoSchedule, ClockEditor,
-# PlaylistEdit, etc.) hard-code their own setFixedSize(1440,900) and render
-# top-left-anchored inside the bigger MainWindow stack — visually correct,
-# just letterboxed at the right and bottom on full-HD displays. Future
-# polish: re-anchor to center, or upgrade each screen to 1920×1080 native.
-WINDOW_W = 1920
-WINDOW_H = 1080
+WINDOW_W = 1440
+WINDOW_H = 900
 
 # ── Colors (from Design.md) ───────────────────────────────────────────────────
 BG_DEEPEST  = "#04050f"
