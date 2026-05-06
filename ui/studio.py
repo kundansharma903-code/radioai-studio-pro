@@ -11,7 +11,8 @@ STEP-BY-STEP REBUILD per Plan A (Kavish, 2026-05-06):
   ✅ Step 5: Instant Jingles (3×3 tiles + DEMO PLAYING +
              1-5 hotkeys + Edit Bank)
   ✅ Step 6: History panel (12 alternating rows +
-             View Full History link)                         ← THIS COMMIT
+             View Full History link)
+  ✅ Step 7: Next Break + RDS + Problems trio                ← THIS COMMIT
   □  Step 4: Libraries panel (type icons + Action Stack + table + filter)
   □  Step 5: Instant Jingles (6-pad + numeric pad + hotkeys)
   □  Step 6: History panel (12 alternating rows)
@@ -2254,6 +2255,327 @@ class _HistoryPanel(QWidget):
 
 
 # ════════════════════════════════════════════════════════════════════════
+# NEXT BREAK — 420 × 264 (Figma 326:2)
+#
+# NEXT BREAK header amber + COUNTING DOWN muted right
+# Big amber "04:43" countdown 60pt mono center
+# 3 stat columns: BREAK TYPE / DURATION / SPOTS
+# 2 buttons: × Skip Break rose + ▶ Preview cyan
+# ════════════════════════════════════════════════════════════════════════
+
+class _NextBreakPanel(QWidget):
+    skip_clicked = pyqtSignal()
+    preview_clicked = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(420, 264)
+        self._countdown_s = 0
+        self._countdown_label = "00:00"
+        self._break_type = "Commercial"
+        self._break_dur = "2:30"
+        self._spots = 5
+
+        self._font_h        = inter(13, QFont.Weight.Black, letter_spacing=1.4)
+        self._font_status   = inter(9, QFont.Weight.Bold, letter_spacing=1.6)
+        self._font_count    = mono(60, bold=True, letter_spacing=-2.0)
+        self._font_stat_l   = inter(9, QFont.Weight.Bold, letter_spacing=1.4)
+        self._font_stat_v   = inter(13, QFont.Weight.Bold, letter_spacing=-0.1)
+        self._font_btn      = inter(11, QFont.Weight.Bold, letter_spacing=0.4)
+
+        self._skip_rect    = QRect(14, 210, 192, 38)
+        self._preview_rect = QRect(214, 210, 192, 38)
+
+    def set_countdown(self, seconds: int) -> None:
+        self._countdown_s = int(seconds or 0)
+        if self._countdown_s < 0:
+            self._countdown_label = "00:00"
+        else:
+            m = self._countdown_s // 60
+            s = self._countdown_s % 60
+            self._countdown_label = f"{m:02d}:{s:02d}"
+        self.update(self.rect())
+
+    def set_break_meta(self, break_type: str, dur: str, spots: int) -> None:
+        self._break_type = break_type or "—"
+        self._break_dur = dur or "—"
+        self._spots = int(spots or 0)
+        self.update(self.rect())
+
+    def mousePressEvent(self, e: QMouseEvent) -> None:
+        if e.button() == Qt.MouseButton.LeftButton:
+            pt = e.position().toPoint()
+            if self._skip_rect.contains(pt):
+                self.skip_clicked.emit()
+            elif self._preview_rect.contains(pt):
+                self.preview_clicked.emit()
+        super().mousePressEvent(e)
+
+    def paintEvent(self, e: QPaintEvent) -> None:
+        p = QPainter(self); p.setClipRect(e.rect())
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(0, 0, self.width(), self.height())
+        # Panel background
+        bg = QLinearGradient(0, 0, 0, self.height())
+        bg.setColorAt(0.0, QColor(14, 16, 32, 235))
+        bg.setColorAt(1.0, QColor(7, 9, 18, 235))
+        p.fillRect(r, QBrush(bg))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(_qcolor_a(AMBER, 0.30)))
+        p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 12, 12)
+        # 3px amber accent at top
+        accent = QLinearGradient(0, 0, self.width(), 0)
+        accent.setColorAt(0.0, QColor(AMBER))
+        accent.setColorAt(1.0, _qcolor_a(AMBER, 0.4))
+        p.fillRect(QRectF(0, 0, self.width(), 3), QBrush(accent))
+
+        # Header "NEXT BREAK"
+        p.setPen(QColor(AMBER_LIGHT)); p.setFont(self._font_h)
+        p.drawText(QRectF(14, 14, 200, 16),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   "NEXT BREAK")
+        # COUNTING DOWN status (right)
+        p.setPen(QColor(TEXT_DIM)); p.setFont(self._font_status)
+        p.drawText(QRectF(self.width() - 140, 14, 126, 16),
+                   Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                   "COUNTING DOWN")
+
+        # Big countdown
+        p.setPen(QColor(AMBER_LIGHT)); p.setFont(self._font_count)
+        p.drawText(QRectF(0, 50, self.width(), 80),
+                   Qt.AlignmentFlag.AlignCenter, self._countdown_label)
+
+        # 3-column stat block
+        col_w = (self.width() - 28) / 3
+        cols = [
+            ("BREAK TYPE", self._break_type),
+            ("DURATION",   self._break_dur),
+            ("SPOTS",      str(self._spots)),
+        ]
+        for i, (label, value) in enumerate(cols):
+            cx = 14 + i * col_w
+            p.setPen(QColor(TEXT_DIM)); p.setFont(self._font_stat_l)
+            p.drawText(QRectF(cx, 158, col_w, 14),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                       label)
+            p.setPen(QColor(TEXT_PRI)); p.setFont(self._font_stat_v)
+            p.drawText(QRectF(cx, 174, col_w, 18),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                       value)
+
+        # × Skip Break button (rose outline)
+        skip = QRectF(self._skip_rect)
+        p.fillRect(skip, _qcolor_a(RED, 0.18))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(_qcolor_a(RED, 0.50)))
+        p.drawRoundedRect(skip.adjusted(0.5, 0.5, -0.5, -0.5), 8, 8)
+        p.setPen(QColor(RED_LIGHT)); p.setFont(self._font_btn)
+        p.drawText(skip, Qt.AlignmentFlag.AlignCenter, "×  Skip Break")
+
+        # ▶ Preview button (cyan outline)
+        prev = QRectF(self._preview_rect)
+        p.fillRect(prev, _qcolor_a(CYAN, 0.18))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(_qcolor_a(CYAN, 0.50)))
+        p.drawRoundedRect(prev.adjusted(0.5, 0.5, -0.5, -0.5), 8, 8)
+        p.setPen(QColor(CYAN_LIGHT)); p.setFont(self._font_btn)
+        p.drawText(prev, Qt.AlignmentFlag.AlignCenter, "▶  Preview")
+        p.end()
+
+
+# ════════════════════════════════════════════════════════════════════════
+# RDS — 320 × 152 (Figma 326:18)
+#
+# RDS LIVE green + Settings cyan link
+# Big cyan "21:55" + ON-AIR TAG green tiny label
+# Track box bottom: artist + title in green-bordered card
+# ════════════════════════════════════════════════════════════════════════
+
+class _RDSPanel(QWidget):
+    settings_clicked = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(320, 152)
+        self._artist = "—"
+        self._title = ""
+
+        self._font_h       = inter(11, QFont.Weight.Black, letter_spacing=1.6)
+        self._font_settings = inter(10, QFont.Weight.Bold, letter_spacing=0.4)
+        self._font_clock   = mono(28, bold=True, letter_spacing=-1.0)
+        self._font_tag     = inter(8, QFont.Weight.Black, letter_spacing=2.0)
+        self._font_artist  = inter(11, QFont.Weight.Bold, letter_spacing=-0.1)
+        self._font_title   = inter(10, QFont.Weight.Medium)
+
+        self._settings_rect = QRect(self.width() - 80, 10, 70, 16)
+
+    def set_on_air(self, artist: str, title: str) -> None:
+        self._artist = str(artist or "—")
+        self._title = str(title or "")
+        self.update(self.rect())
+
+    def mousePressEvent(self, e: QMouseEvent) -> None:
+        if (e.button() == Qt.MouseButton.LeftButton
+                and self._settings_rect.contains(e.position().toPoint())):
+            self.settings_clicked.emit()
+        super().mousePressEvent(e)
+
+    def paintEvent(self, e: QPaintEvent) -> None:
+        p = QPainter(self); p.setClipRect(e.rect())
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(0, 0, self.width(), self.height())
+        # Panel background
+        bg = QLinearGradient(0, 0, 0, self.height())
+        bg.setColorAt(0.0, QColor(14, 16, 32, 235))
+        bg.setColorAt(1.0, QColor(7, 9, 18, 235))
+        p.fillRect(r, QBrush(bg))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(_qcolor_a(GREEN, 0.30)))
+        p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 12, 12)
+        # 3px green→cyan accent at top
+        accent = QLinearGradient(0, 0, self.width(), 0)
+        accent.setColorAt(0.0, QColor(GREEN))
+        accent.setColorAt(1.0, QColor(CYAN))
+        p.fillRect(QRectF(0, 0, self.width(), 3), QBrush(accent))
+
+        # Header "RDS LIVE"
+        p.setPen(QColor(GREEN_LIGHT)); p.setFont(self._font_h)
+        p.drawText(QRectF(14, 10, 100, 16),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   "RDS LIVE")
+        # Settings link (right)
+        p.setPen(QColor(CYAN_LIGHT)); p.setFont(self._font_settings)
+        p.drawText(QRectF(self._settings_rect),
+                   Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                   "Settings")
+        p.fillRect(QRectF(self._settings_rect.x() + 14, 26, 56, 1),
+                   _qcolor_a(CYAN_LIGHT, 0.4))
+
+        # Big clock + ON-AIR TAG
+        now = datetime.now()
+        clock_text = now.strftime("%H:%M")
+        p.setPen(QColor(CYAN_LIGHT)); p.setFont(self._font_clock)
+        p.drawText(QRectF(14, 36, 110, 36),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   clock_text)
+        # ON-AIR TAG label (right of clock)
+        p.setPen(QColor(GREEN_LIGHT)); p.setFont(self._font_tag)
+        p.drawText(QRectF(124, 50, 100, 14),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   "ON-AIR TAG")
+
+        # Track box (bottom, green-bordered)
+        track_box = QRectF(14, 88, self.width() - 28, 50)
+        p.fillRect(track_box, QColor(7, 8, 16, 178))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(_qcolor_a(GREEN, 0.40)))
+        p.drawRoundedRect(track_box.adjusted(0.5, 0.5, -0.5, -0.5), 8, 8)
+        # Artist
+        p.setPen(QColor(TEXT_PRI)); p.setFont(self._font_artist)
+        p.drawText(QRectF(track_box.x() + 12, track_box.y() + 6,
+                          track_box.width() - 24, 16),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   self._artist)
+        # Title
+        p.setPen(QColor(GREEN_LIGHT)); p.setFont(self._font_title)
+        p.drawText(QRectF(track_box.x() + 12, track_box.y() + 24,
+                          track_box.width() - 24, 16),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   self._title)
+        p.end()
+
+
+# ════════════════════════════════════════════════════════════════════════
+# PROBLEMS — 320 × 96 (Figma 326:31)
+#
+# PROBLEMS amber + N badge + Details cyan link
+# Warning row: ⚠ Spot break collision at 22:15 (amber on dark)
+# ════════════════════════════════════════════════════════════════════════
+
+class _ProblemsPanel(QWidget):
+    details_clicked = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(320, 96)
+        self._items: list[str] = ["Spot break collision at 22:15"]
+
+        self._font_h       = inter(11, QFont.Weight.Black, letter_spacing=1.6)
+        self._font_badge   = mono(13, bold=True, letter_spacing=-0.3)
+        self._font_details = inter(10, QFont.Weight.Bold, letter_spacing=0.4)
+        self._font_item    = inter(10, QFont.Weight.Medium)
+
+        self._details_rect = QRect(self.width() - 76, 10, 66, 16)
+
+    def set_problems(self, items: list[str]) -> None:
+        self._items = list(items or [])
+        self.update(self.rect())
+
+    def mousePressEvent(self, e: QMouseEvent) -> None:
+        if (e.button() == Qt.MouseButton.LeftButton
+                and self._details_rect.contains(e.position().toPoint())):
+            self.details_clicked.emit()
+        super().mousePressEvent(e)
+
+    def paintEvent(self, e: QPaintEvent) -> None:
+        p = QPainter(self); p.setClipRect(e.rect())
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(0, 0, self.width(), self.height())
+        # Panel background
+        bg = QLinearGradient(0, 0, 0, self.height())
+        bg.setColorAt(0.0, QColor(14, 16, 32, 235))
+        bg.setColorAt(1.0, QColor(7, 9, 18, 235))
+        p.fillRect(r, QBrush(bg))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(_qcolor_a(AMBER, 0.30)))
+        p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 12, 12)
+        # 3px amber accent at top
+        p.fillRect(QRectF(0, 0, self.width(), 3),
+                   _qcolor_a(AMBER, 0.85))
+
+        # Header "PROBLEMS"
+        p.setPen(QColor(AMBER_LIGHT)); p.setFont(self._font_h)
+        p.drawText(QRectF(14, 10, 130, 16),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   "PROBLEMS")
+        # N badge (right of header label)
+        n = len(self._items)
+        if n > 0:
+            badge = QRectF(110, 12, 22, 14)
+            color = AMBER if n > 0 else GREEN
+            p.fillRect(badge, _qcolor_a(color, 0.30))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.setPen(QPen(_qcolor_a(color, 0.55)))
+            p.drawRoundedRect(badge.adjusted(0.5, 0.5, -0.5, -0.5), 4, 4)
+            p.setPen(QColor(AMBER_LIGHT)); p.setFont(self._font_badge)
+            p.drawText(badge, Qt.AlignmentFlag.AlignCenter, str(n))
+        # Details → link (right)
+        p.setPen(QColor(CYAN_LIGHT)); p.setFont(self._font_details)
+        p.drawText(QRectF(self._details_rect),
+                   Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                   "Details →")
+
+        # First item shown as a warning row (amber-tinted)
+        if self._items:
+            row = QRectF(14, 36, self.width() - 28, 44)
+            p.fillRect(row, _qcolor_a(AMBER, 0.10))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.setPen(QPen(_qcolor_a(AMBER, 0.40)))
+            p.drawRoundedRect(row.adjusted(0.5, 0.5, -0.5, -0.5), 6, 6)
+            p.setPen(QColor(AMBER_LIGHT)); p.setFont(self._font_item)
+            p.drawText(QRectF(row.x() + 14, row.y(),
+                              row.width() - 28, row.height()),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                       f"⚠  {self._items[0]}")
+        else:
+            p.setPen(QColor(TEXT_DIM)); p.setFont(self._font_item)
+            p.drawText(QRectF(14, 36, self.width() - 28, 44),
+                       Qt.AlignmentFlag.AlignCenter,
+                       "All systems nominal")
+        p.end()
+
+
+# ════════════════════════════════════════════════════════════════════════
 # PLACEHOLDER widgets — solid frames with section labels.
 # Replaced widget-by-widget in subsequent steps.
 # ════════════════════════════════════════════════════════════════════════
@@ -2380,7 +2702,7 @@ class Studio(QWidget):
         self._refresh_history()
         self._update_status_pills()
 
-        log.info("Studio ready (Figma 312:2 — Step 6: History)")
+        log.info("Studio ready (Figma 312:2 — Step 7: NextBreak/RDS/Problems)")
 
     # ── Widget builders ──────────────────────────────────────────────────
 
@@ -2436,20 +2758,14 @@ class Studio(QWidget):
         self._history_panel = _HistoryPanel(self)
         self._history_panel.move(1584, BODY_Y)
 
-        self._next_break_placeholder = _PlaceholderFrame(
-            "NEXT BREAK — countdown + Skip + Preview",
-            "Step 7", 420, 264, accent=AMBER, parent=self)
-        self._next_break_placeholder.move(1148, BODY_Y + 556)
+        self._next_break = _NextBreakPanel(self)
+        self._next_break.move(1148, BODY_Y + 556)
 
-        self._rds_placeholder = _PlaceholderFrame(
-            "RDS — LIVE + clock + on-air + RT+",
-            "Step 7", 320, 152, accent=GREEN, parent=self)
-        self._rds_placeholder.move(1584, BODY_Y + 556)
+        self._rds = _RDSPanel(self)
+        self._rds.move(1584, BODY_Y + 556)
 
-        self._problems_placeholder = _PlaceholderFrame(
-            "PROBLEMS — N badge + warnings",
-            "Step 7", 320, 96, accent=AMBER, parent=self)
-        self._problems_placeholder.move(1584, BODY_Y + 712)
+        self._problems = _ProblemsPanel(self)
+        self._problems.move(1584, BODY_Y + 712)
 
     def _build_bottom_transport_placeholder(self) -> None:
         self._bottom_placeholder = _PlaceholderFrame(
@@ -2812,8 +3128,8 @@ class Studio(QWidget):
         log.info(f"[studio] scheduler: break_approaching in {seconds_until}s")
 
     def _on_scheduler_next_break_in(self, seconds: int) -> None:
-        # Step 7 will wire NextBreak panel
-        pass
+        if hasattr(self, "_next_break") and self._next_break is not None:
+            self._next_break.set_countdown(seconds)
 
     # ────────────────────────────────────────────────────────────────────
     # Idle / playing state coordinators (Step 2 — drive master-strip
@@ -2840,6 +3156,15 @@ class Studio(QWidget):
         # Up Coming queue: full 5-card refresh from in-memory queue
         if hasattr(self, "_upcoming"):
             self._upcoming.set_queue(self._queue_songs[:5])
+        # RDS panel: idle = queue head as next-up label
+        if hasattr(self, "_rds"):
+            head = self._compute_next_song(after_id=None)
+            if head is not None:
+                self._rds.set_on_air(
+                    str(head.get("artist") or "—"),
+                    str(head.get("title") or ""))
+            else:
+                self._rds.set_on_air("—", "")
 
     def _apply_playing_state(self, song: dict) -> None:
         if hasattr(self, "_now_player"):
@@ -2874,6 +3199,11 @@ class Studio(QWidget):
                 idx = 0
             self._upcoming.set_queue(self._queue_songs[idx:idx + 5],
                                      current_id=cur_id)
+        # RDS: now-playing artist + title
+        if hasattr(self, "_rds"):
+            self._rds.set_on_air(
+                str(song.get("artist") or "—"),
+                str(song.get("title") or ""))
 
     # ────────────────────────────────────────────────────────────────────
     # Transport handlers (PRESERVED from legacy)
