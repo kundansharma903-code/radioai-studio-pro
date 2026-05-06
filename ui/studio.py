@@ -1263,19 +1263,24 @@ class _UpComingQueue(QWidget):
             c.double_clicked.connect(self.song_double_clicked.emit)
             self._cards.append(c)
 
-    def set_queue(self, songs: list[dict], current_id: Optional[int] = None) -> None:
-        """Populate cards. AT timestamps cumulative from now. The first
-        card is rendered as NEXT (rose glow + NEXT pill)."""
+    def set_queue(self, songs: list[dict], current_id: Optional[int] = None,
+                  next_index: int = 1) -> None:
+        """Populate cards. AT timestamps cumulative from now. The card
+        at ``next_index`` is rendered as NEXT (rose glow + NEXT pill).
+
+        ``next_index`` defaults to 1 — legacy mode where index 0 is the
+        currently-playing song and index 1 is what plays next.
+        Phase B's scheduler-driven path uses ``next_index=0`` because
+        ``peek_next`` returns items the scheduler WILL dispatch — the
+        currently-playing item is not in the list, so index 0 IS the
+        next-to-air."""
         cum_s = 0
         for i, card in enumerate(self._cards):
             if i < len(songs):
                 song = songs[i]
                 at_text = _fmt_at_clock(cum_s)
-                card.set_song(song, is_next=(i == 1), at_text=at_text)
-                # NOTE: index 1 = "NEXT" because index 0 is currently
-                # playing (or just-played, in idle); the broadcast
-                # operator's "what plays next" mental model points to
-                # the row immediately below the active one.
+                card.set_song(song, is_next=(i == next_index),
+                              at_text=at_text)
                 cum_s += int(song.get("duration_ms", 0) or 0) // 1000
             else:
                 card.set_song(None)
@@ -3016,6 +3021,12 @@ class Studio(QWidget):
         # session; started when a pad begins, stopped on pad_ended/stopped.
         self._jingle_demo_timer: Optional[QTimer] = None
         self._jingle_demo_remaining_s: float = 0.0
+        # Phase B: scheduler-driven Up Coming preview. peek_next(5)
+        # output translated to the card-friendly dict shape, refreshed
+        # on scheduler signals + the 1Hz wall-clock tick. Empty when
+        # no scheduler is wired or no clock is currently assigned —
+        # in that case the legacy _queue_songs[:5] fallback path runs.
+        self._upcoming_preview: list[dict] = []
         self.setFixedSize(WINDOW_W, WINDOW_H)
         self.setStyleSheet(
             "background: qlineargradient("
@@ -3059,6 +3070,14 @@ class Studio(QWidget):
                 self._on_scheduler_next_break_in)
             self._scheduler.started.connect(self._update_status_pills)
             self._scheduler.stopped.connect(self._update_status_pills)
+            # Phase B: refresh Up Coming preview whenever the scheduler
+            # state changes meaningfully. Belt + suspenders alongside
+            # the 1Hz live AT tick — covers manual mutations the timer
+            # might lag, plus avoids stale data after start/stop cycles.
+            self._scheduler.song_auto_advance.connect(
+                self._load_upcoming_queue)
+            self._scheduler.started.connect(self._load_upcoming_queue)
+            self._scheduler.stopped.connect(self._load_upcoming_queue)
 
         # Phase A — InstantJingleEngine signal connections + jingle pad
         # bindings + 1-5 hotkeys + Esc-for-stop-all.
@@ -3072,6 +3091,7 @@ class Studio(QWidget):
         self._on_tick()
 
         # Initial state
+        self._load_upcoming_queue()        # Phase B — populate first
         self._apply_idle_state()
         if hasattr(self, "_libraries"):
             self._libraries.set_songs(self._queue_songs,
@@ -3548,9 +3568,12 @@ class Studio(QWidget):
                     intro_s=0)
             else:
                 self._next_chip.set_next("—", "")
-        # Up Coming queue: full 5-card refresh from in-memory queue
+        # Up Coming queue: full 5-card refresh.
+        #   Phase B: prefer scheduler.peek_next preview when available;
+        #   fall back to legacy in-memory queue when no scheduler is
+        #   wired or no clock is currently assigned (peek returned []).
         if hasattr(self, "_upcoming"):
-            self._upcoming.set_queue(self._queue_songs[:5])
+            self._refresh_upcoming_panel()
         # RDS panel: idle = queue head as next-up label
         if hasattr(self, "_rds"):
             head = self._compute_next_song(after_id=None)
@@ -3587,15 +3610,23 @@ class Studio(QWidget):
         # Up Coming: roll the queue starting from the currently-playing
         # song so the playing song is visible at slot 0 and "next" is
         # at slot 1 (NEXT pill).
+        #   Phase B: when scheduler is wired AND has a clock assigned,
+        #   peek_next drives the panel — the currently-playing track
+        #   has already been dispatched, so peek shows what's next.
+        #   Otherwise the legacy index-rolling fallback runs.
         if hasattr(self, "_upcoming"):
-            cur_id = song.get("id")
-            try:
-                idx = next(i for i, s in enumerate(self._queue_songs)
-                           if s.get("id") == cur_id)
-            except StopIteration:
-                idx = 0
-            self._upcoming.set_queue(self._queue_songs[idx:idx + 5],
-                                     current_id=cur_id)
+            self._load_upcoming_queue()
+            if not self._upcoming_preview:
+                cur_id = song.get("id")
+                try:
+                    idx = next(i for i, s in enumerate(self._queue_songs)
+                               if s.get("id") == cur_id)
+                except StopIteration:
+                    idx = 0
+                self._upcoming.set_queue(self._queue_songs[idx:idx + 5],
+                                         current_id=cur_id)
+            else:
+                self._refresh_upcoming_panel()
         # RDS: now-playing artist + title
         if hasattr(self, "_rds"):
             self._rds.set_on_air(
@@ -3901,6 +3932,72 @@ class Studio(QWidget):
         if hasattr(self, "_instant_jingles"):
             self._instant_jingles.set_demo_inactive()
 
+    # ────────────────────────────────────────────────────────────────────
+    # Phase B — Up Coming queue scheduler binding
+    # ────────────────────────────────────────────────────────────────────
+
+    def _load_upcoming_queue(self) -> None:
+        """Pull the next 5 items from ``scheduler.peek_next(5)``,
+        translate to the card-friendly dict shape, and re-render.
+
+        peek_next is non-destructive (Commit 1 of Phase B) — calling
+        it on every refresh leaves the dispatch cursor untouched.
+        Errors are non-fatal: on any exception the preview is cleared
+        and the legacy `_queue_songs` fallback path renders instead."""
+        if self._scheduler is None:
+            self._upcoming_preview = []
+            self._refresh_upcoming_panel()
+            return
+        try:
+            items = self._scheduler.peek_next(5)
+        except Exception as exc:
+            log.warning(f"[studio] peek_next failed: {exc}")
+            self._upcoming_preview = []
+            self._refresh_upcoming_panel()
+            return
+        # peek_next returns dicts shaped like pick_next_item:
+        #   {item_type, item_id, file_path, title, artist, duration_ms,
+        #    clock_id, slot_idx}
+        # _UpComingCard expects:
+        #   {_item_type, id, title, artist, file_path, duration_ms,
+        #    intro_point_ms (optional)}
+        translated: list[dict] = []
+        for it in items[:5]:
+            translated.append({
+                "_item_type":  it.get("item_type") or "song",
+                "id":          it.get("item_id"),
+                "title":       it.get("title") or "—",
+                "artist":      it.get("artist") or "",
+                "file_path":   it.get("file_path"),
+                "duration_ms": int(it.get("duration_ms") or 0),
+                # intro_point_ms is not part of the peek_next shape —
+                # the picker doesn't surface it. Leaving absent means
+                # the card skips the INTRO badge, which is correct
+                # default behaviour for non-song item types and for
+                # songs whose intro hasn't been cued yet.
+            })
+        self._upcoming_preview = translated
+        self._refresh_upcoming_panel()
+
+    def _refresh_upcoming_panel(self) -> None:
+        """Render the Up Coming panel from current state. Picks the
+        scheduler-driven preview when available, else falls back to
+        the legacy in-memory queue. Called from:
+          - the 1Hz wall-clock tick (live AT timestamp refresh)
+          - scheduler signals (song_auto_advance / started / stopped)
+          - state-change paths (_apply_idle_state, _apply_playing_state)
+        """
+        if not hasattr(self, "_upcoming"):
+            return
+        if self._upcoming_preview:
+            # Scheduler-driven path — index 0 is next-to-air, so it
+            # gets the NEXT rose glow.
+            self._upcoming.set_queue(self._upcoming_preview, next_index=0)
+        else:
+            # Legacy fallback: in-memory queue with NEXT at index 1
+            # (because index 0 is currently playing in that mental model).
+            self._upcoming.set_queue(self._queue_songs[:5])
+
     def _on_jingle_demo_tick(self) -> None:
         """10Hz countdown — decrement remaining; stop at 0 (we still
         wait for pad_ended/stopped to fully clear so the visual state
@@ -3929,6 +4026,11 @@ class Studio(QWidget):
             now.strftime("%H:%M:%S"),
             day=now.strftime("%A").upper(),
             date=now.strftime("%b %d, %Y").upper())
+        # Phase B: live AT timestamp tick. _refresh_upcoming_panel
+        # re-renders the cards using current wall-clock so the
+        # cumulative AT values stay fresh even when no song is
+        # advancing (late-night automation, long song, etc.).
+        self._refresh_upcoming_panel()
 
     # ────────────────────────────────────────────────────────────────────
     # Lifecycle

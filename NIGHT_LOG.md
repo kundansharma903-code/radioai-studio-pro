@@ -1346,3 +1346,140 @@ hang). All 9 existing Studio tests (`test_studio_eos_paths.py` +
 ### Commit
 
 feat(studio): wire Instant Jingles panel to core.instant_jingle_engine
+
+---
+
+## Session 2026-05-06 — Phase B: wire Up Coming queue to scheduler.peek_next
+
+Studio v3's Up Coming panel previously read the first 5 rows from the
+`songs` table directly — visually correct but semantically wrong: it
+showed "first 5 enabled songs in DB," not what the clock-driven
+scheduler actually dispatches in clock pattern order. Phase B fixes
+the data source.
+
+Two commits because the existing scheduler API was destructive-only
+(`pick_next_item` advances `_clock_slot_cursor`); a non-destructive
+preview was needed first.
+
+### Commit 1 — `feat(scheduler): add non-destructive peek_next(n) for queue preview`
+
+- **NEW** method `SchedulerEngine.peek_next(n=5, now=None) → list[dict]`
+  in `core/scheduler/engine.py` (~80 lines).
+  - Save-call-restore pattern: snapshots `_clock_slot_cursor`,
+    `_active_hour_key`, `_fired_breaks` (the three mutable state vars
+    touched by the pick pipeline) into locals; calls `pick_next_item`
+    `n` times in try/finally; restores all three in `finally`
+    unconditionally.
+  - Items shape identical to `pick_next_item` so consumers can use
+    them interchangeably.
+  - Returns `[]` on empty schedule, partial queue capped at `n`.
+- **NEW** `tests/test_scheduler_peek_next.py` (5 tests):
+  count returned, cursor not advanced (per-state-var assertion +
+  first-pick anchor), empty-clock returns `[]`, partial-queue,
+  slot_idx-sequence-matches-pick. Item identity intentionally NOT
+  asserted because `random_from_category` slots use `random.choice`
+  — only the cursor sequence is the deterministic invariant.
+- All existing scheduler tests unchanged.
+- Suite: 263 → 268. Commit `42a6160`.
+
+### Commit 2 — `feat(studio): wire Up Coming queue to scheduler.peek_next with live AT timestamps`
+
+- **MODIFIED** `ui/studio.py` (Studio class):
+  - New state attr `self._upcoming_preview: list[dict]` populated from
+    `scheduler.peek_next(5)` and translated to the card-friendly dict
+    shape (`item_id`→`id`, `item_type`→`_item_type`, others passthrough).
+  - New `_load_upcoming_queue()` method — pulls peek_next, translates,
+    triggers `_refresh_upcoming_panel()`. Errors non-fatal; on any
+    failure preview clears and the legacy fallback path runs.
+  - New `_refresh_upcoming_panel()` method — picks scheduler-driven
+    preview when available (`set_queue(preview, next_index=0)`), else
+    legacy `_queue_songs[:5]` (`set_queue(..., next_index=1)`). Called
+    from the 1Hz tick, scheduler signals, and state-change paths.
+  - Existing `_apply_idle_state` and `_apply_playing_state` now
+    delegate to `_refresh_upcoming_panel()`. Peek-driven path takes
+    over when peek returns content; falls back to legacy index-rolling
+    otherwise (preserves the 9 existing Studio tests verbatim).
+  - Existing 1Hz `_tick_timer` reused — `_on_tick` now also calls
+    `_refresh_upcoming_panel()` so cumulative AT timestamps live-tick.
+    No second timer.
+  - Scheduler signals `song_auto_advance`, `started`, `stopped` each
+    connected to `_load_upcoming_queue` (belt + suspenders alongside
+    the 1Hz tick — covers any state mutation the timer might lag).
+- **MODIFIED** `_UpComingQueue.set_queue` — added optional
+  `next_index: int = 1` parameter. Default preserves legacy behaviour
+  (index 0 = currently-playing, index 1 = NEXT rose glow).
+  Phase B's peek-driven path passes `next_index=0` because peek_next
+  returns items the scheduler WILL dispatch — currently-playing is
+  not in the list, so index 0 IS the next-to-air.
+- **NEW** `tests/test_studio_upcoming_queue_wiring.py` (7 tests):
+  real queue loads on init via peek_next, AT-timestamp cumulative
+  math (60s + 90s + 30s deltas), empty-queue → 5 placeholders,
+  partial-queue → 2 real + 3 placeholders, signal-driven refresh,
+  1Hz live AT tick, no-scheduler decorative fallback. Uses
+  `_FakeScheduler` mock with `peek_next` + signal stand-ins
+  (mirror of Phase A's `_FakeIJE` pattern).
+
+### Wiring decisions
+
+- **`peek_next` placement** — added to `SchedulerEngine` rather than
+  building a separate "preview" service. Future read-only "what's
+  next" UIs (transport bar predictions, upcoming-spot indicator,
+  RDS pre-load) reuse the same method.
+- **Live AT tick reuses existing 1Hz `_tick_timer`** — no new timer.
+  The header clock and Up Coming AT both refresh from the same
+  `datetime.now()` so they stay in lockstep.
+- **`next_index` parameter** rather than two separate `set_queue`
+  methods — backward-compat preserved (default = 1 = legacy);
+  Phase B's call site explicitly passes `next_index=0`.
+- **Legacy fallback retained** — when `peek_next` returns `[]`
+  (no clock assigned, scheduler error, or scheduler=None), the
+  `_queue_songs[:5]` fallback path runs. Operator never sees a
+  blank panel.
+
+### Carry-overs flagged for follow-up
+
+1. **`peek_next` semantic** — added as non-destructive preview method.
+   Future use cases beyond Up Coming: transport bar predictions,
+   upcoming-spot indicator, RDS pre-load. Re-evaluate at that point
+   whether `peek_next` should return cached results (current impl
+   re-walks slots every call — fine at 1Hz, may want memoization at
+   higher refresh rates).
+2. **Live AT tick rationale** — first card AT recomputed from current
+   wall-clock every 1Hz; subsequent derived cumulatively. Operator
+   sees timestamps stay fresh during long idle periods (e.g.,
+   late-night automation when no auto-advance for 4+ minutes).
+3. **Polling+signals belt-and-suspenders** — comprehensive
+   `queue_changed` signal would make the polling timer redundant for
+   the Up Coming panel. Flagged for future scheduler refactor when
+   more "what's next" UIs land.
+4. **`intro_point_ms` not surfaced by peek_next** — the picker
+   (`_pick_song` etc.) doesn't include intro data in its return
+   shape. Cards skip the INTRO badge in peek-driven mode (correct
+   behaviour for non-song types; minor degradation for song types
+   that have intro cued). Flagged for future scheduler picker
+   enhancement.
+
+### Suite
+
+263 → 275 passed (+12 net new across both commits: 5 scheduler peek
++ 7 Studio upcoming wiring). 2 deselected (unchanged: slow soak +
+pre-existing modal hang). All existing tests untouched, including
+the 9 Studio EOS / item-dispatch tests and the 7 Phase A IJE tests.
+
+### Manual on-air verification — DEFERRED to operator hardware
+
+Automated tests cover the wire integrity. Real broadcast verification
+requires a clock assigned to the current (day, hour) cell with at
+least 5 song slots. Recommended 2-minute smoke:
+  1. Open Studio. Up Coming panel should show 5 cards with real
+     scheduler-dispatched titles + AT timestamps (not just first 5
+     songs from DB).
+  2. Wait 5–10 seconds — first card's AT should tick forward each
+     second.
+  3. If no clock is assigned to current hour: panel falls back to
+     `_queue_songs[:5]` (legacy behaviour) — graceful, no crash.
+
+### Commits
+
+- `42a6160` feat(scheduler): add non-destructive peek_next(n) for queue preview
+- (Commit 2 hash inserted after this entry's commit lands)
