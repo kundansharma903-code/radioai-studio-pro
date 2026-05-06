@@ -7,7 +7,9 @@ STEP-BY-STEP REBUILD per Plan A (Kavish, 2026-05-06):
              LevelMeters + ClockFace + Wordmark)
   ✅ Step 3: Up Coming queue (rich track cards)
   ✅ Step 4: Libraries panel (type icons + Action Stack +
-             Songs table + Filter + Category)                ← THIS COMMIT
+             Songs table + Filter + Category)
+  ✅ Step 5: Instant Jingles (3×3 tiles + DEMO PLAYING +
+             1-5 hotkeys + Edit Bank)                        ← THIS COMMIT
   □  Step 4: Libraries panel (type icons + Action Stack + table + filter)
   □  Step 5: Instant Jingles (6-pad + numeric pad + hotkeys)
   □  Step 6: History panel (12 alternating rows)
@@ -1874,6 +1876,256 @@ class _LibrariesPanel(QWidget):
 
 
 # ════════════════════════════════════════════════════════════════════════
+# INSTANT JINGLES — 420 × 540 (Figma 324:2)
+#
+# Header: INSTANT JINGLES + 12 SLOT pill + × close
+# DEMO Sweep PLAYING display (full-width, green-tinted)
+# 3×3 jingle tile grid with name + duration + play-arrow icon
+# 5-button hotkey row (1 / 2 / 3 / 4 / 5)
+# Helper text ("Tap any slot to play instantly · 1-5 hotkeys ...")
+# Footer: "Edit Bank" purple link + Last played status (right)
+#
+# Decorative per Q2 vote A — visual fidelity only, no wiring to
+# core.instant_jingle_engine in this commit.
+# ════════════════════════════════════════════════════════════════════════
+
+# Sample jingle tile data (visual placeholder per Q2 — wire later)
+_JINGLE_TILES_DATA = [
+    ("CLAPS",        "09.7", AMBER),
+    ("SCREAM",       "09.5", AMBER),
+    ("SF Aaa Lost",  "04.1", AMBER),
+    ("SF Horn Funny","01.3", AMBER),
+    ("SF Yea OK",    "04.2", RED),
+    ("Drop O3",      "01.7", RED),
+    ("O2",           "01.9", AMBER),
+    ("O1",           "03.5", AMBER),
+    ("SW Trave",     "00.9", AMBER),
+]
+
+
+class _JingleTile(QWidget):
+    """One jingle tile — name + duration + play-arrow + colored accent."""
+
+    clicked = pyqtSignal()
+
+    def __init__(self, name: str, dur_str: str, accent: str, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(124, 70)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._name = name
+        self._dur_str = dur_str
+        self._accent = accent
+        self._font_name = inter(10, QFont.Weight.Black, letter_spacing=0.4)
+        self._font_dur  = mono(11, bold=True, letter_spacing=-0.3)
+        self._font_unit = inter(7, QFont.Weight.Bold, letter_spacing=1.2)
+        self._font_play = inter(11, QFont.Weight.Black)
+
+    def mousePressEvent(self, e: QMouseEvent) -> None:
+        if e.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(e)
+
+    def paintEvent(self, e: QPaintEvent) -> None:
+        p = QPainter(self); p.setClipRect(e.rect())
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(0, 0, self.width(), self.height())
+        # Background — accent-tinted gradient
+        bg = QLinearGradient(0, 0, 0, self.height())
+        bg.setColorAt(0.0, _qcolor_a(self._accent, 0.30))
+        bg.setColorAt(1.0, _qcolor_a(self._accent, 0.10))
+        p.fillRect(r, QBrush(bg))
+        # Border accent color
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(_qcolor_a(self._accent, 0.55)))
+        p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 8, 8)
+        # Name (top-left)
+        p.setPen(QColor(self._accent)); p.setFont(self._font_name)
+        p.drawText(QRectF(10, 6, self.width() - 30, 14),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   self._name.upper())
+        # Play arrow (top-right)
+        p.setPen(QColor(self._accent)); p.setFont(self._font_play)
+        p.drawText(QRectF(self.width() - 22, 4, 18, 18),
+                   Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                   "▶")
+        # Duration (big mono, center-bottom)
+        p.setPen(QColor(self._accent)); p.setFont(self._font_dur)
+        p.drawText(QRectF(10, 26, self.width() - 30, 24),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   self._dur_str)
+        # SEC unit
+        p.setPen(_qcolor_a(self._accent, 0.7)); p.setFont(self._font_unit)
+        p.drawText(QRectF(10, 50, 30, 12),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   "SEC")
+        p.end()
+
+
+class _JingleHotkey(QWidget):
+    """Numbered hotkey button (1-5)."""
+
+    clicked = pyqtSignal(int)
+
+    def __init__(self, n: int, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(60, 40)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._n = n
+        self._font = mono(15, bold=True, letter_spacing=-0.5)
+
+    def mousePressEvent(self, e: QMouseEvent) -> None:
+        if e.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit(self._n)
+        super().mousePressEvent(e)
+
+    def paintEvent(self, e: QPaintEvent) -> None:
+        p = QPainter(self); p.setClipRect(e.rect())
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(0, 0, self.width(), self.height())
+        p.fillRect(r, _qcolor_a(AMBER, 0.18))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(_qcolor_a(AMBER, 0.45)))
+        p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 6, 6)
+        p.setPen(QColor(AMBER_LIGHT)); p.setFont(self._font)
+        p.drawText(r, Qt.AlignmentFlag.AlignCenter, str(self._n))
+        p.end()
+
+
+class _InstantJinglesPanel(QWidget):
+    """420 × 540 — full Instant Jingles panel."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(420, 540)
+        self._demo_label = "DEMO Sweep"
+        self._demo_remaining_s = 0.0       # seconds remaining (decorative)
+        self._last_played_label = "SF Yes OK · 14s ago"
+
+        self._font_h            = inter(11, QFont.Weight.Black, letter_spacing=1.6)
+        self._font_slot_pill    = mono(8, bold=True, letter_spacing=0.5)
+        self._font_close        = inter(13, QFont.Weight.Bold)
+        self._font_playing_pill = inter(8, QFont.Weight.Black, letter_spacing=1.4)
+        self._font_demo_label   = inter(13, QFont.Weight.Bold, letter_spacing=-0.1)
+        self._font_demo_count   = mono(28, bold=True, letter_spacing=-0.8)
+        self._font_demo_unit    = inter(8, QFont.Weight.Black, letter_spacing=1.4)
+        self._font_helper       = inter(9, QFont.Weight.Medium)
+        self._font_link         = inter(10, QFont.Weight.Bold, letter_spacing=0.4)
+
+        # 3×3 = 9 jingle tiles
+        self._tiles: list[_JingleTile] = []
+        for i, (name, dur, accent) in enumerate(_JINGLE_TILES_DATA):
+            tile = _JingleTile(name, dur, accent, self)
+            row = i // 3
+            col = i % 3
+            x = 14 + col * 132
+            y = 110 + row * 78
+            tile.move(x, y)
+            self._tiles.append(tile)
+
+        # 5 numbered hotkeys (y=346)
+        self._hotkeys: list[_JingleHotkey] = []
+        for i in range(5):
+            hk = _JingleHotkey(i + 1, self)
+            hk.move(14 + i * 70, 360)
+            self._hotkeys.append(hk)
+
+    def paintEvent(self, e: QPaintEvent) -> None:
+        p = QPainter(self); p.setClipRect(e.rect())
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(0, 0, self.width(), self.height())
+        # Panel background
+        bg = QLinearGradient(0, 0, 0, self.height())
+        bg.setColorAt(0.0, QColor(14, 16, 32, 235))
+        bg.setColorAt(1.0, QColor(7, 9, 18, 235))
+        p.fillRect(r, QBrush(bg))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(QColor(255, 255, 255, 18)))
+        p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 12, 12)
+        # 3px purple→pink→amber accent at top
+        accent = QLinearGradient(0, 0, self.width(), 0)
+        accent.setColorAt(0.0, QColor(PURPLE_LIGHT))
+        accent.setColorAt(0.5, QColor(PINK))
+        accent.setColorAt(1.0, QColor(AMBER))
+        p.fillRect(QRectF(0, 0, self.width(), 3), QBrush(accent))
+
+        # Header
+        p.setPen(QColor(PURPLE_LIGHT)); p.setFont(self._font_h)
+        p.drawText(QRectF(14, 12, 220, 16),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   "INSTANT JINGLES")
+        # 12 SLOT pill (right of header)
+        slot_pill = QRectF(180, 13, 56, 16)
+        p.fillRect(slot_pill, _qcolor_a(CYAN, 0.18))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(_qcolor_a(CYAN, 0.45)))
+        p.drawRoundedRect(slot_pill.adjusted(0.5, 0.5, -0.5, -0.5), 4, 4)
+        p.setPen(QColor(CYAN_LIGHT)); p.setFont(self._font_slot_pill)
+        p.drawText(slot_pill, Qt.AlignmentFlag.AlignCenter, "12 SLOT")
+        # × close button (right)
+        p.setPen(QColor(TEXT_DIM)); p.setFont(self._font_close)
+        p.drawText(QRectF(self.width() - 22, 8, 14, 18),
+                   Qt.AlignmentFlag.AlignCenter, "×")
+
+        # DEMO Sweep PLAYING display
+        demo = QRectF(14, 44, self.width() - 28, 56)
+        demo_grad = QLinearGradient(demo.topLeft(), demo.bottomLeft())
+        demo_grad.setColorAt(0.0, _qcolor_a(GREEN, 0.18))
+        demo_grad.setColorAt(1.0, _qcolor_a(GREEN, 0.06))
+        p.fillRect(demo, QBrush(demo_grad))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(_qcolor_a(GREEN, 0.45)))
+        p.drawRoundedRect(demo.adjusted(0.5, 0.5, -0.5, -0.5), 8, 8)
+        # PLAYING pill (top-left of demo)
+        playing_pill = QRectF(demo.x() + 10, demo.y() + 8, 64, 18)
+        p.fillRect(playing_pill, _qcolor_a(GREEN, 0.4))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(_qcolor_a(GREEN, 0.7)))
+        p.drawRoundedRect(playing_pill.adjusted(0.5, 0.5, -0.5, -0.5), 4, 4)
+        p.setPen(QColor(255, 255, 255)); p.setFont(self._font_playing_pill)
+        p.drawText(playing_pill, Qt.AlignmentFlag.AlignCenter, "PLAYING")
+        # Demo label (below pill)
+        p.setPen(QColor(GREEN_LIGHT)); p.setFont(self._font_demo_label)
+        p.drawText(QRectF(demo.x() + 10, demo.y() + 28, 200, 22),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   self._demo_label)
+        # Big countdown (right side of demo)
+        p.setPen(QColor(AMBER_LIGHT)); p.setFont(self._font_demo_count)
+        p.drawText(QRectF(demo.right() - 130, demo.y() + 8, 100, 36),
+                   Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                   f"{self._demo_remaining_s:04.1f}")
+        # SEC unit
+        p.setPen(QColor(GREEN_LIGHT)); p.setFont(self._font_demo_unit)
+        p.drawText(QRectF(demo.right() - 28, demo.y() + 22, 26, 14),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   "SEC")
+
+        # Helper text below hotkey row
+        p.setPen(QColor(TEXT_DIM)); p.setFont(self._font_helper)
+        p.drawText(QRectF(14, 412, self.width() - 28, 16),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   "Tap any slot to play instantly")
+        p.drawText(QRectF(14, 430, self.width() - 28, 16),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   "1-5 hotkeys for fast access")
+
+        # Footer separator hairline
+        p.fillRect(QRectF(14, 480, self.width() - 28, 1),
+                   QColor(255, 255, 255, 20))
+        # Edit Bank link (purple, left)
+        p.setPen(QColor(PURPLE_LIGHT)); p.setFont(self._font_link)
+        p.drawText(QRectF(14, 494, 80, 18),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   "Edit Bank")
+        p.fillRect(QRectF(14, 514, 64, 1), _qcolor_a(PURPLE_LIGHT, 0.4))
+        # "Last played: ..." right
+        p.setPen(QColor(TEXT_DIM)); p.setFont(self._font_helper)
+        p.drawText(QRectF(100, 494, self.width() - 114, 18),
+                   Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                   f"Last played: {self._last_played_label}")
+        p.end()
+
+
+# ════════════════════════════════════════════════════════════════════════
 # PLACEHOLDER widgets — solid frames with section labels.
 # Replaced widget-by-widget in subsequent steps.
 # ════════════════════════════════════════════════════════════════════════
@@ -1999,7 +2251,7 @@ class Studio(QWidget):
                                        len(self._queue_songs))
         self._update_status_pills()
 
-        log.info("Studio ready (Figma 312:2 — Step 4: Libraries)")
+        log.info("Studio ready (Figma 312:2 — Step 5: Instant Jingles)")
 
     # ── Widget builders ──────────────────────────────────────────────────
 
@@ -2049,11 +2301,8 @@ class Studio(QWidget):
         self._libraries.song_double_clicked.connect(
             self._on_library_song_double_clicked)
 
-        self._instant_placeholder = _PlaceholderFrame(
-            "INSTANT JINGLES — 6-pad + numeric pad + 1-5 hotkeys",
-            "Step 5",
-            420, 540, accent=AMBER, parent=self)
-        self._instant_placeholder.move(1148, BODY_Y)
+        self._instant_jingles = _InstantJinglesPanel(self)
+        self._instant_jingles.move(1148, BODY_Y)
 
         self._history_placeholder = _PlaceholderFrame(
             "HISTORY — 12 alternating rows", "Step 6",
