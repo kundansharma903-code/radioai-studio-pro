@@ -235,6 +235,16 @@ class MainWindow(QMainWindow):
                 self._on_hub_screen_requested)
             self._stack.addWidget(self.clock_editor_screen)
 
+            # Edit Playlist — Figma 248:2 premium screen. Takes engine
+            # (preview wiring) + lazy studio injection (on-air check).
+            from ui.playlist_edit import PlaylistEdit
+            self.playlist_edit_screen = PlaylistEdit(
+                self._db, scheduler=self._scheduler,
+                engine=self._engine, parent=None)
+            self.playlist_edit_screen.screen_requested.connect(
+                self._on_hub_screen_requested)
+            self._stack.addWidget(self.playlist_edit_screen)
+
             # F9 shortcut → open Studio (broadcast convention; Jazler precedent)
             from PyQt6.QtGui import QShortcut, QKeySequence
             self._studio_shortcut = QShortcut(QKeySequence("F9"), self)
@@ -288,13 +298,19 @@ class MainWindow(QMainWindow):
                 self.playlists_screen.set_studio(self.studio)
             self._stack.setCurrentWidget(self.playlists_screen)
             return
-        # screen_requested("playlist_edit:42") — open editor for that id
-        if screen.startswith("playlist_edit:"):
-            from PyQt6.QtWidgets import QMessageBox
-            QMessageBox.information(
-                self, "Playlist Editor",
-                f"Edit Playlist (id={screen.split(':', 1)[1]}) — "
-                "coming soon (Figma 240:2).")
+        # screen_requested("playlist_edit:42") — Edit Playlist (Figma 248:2)
+        if (screen.startswith("playlist_edit:")
+                and hasattr(self, "playlist_edit_screen")):
+            try:
+                pid = int(screen.split(":", 1)[1])
+            except (ValueError, IndexError):
+                return
+            # Lazy studio injection so on-air detection has a real ref
+            if hasattr(self, "studio") and hasattr(
+                    self.playlist_edit_screen, "set_studio"):
+                self.playlist_edit_screen.set_studio(self.studio)
+            self.playlist_edit_screen.load_for_id(pid)
+            self._stack.setCurrentWidget(self.playlist_edit_screen)
             return
         if screen == "playlist_new" and hasattr(self, "playlist_new_screen"):
             self._stack.setCurrentWidget(self.playlist_new_screen)

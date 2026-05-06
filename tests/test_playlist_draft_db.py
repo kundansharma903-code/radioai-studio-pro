@@ -202,3 +202,59 @@ def test_drafts_excluded_from_get_playlists_with_stats(db):
         assert pid_draft not in ids
     finally:
         db.delete_playlist_draft(pid_draft)
+
+
+# ── Edit Playlist screen — single-row + full-track-list helpers ─────────
+
+
+def test_get_playlist_returns_row_by_id(db):
+    """Frame 9's load path: db.get_playlist(id) → row with meta cols."""
+    pid = db.create_playlist_draft(
+        name="GetPlaylistTest", kind="manual", color="#a78bfa", tags="hello")
+    db.commit_playlist_draft(pid)
+    try:
+        row = db.get_playlist(pid)
+        assert row is not None
+        assert row["name"] == "GetPlaylistTest"
+        assert row["kind"] == "manual"
+        # Premium-screen extension cols are present
+        assert "color" in row.keys()
+        assert "tags" in row.keys()
+    finally:
+        db._conn().execute(
+            "DELETE FROM playlist_songs WHERE playlist_id = ?", [pid])
+        db._conn().execute(
+            "DELETE FROM playlists WHERE id = ?", [pid])
+        db._conn().commit()
+
+
+def test_get_playlist_returns_none_for_missing_id(db):
+    assert db.get_playlist(999_999_999) is None
+
+
+def test_get_playlist_songs_returns_full_list_no_limit(db):
+    """Frame 9's load path: db.get_playlist_songs(id) returns every
+    track (no implicit limit), in position order. Distinct from
+    get_playlist_first_tracks which is the limited preview cousin."""
+    rows = db._conn().execute(
+        "SELECT id FROM songs WHERE is_enabled=1 LIMIT 7"
+    ).fetchall()
+    if len(rows) < 7:
+        pytest.skip("not enough songs to exercise full-list load")
+    seed_ids = [int(r[0]) for r in rows]
+    pid = db.create_playlist_draft(name="FullListTest")
+    db.commit_playlist_draft(pid)
+    try:
+        db.replace_playlist_songs(pid, seed_ids)
+        loaded = list(db.get_playlist_songs(pid))
+        assert [int(r["id"]) for r in loaded] == seed_ids
+        # Each row carries the columns Frame 9 needs
+        for r in loaded:
+            assert "title" in r and "artist" in r and "duration_ms" in r
+            assert "year" in r and "bpm" in r and "album" in r
+    finally:
+        db._conn().execute(
+            "DELETE FROM playlist_songs WHERE playlist_id = ?", [pid])
+        db._conn().execute(
+            "DELETE FROM playlists WHERE id = ?", [pid])
+        db._conn().commit()

@@ -641,6 +641,35 @@ class Database:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def get_playlist(self, playlist_id: int) -> Optional[sqlite3.Row]:
+        """Single playlist row by id, or None. Returns the canonical
+        meta + the premium-screen extension cols (kind, color, tags,
+        cover_path, status, auto_schedule_enabled). Used by the
+        Edit Playlist screen (Figma 248:2) to populate its meta strip."""
+        self._ensure_playlists_columns()
+        return self._conn().execute(
+            "SELECT * FROM playlists WHERE id = ?", [int(playlist_id)]
+        ).fetchone()
+
+    def get_playlist_songs(self, playlist_id: int) -> list[dict]:
+        """Full song list for a playlist, in playback position order
+        (no LIMIT). Used by the Edit Playlist screen — needs every
+        track, not just the first N. ``get_playlist_first_tracks`` is
+        the preview-card cousin (still valid for that use case)."""
+        rows = self._conn().execute(
+            """
+            SELECT s.id, s.title, s.artist, s.duration_ms,
+                   s.file_path, s.category_id, s.year, s.bpm,
+                   s.album, ps.position
+            FROM   playlist_songs ps
+            JOIN   songs s ON ps.song_id = s.id
+            WHERE  ps.playlist_id = ?
+            ORDER  BY ps.position
+            """,
+            [int(playlist_id)],
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def set_playlist_scheduled(
         self, playlist_id: int, scheduled_day: Optional[str] = None,
         scheduled_time: Optional[str] = None,

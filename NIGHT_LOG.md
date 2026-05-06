@@ -875,3 +875,129 @@ true count so the user can at least see the discrepancy.
 ### Commit
 
 fix(ui): show newest clocks first in Auto Schedule panel
+
+---
+
+## Session 2026-05-06 — feat: Edit Playlist (Frame 9 / Figma 248:2)
+
+### Investigation findings
+
+Greenfield port. Playlists screen 2's "Open →" button was already
+emitting `screen_requested(f"playlist_edit:{id}")` (commit `dd8df46`)
+— MainWindow had a "coming soon" toast for that key. Investigation
+saved a TOUCH on `ui/playlists.py` from the handover.
+
+DB methods: `update_playlist_draft` (misnamed but works for active
+playlists too — partial UPDATE, no status filter inside) and
+`replace_playlist_songs` (atomic DELETE+INSERT) cover the save path.
+Two new public methods added: `db.get_playlist(id)` for the meta row
+(missing) and `db.get_playlist_songs(id)` for full track list (only
+the limited `get_playlist_first_tracks` existed).
+
+AudioEngine API confirmed identical to Studio's pattern:
+`load_file(path)→cid`, `play/stop/pause/resume/cleanup(cid)`,
+`seek_to_ms`, `get_duration_ms`, `set_volume`, `get_state`. Signals
+`position_changed(cid, ms)`, `playback_ended(cid)`, `error_occurred`.
+
+On-air detection: `studio._current_track is not None` — same pattern
+already used in Playlists screen 2 ([ui/playlists.py:1207](ui/playlists.py:1207)). The
+Edit Playlist screen takes a lazy `set_studio()` injection from
+MainWindow, matching the Playlists pattern.
+
+### Scope decisions confirmed
+
+- **Q1 — `Open →` already wired:** skipped touching `ui/playlists.py`.
+- **Q2 — 2 trivial DB methods:** added `get_playlist` + `get_playlist_songs`
+  (~14 lines additive in `core/database.py`).
+- **Q3 — 7 element icons:** rendered all 7 per Figma fidelity. The
+  first 5 (Song / Jingle / Spot / Voice / Sweeper) functional; the
+  last 2 (📁 Folder / ♥ Heart) emit a "coming soon" toast on click.
+  No songs schema for Folder or Heart — flagged below.
+- **Q4 — Atomic save on OK:** two-call save (`update_playlist_draft`
+  → `replace_playlist_songs`). Failure of the second surfaces via
+  QMessageBox so the user retries — same pattern as Clock Editor's
+  two-call save.
+- **Q5 — Analyze panel partial scope:** track meta wired (year /
+  artist / album / BPM / runtime); 14 hour-cells render as visual
+  placeholder with "Play history — coming soon" hint; lyrics deferred.
+- **Q6 — Live-DB tests:** prefix `_test_playlistedit_<uuid8>` (distinct
+  from Frame 8's `_test_playlist_<uuid8>`).
+
+### Files
+
+- **NEW** `ui/playlist_edit.py` (~1500 lines) — top toolbar, preview
+  slot column, 7 element icons, 5-button action stack, queue table
+  via `QAbstractListModel` + custom delegate, filter panel, analyze
+  panel, transport bar, bottom action bar. Engine injection +
+  on-air protection consume the wiring landed in commit `2a7c6ca`.
+- **NEW** `tests/test_playlist_edit.py` (20 tests).
+- **NEW** `tests/test_frame9_onair_smoke.py` (5 tests) — automated
+  CI-runnable replacement for the manual on-air click-through. See
+  the dedicated section below.
+- **MODIFIED** `core/database.py` (+14 lines) — `get_playlist(id)` +
+  `get_playlist_songs(id)`.
+- **MODIFIED** `tests/test_playlist_draft_db.py` (+3 tests) — direct
+  coverage for the 2 new DB methods.
+- **MODIFIED** `ui/main_window.py` — replaced "coming soon" toast
+  for `playlist_edit:<id>` with real route: parse id →
+  `load_for_id` → `setCurrentWidget`. Lazy `set_studio()` injection
+  for the on-air detection.
+
+### On-air smoke — Path B chosen, Path A skipped
+
+Initial plan was a 90-second manual click-through:
+Studio→Hub→Playlists→Open→Edit→Preview, verify confirm dialog +
+Cancel + OK behaviour. Cannot be performed by an LLM agent; only
+the human operator can drive a PyQt window and listen to actual
+audio. Kavish chose Path B — automated `pytest-qt` integration smoke
+covering the same code paths deterministically.
+
+Five tests in `tests/test_frame9_onair_smoke.py`:
+1. `test_preview_offair_plays_directly` — Studio with
+   `_current_track=None` → no dialog → engine.load_file fires.
+2. `test_preview_onair_cancel_blocks_preview` — Studio on-air →
+   dialog appears → Cancel → ZERO new engine calls.
+3. `test_preview_onair_ok_plays_through_cue` — Studio on-air → OK
+   → engine.load_file fires; the new preview cid is **strictly
+   different** from Studio's `_playback_cid` (proves preview rides
+   on its own channel).
+4. `test_studio_onair_audio_uninterrupted_during_preview` —
+   production-critical invariant: while preview is active, Studio's
+   on-air channel id receives ZERO `stop`/`pause`/`cleanup` calls.
+5. (bonus) `test_second_preview_cleans_up_first` — rapid double-
+   preview cleans up the prior cid before loading the next, so
+   channels don't leak.
+
+`_FakeEngine` records every call so we can assert wire shape (which
+channel id received which method) without exercising real audio
+hardware. The actual audio routing on Kavish's broadcast workstation
+is the only thing this can't verify — explicitly out of scope here.
+
+### Carry-overs (cleanup pass candidates, NOT in this commit)
+
+1. **Folder + Heart element icons** are decorative-only. No songs
+   schema field for either. Investigate later: Folder = saved
+   search / element set / sub-clock? Heart = favorites flag on
+   songs? Click currently routes to "Coming soon" toast.
+2. **Analyze panel — hour-cells bar chart** renders empty cells with
+   "Play history — coming soon" hint. Need
+   `db.get_track_play_history(track_id, last_n_days=N)` when the
+   broadcast_log query is wired. Lyrics column also deferred (no
+   `songs.lyrics` field today).
+3. **Memos / Schedule & Details / Export Playlist tabs** (top
+   toolbar) all emit "Coming soon" toasts. The Edit Playlist tab
+   active-state is rendered correctly.
+4. **Mic recording (🎤) + Preview Breaks (●)** placeholder buttons —
+   no break/spot preview engine + no mic recording infrastructure yet.
+
+### Suite
+
+249 passed (Frame 11 baseline) → 254 passed (+5 new smoke). Plus 20
+playlist_edit tests + 3 db tests in their respective files. Net new
+across this commit: +28 tests. Zero regressions, 2 deselected (slow
+soak + the pre-existing `test_preview_without_engine_does_not_crash`
+modal-dialog hang).
+
+### Commit
+
+feat(ui): build Edit Playlist screen + automated on-air smoke (figma 248:2)
