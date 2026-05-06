@@ -3567,29 +3567,39 @@ class Studio(QWidget):
         self._apply_playing_state(song)
         self._update_status_pills()
 
-        # Phase F-Final: scheduler-driven plays write a broadcast_log row
+        # Always write a broadcast_log row, regardless of whether the
+        # play came from scheduler dispatch or a manual operator action.
+        # Pre-fix: only scheduler-driven plays (with _clock_id) logged,
+        # so Live-Assist sessions, library double-clicks, and ▶ Play
+        # from idle never appeared in the History panel. log_play
+        # accepts Optional clock_id / slot_idx so legacy/manual plays
+        # land cleanly with NULL attribution columns.
         clock_id  = song.get("_clock_id")
         slot_idx  = song.get("_slot_idx")
         item_type = song.get("_item_type", "song")
-        if clock_id is not None:
-            try:
-                self._db.log_play(
-                    entry_type=item_type,
-                    song_id=int(song.get("id"))
-                            if (item_type == "song" and song.get("id")) else None,
-                    duration_ms=int(self._current_duration_ms),
-                    deck="A",
-                    was_manual=0,
-                    clock_id=int(clock_id),
-                    slot_idx=int(slot_idx) if slot_idx is not None else None,
-                )
-            except Exception as exc:
-                log.warning(f"[studio] {item_type} log_play failed: {exc}")
+        was_manual = 0 if clock_id is not None else 1
+        try:
+            self._db.log_play(
+                entry_type=item_type,
+                song_id=int(song.get("id"))
+                        if (item_type == "song" and song.get("id")) else None,
+                duration_ms=int(self._current_duration_ms),
+                deck="A",
+                was_manual=was_manual,
+                clock_id=int(clock_id) if clock_id is not None else None,
+                slot_idx=int(slot_idx) if slot_idx is not None else None,
+            )
+        except Exception as exc:
+            log.warning(f"[studio] {item_type} log_play failed: {exc}")
+        # Refresh the History panel so the just-started track appears
+        # at the top immediately, not on the next spot-EOS event.
+        self._refresh_history()
 
         log.info(
             f"[studio] deck play ch={cid} {item_type} id={song.get('id')} "
             f"{song.get('title')!r} dur_ms={self._current_duration_ms}"
-            + (f" — scheduler clock_id={clock_id}" if clock_id else ""))
+            + (f" — scheduler clock_id={clock_id}"
+               if clock_id else " — manual"))
 
     # ────────────────────────────────────────────────────────────────────
     # PRESERVED: engine signal handlers (verbatim)
@@ -3871,6 +3881,9 @@ class Studio(QWidget):
             )
         except Exception as exc:
             log.warning(f"[studio] broadcast_log write failed: {exc}")
+        # Refresh History panel so the spot row appears at the top
+        # immediately on play-start, not just on the next spot-EOS.
+        self._refresh_history()
         log.info(f"[studio] auto-spot ch={cid} campaign={campaign_id} "
                  f"file={os.path.basename(path)} "
                  f"dur={self._current_duration_ms}ms")
