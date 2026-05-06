@@ -13,11 +13,20 @@ import sys
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QGuiApplication
-from PyQt6.QtWidgets import QMainWindow, QStackedWidget, QApplication
+from PyQt6.QtWidgets import (
+    QMainWindow, QStackedWidget, QApplication, QSizePolicy,
+)
 
 from core.constants import APP_NAME, APP_VERSION, WINDOW_W, WINDOW_H
 
 log = logging.getLogger("MainWindow")
+
+# Feature flag — Phase 2 Part 1 pilot. When True, Studio is wrapped in
+# a ResponsiveContainer so it auto-fits the window on monitors smaller
+# than the 1920×1080 design canvas (e.g. Kavish's 1366×768 desktop).
+# Set False for instant rollback to the legacy direct-mount path that
+# scrolls inside the QScrollArea on small windows.
+USE_RESPONSIVE_WRAPPER_FOR_STUDIO = True
 
 
 class MainWindow(QMainWindow):
@@ -85,11 +94,26 @@ class MainWindow(QMainWindow):
         from PyQt6.QtGui import QPalette, QColor as _QColor
 
         self._stack = QStackedWidget()
-        self._stack.setFixedSize(WINDOW_W, WINDOW_H)  # design canvas
+        # Phase 2 Part 1: when the Studio responsive wrapper is on, the
+        # stack fills the available viewport so the wrapper has a real
+        # window-sized area to scale Studio into. When off, the legacy
+        # fixed-canvas behaviour scrolls on small windows. Older
+        # screens (Hub / Playlists / Auto Schedule / Clock Editor /
+        # Playlist Edit) still hardcode their own setFixedSize(1440,
+        # 900); on a window smaller than 1440×900 they will clip top-
+        # left rather than scroll — that's accepted Part 2 work.
+        if USE_RESPONSIVE_WRAPPER_FOR_STUDIO:
+            self._stack.setSizePolicy(QSizePolicy.Policy.Expanding,
+                                      QSizePolicy.Policy.Expanding)
+        else:
+            self._stack.setFixedSize(WINDOW_W, WINDOW_H)
 
         scroll = QScrollArea()
         scroll.setObjectName("mwScroll")
-        scroll.setWidgetResizable(False)             # keep stack at design size
+        # Match the stack size policy: when responsive is on, the scroll
+        # area lets its child fill the viewport (no scrollbars on a
+        # full-HD monitor); when off, child stays at its design canvas.
+        scroll.setWidgetResizable(USE_RESPONSIVE_WRAPPER_FOR_STUDIO)
         scroll.setHorizontalScrollBarPolicy(_Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         scroll.setVerticalScrollBarPolicy(_Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -125,12 +149,21 @@ class MainWindow(QMainWindow):
         self.setPalette(mw_pal)
         self.setAutoFillBackground(True)
 
-        # Window can shrink below the design canvas (scrollbars will appear).
-        self.setMinimumSize(800, 600)
-        self.resize(target_w, target_h)
+        # Phase 2 Part 1: in responsive mode the window starts maximized
+        # (broadcast-cockpit standard) and clamps to a 1366×700 minimum
+        # so older fixed-canvas screens stay reachable. Legacy mode
+        # keeps the prior 800×600 floor + adaptive resize for back-compat.
+        if USE_RESPONSIVE_WRAPPER_FOR_STUDIO:
+            self.setMinimumSize(1366, 700)
+            self.resize(target_w, target_h)   # transient — overridden below
+        else:
+            self.setMinimumSize(800, 600)
+            self.resize(target_w, target_h)
 
         self._mount_control_panel()
         self._center_on_screen()
+        if USE_RESPONSIVE_WRAPPER_FOR_STUDIO:
+            self.showMaximized()
 
         log.info(
             f"MainWindow ready — window={self.size().width()}x{self.size().height()}, "
@@ -198,7 +231,18 @@ class MainWindow(QMainWindow):
                 engine=self._engine, scheduler=self._scheduler,
                 instant_jingle_engine=self._instant_jingle_engine)
             self.studio.breadcrumb_clicked.connect(self._on_breadcrumb)
-            self._stack.addWidget(self.studio)
+            # Phase 2 Part 1: wrap Studio in a ResponsiveContainer so
+            # it auto-fits the window on monitors smaller than the
+            # 1920×1080 design canvas. The signal connection above
+            # still works because we hold a direct reference to the
+            # inner widget — only the parent chain changes.
+            if USE_RESPONSIVE_WRAPPER_FOR_STUDIO:
+                from ui.widgets.responsive_container import ResponsiveContainer
+                self._studio_container = ResponsiveContainer(
+                    self.studio, design_width=WINDOW_W, design_height=WINDOW_H)
+                self._stack.addWidget(self._studio_container)
+            else:
+                self._stack.addWidget(self.studio)
 
             # Scheduling Hub — premium dark theme rebuild (Figma 231:3).
             # Pure navigation grid + Studio launcher; live status footer
@@ -389,7 +433,15 @@ class MainWindow(QMainWindow):
 
     def _on_studio_clicked(self) -> None:
         log.info("Open Studio →")
-        if hasattr(self, "studio"):
+        # Phase 2 Part 1: switch to the responsive wrapper when the
+        # flag is on; otherwise to the direct Studio widget. Both paths
+        # leave self.studio as the canonical reference for callers
+        # (Playlists / Edit Playlist on-air detection, etc.) — only
+        # the page that's swapped into view changes.
+        if (USE_RESPONSIVE_WRAPPER_FOR_STUDIO
+                and hasattr(self, "_studio_container")):
+            self._stack.setCurrentWidget(self._studio_container)
+        elif hasattr(self, "studio"):
             self._stack.setCurrentWidget(self.studio)
 
     def _on_settings_clicked(self) -> None:
