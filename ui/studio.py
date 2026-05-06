@@ -3258,6 +3258,13 @@ class Studio(QWidget):
         self._playback_kind: Optional[str] = None
         self._playback_campaign_id: Optional[int] = None
         self._pre_spot_song_id: Optional[int] = None
+        # Deferred spot dispatch — when scheduler fires spot_due during
+        # an actively-playing deck song, we cache the campaign here
+        # instead of interrupting. Song EOS path (d) consumes it and
+        # plays the spot before auto-advancing to the next song.
+        # None = no pending spot. Cleared on stop-next, loop, and
+        # AUTO-off (operator-takes-control transitions).
+        self._pending_spot_campaign_id: Optional[int] = None
         self._queue_songs: list[dict] = self._load_queue_from_db()
 
         # Build widgets — Steps 1+2 done; rest are placeholders
@@ -3639,6 +3646,13 @@ class Studio(QWidget):
         if kind == "deck" and self._stop_after_current:
             self._stop_after_current = False
             self._current_track = None
+            # Drop any deferred spot — operator pressed stop-next, they
+            # want silence after this song ends, not an auto-fired ad.
+            if self._pending_spot_campaign_id is not None:
+                log.info(
+                    f"[studio] stop-next dropped pending spot "
+                    f"{self._pending_spot_campaign_id}")
+                self._pending_spot_campaign_id = None
             log.info("[studio] stop-next consumed → idle")
             self._apply_idle_state()
             self._update_status_pills()
@@ -3647,6 +3661,14 @@ class Studio(QWidget):
         # (c) loop replays
         if (kind == "deck" and self._loop_enabled and pre_track is not None):
             log.info(f"[studio] loop replay → {pre_track.get('title')!r}")
+            # Drop pending spot — loop is an "intentionally repeat this
+            # song" instruction; pinning a spot inside a loop would be
+            # a surprise interrupt the operator didn't ask for.
+            if self._pending_spot_campaign_id is not None:
+                log.info(
+                    f"[studio] loop dropped pending spot "
+                    f"{self._pending_spot_campaign_id}")
+                self._pending_spot_campaign_id = None
             self._on_queue_song_play(pre_track)
             return
 
@@ -3656,6 +3678,21 @@ class Studio(QWidget):
         # AUTO header pill flips this off → Live-Assist mode where
         # operator must click Play after each track ends.
         if kind == "deck" and self._auto_advance_enabled:
+            # Deferred spot fires here BEFORE auto-advancing to next
+            # song. _pre_spot_song_id is set from the just-ended track
+            # so the spot's own EOS path (a) resumes from the right
+            # anchor in the queue. _do_scheduler_spot_due sees
+            # _playback_cid is None (we just cleaned up above) so it
+            # takes the "play immediately" path, not the defer path.
+            if self._pending_spot_campaign_id is not None:
+                pending = self._pending_spot_campaign_id
+                self._pending_spot_campaign_id = None
+                if pre_track is not None:
+                    self._pre_spot_song_id = pre_track.get("id")
+                log.info(
+                    f"[studio] song EOS → playing deferred spot {pending}")
+                self._do_scheduler_spot_due(pending)
+                return
             cur_id = (pre_track or {}).get("id")
             next_song = self._compute_next_song(after_id=cur_id)
             if next_song is not None:
@@ -3737,6 +3774,24 @@ class Studio(QWidget):
     def _do_scheduler_spot_due(self, campaign_id: int) -> None:
         if self._engine is None:
             log.warning(f"[studio] spot_due {campaign_id} — no engine")
+            return
+        # Deferred dispatch — when a song is currently playing on the
+        # deck, do NOT interrupt. Cache the campaign id; song EOS path
+        # (d) will consume it and play the spot before auto-advancing.
+        # Operator's listener never hears a mid-song hard-cut.
+        if (self._playback_kind == "deck"
+                and self._playback_cid is not None
+                and self._current_track is not None):
+            if (self._pending_spot_campaign_id is not None
+                    and self._pending_spot_campaign_id != int(campaign_id)):
+                log.warning(
+                    f"[studio] overwriting pending spot "
+                    f"{self._pending_spot_campaign_id} with {campaign_id} "
+                    f"(only the most-recent is queued)")
+            self._pending_spot_campaign_id = int(campaign_id)
+            log.info(
+                f"[studio] spot {campaign_id} deferred — "
+                f"current song will play out, then spot fires")
             return
         try:
             spot_files = self._db.get_spot_files(campaign_id)
@@ -4048,6 +4103,14 @@ class Studio(QWidget):
             if running:
                 self._scheduler.stop()
                 self._auto_advance_enabled = False
+                # Drop any pending spot — operator clicked AUTO off,
+                # they're taking control. A scheduled-but-deferred spot
+                # firing during Live-Assist would surprise the operator.
+                if self._pending_spot_campaign_id is not None:
+                    log.info(
+                        f"[studio] AUTO off — dropped pending spot "
+                        f"{self._pending_spot_campaign_id}")
+                    self._pending_spot_campaign_id = None
                 log.info("[studio] AUTO pill → scheduler.stop() + Live-Assist")
             else:
                 self._scheduler.start()
