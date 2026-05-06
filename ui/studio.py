@@ -3265,6 +3265,14 @@ class Studio(QWidget):
         # None = no pending spot. Cleared on stop-next, loop, and
         # AUTO-off (operator-takes-control transitions).
         self._pending_spot_campaign_id: Optional[int] = None
+        # Rapid-fire log_play guard — broadcast_log was getting duplicate
+        # rows when an EOS-error loop (file fails to play → EOS fires
+        # immediately → auto-advance picks the same song from a single-
+        # slot clock → loops 9× in one second). 5-second same-song guard
+        # prevents the duplicate clutter without affecting legitimate
+        # spaced replays.
+        self._last_song_log_id: Optional[int] = None
+        self._last_song_log_time = None  # datetime, populated on first log
         self._queue_songs: list[dict] = self._load_queue_from_db()
 
         # Build widgets — Steps 1+2 done; rest are placeholders
@@ -3574,23 +3582,47 @@ class Studio(QWidget):
         # from idle never appeared in the History panel. log_play
         # accepts Optional clock_id / slot_idx so legacy/manual plays
         # land cleanly with NULL attribution columns.
+        #
+        # Rapid-fire guard: skip log_play if the same song id was just
+        # logged within the last 5 seconds. Prevents the rapid-fire EOS
+        # loop pattern (file errors out 0ms in → auto-advance picks
+        # same song from single-slot clock → repeats) from polluting
+        # broadcast_log with duplicate rows that swamp the History
+        # panel. Spots are NOT guarded — back-to-back spots from
+        # different campaigns are legitimate.
+        from datetime import datetime as _dt, timedelta as _td
         clock_id  = song.get("_clock_id")
         slot_idx  = song.get("_slot_idx")
         item_type = song.get("_item_type", "song")
         was_manual = 0 if clock_id is not None else 1
-        try:
-            self._db.log_play(
-                entry_type=item_type,
-                song_id=int(song.get("id"))
-                        if (item_type == "song" and song.get("id")) else None,
-                duration_ms=int(self._current_duration_ms),
-                deck="A",
-                was_manual=was_manual,
-                clock_id=int(clock_id) if clock_id is not None else None,
-                slot_idx=int(slot_idx) if slot_idx is not None else None,
-            )
-        except Exception as exc:
-            log.warning(f"[studio] {item_type} log_play failed: {exc}")
+        song_id = (int(song.get("id"))
+                   if (item_type == "song" and song.get("id")) else None)
+        now_dt = _dt.now()
+        skip_log = False
+        if (item_type == "song" and song_id is not None
+                and self._last_song_log_id == song_id
+                and self._last_song_log_time is not None
+                and now_dt - self._last_song_log_time < _td(seconds=5)):
+            skip_log = True
+            log.warning(
+                f"[studio] skipping duplicate log for song {song_id} "
+                f"(< 5s since last log) — likely EOS-loop guard")
+        if not skip_log:
+            try:
+                self._db.log_play(
+                    entry_type=item_type,
+                    song_id=song_id,
+                    duration_ms=int(self._current_duration_ms),
+                    deck="A",
+                    was_manual=was_manual,
+                    clock_id=int(clock_id) if clock_id is not None else None,
+                    slot_idx=int(slot_idx) if slot_idx is not None else None,
+                )
+                if item_type == "song" and song_id is not None:
+                    self._last_song_log_id = song_id
+                    self._last_song_log_time = now_dt
+            except Exception as exc:
+                log.warning(f"[studio] {item_type} log_play failed: {exc}")
         # Refresh the History panel so the just-started track appears
         # at the top immediately, not on the next spot-EOS event.
         self._refresh_history()
@@ -4243,17 +4275,49 @@ class Studio(QWidget):
     def _refresh_history(self) -> None:
         """Populate the History panel from db.get_history(). Called on
         init + after every spot/song state transition that could have
-        written a broadcast_log row."""
+        written a broadcast_log row.
+
+        Render-side dedupe: collapses consecutive same-song rows into
+        a single entry. Existing broadcast_log rows from rapid-fire
+        EOS loops (pre-write-side-guard era) cluttered the 12-slot
+        panel with the same song repeated 8× in a row; this collapse
+        hides the redundancy without modifying the underlying audit
+        log. Pull a larger window (24) and dedupe down to 12 visible
+        slots so the panel never runs short. Spots are NOT collapsed
+        — back-to-back spots are legitimate sequence."""
         if not hasattr(self, "_history_panel"):
             return
         try:
-            rows = self._db.get_history(limit=12)
+            rows = self._db.get_history(limit=24)
         except Exception as exc:
             log.debug(f"[studio] history refresh failed: {exc}")
             return
+        # Build a deduped list of up to 12 rendered entries
+        rendered: list = []
+        prev_song_id = None
+        for r in rows:
+            keys = r.keys() if hasattr(r, "keys") else []
+            entry_type = (r["entry_type"] if "entry_type" in keys
+                          else "song")
+            if entry_type == "song":
+                row_song_id = (r["song_id"] if "song_id" in keys
+                               else None)
+                if row_song_id is not None and row_song_id == prev_song_id:
+                    # Consecutive duplicate of the same song — skip;
+                    # the older row is already rendered above it.
+                    continue
+                prev_song_id = row_song_id
+            else:
+                # Spot resets the consecutive-song-streak so the next
+                # song after a spot is rendered even if it matches the
+                # one before the spot (legitimate playlist pattern).
+                prev_song_id = None
+            rendered.append(r)
+            if len(rendered) >= 12:
+                break
         for i in range(12):
-            if i < len(rows):
-                r = rows[i]
+            if i < len(rendered):
+                r = rendered[i]
                 keys = r.keys() if hasattr(r, "keys") else []
                 time_str = self._fmt_history_time(
                     r["played_at"] if "played_at" in keys else None)

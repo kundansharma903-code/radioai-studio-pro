@@ -196,3 +196,159 @@ def test_spot_dispatch_refreshes_history_panel(qtbot, studio):
             db._conn().commit()
         except Exception:
             pass
+
+
+# ── 4. Rapid-fire same-song dedupe (write-side guard) ─────────────────
+
+
+def test_rapid_same_song_replay_only_logs_once(qtbot, studio):
+    """Simulate the EOS-loop bug: same song called via _on_queue_song_play
+    9× in rapid succession. With the write-side guard, only the first
+    call should write a broadcast_log row. Operator's audit log stays
+    clean, History panel doesn't get swamped."""
+    db = studio._db
+    song = dict(studio._queue_songs[0])
+    song.pop("_clock_id", None)
+
+    pre_id = db._conn().execute(
+        "SELECT MAX(id) FROM broadcast_log").fetchone()[0] or 0
+
+    for _ in range(9):
+        studio._on_queue_song_play(song)
+        qtbot.wait(20)   # ~180ms total — well within 5s window
+
+    new_rows = db._conn().execute(
+        "SELECT COUNT(*) FROM broadcast_log WHERE id > ?",
+        [int(pre_id)]).fetchone()[0]
+
+    assert new_rows == 1, (
+        f"rapid 9× same-song play should log 1 row (got {new_rows}) — "
+        f"5s dedupe guard prevents EOS-loop pollution")
+
+    try:
+        db._conn().execute(
+            "DELETE FROM broadcast_log WHERE id > ?", [int(pre_id)])
+        db._conn().commit()
+    except Exception:
+        pass
+
+
+# ── 5. Different songs in quick succession both log ───────────────────
+
+
+def test_different_songs_log_independently(qtbot, studio):
+    """Dedupe is per-song-id — different songs played in quick succession
+    must each get their own broadcast_log row. We need at least 2
+    distinct queue songs for this; skip if only 1 is available."""
+    if len(studio._queue_songs) < 2:
+        pytest.skip("need ≥2 distinct songs in queue")
+    db = studio._db
+    song_a = dict(studio._queue_songs[0])
+    song_b = dict(studio._queue_songs[1])
+    for s in (song_a, song_b):
+        s.pop("_clock_id", None)
+
+    pre_id = db._conn().execute(
+        "SELECT MAX(id) FROM broadcast_log").fetchone()[0] or 0
+
+    studio._on_queue_song_play(song_a)
+    qtbot.wait(20)
+    studio._on_queue_song_play(song_b)
+    qtbot.wait(20)
+
+    new_rows = db._conn().execute(
+        "SELECT COUNT(*) FROM broadcast_log WHERE id > ?",
+        [int(pre_id)]).fetchone()[0]
+
+    assert new_rows == 2, (
+        f"two distinct songs should log 2 rows (got {new_rows})")
+
+    try:
+        db._conn().execute(
+            "DELETE FROM broadcast_log WHERE id > ?", [int(pre_id)])
+        db._conn().commit()
+    except Exception:
+        pass
+
+
+# ── 6. History panel render collapses consecutive same-song duplicates ─
+
+
+def test_history_render_collapses_consecutive_same_song_dupes(qtbot, studio):
+    """Render-side dedupe — when broadcast_log already contains
+    consecutive duplicate rows for the same song (e.g. from a
+    pre-fix EOS-loop session), the History panel must collapse them
+    so the operator sees distinct entries instead of a wall of
+    repeats. Audit log stays intact; only the visual panel dedupes.
+
+    Uses a synthetic ``db.get_history`` return so the test isolates
+    the dedupe logic from any pre-existing state in the live DB."""
+
+    # Monkey-patch db.get_history to return a controlled row set that
+    # mirrors the rapid-fire pollution pattern: song_b at the top,
+    # then 5 consecutive song_a rows, then a spot, then song_a again
+    # (legit replay after a spot — should NOT be collapsed).
+    class _FakeRow:
+        def __init__(self, **kw):
+            self._d = dict(kw)
+
+        def keys(self):
+            return list(self._d.keys())
+
+        def __getitem__(self, k):
+            return self._d.get(k)
+
+    fake_rows = [
+        # Newest at the top
+        _FakeRow(entry_type="song", song_id=222, title="Song B",
+                 artist="Artist B", duration_ms=180000, played_at=None,
+                 campaign_name=None),
+        # 5 consecutive duplicates of song_a — should collapse to 1
+        _FakeRow(entry_type="song", song_id=111, title="Song A",
+                 artist="Artist A", duration_ms=120000, played_at=None,
+                 campaign_name=None),
+        _FakeRow(entry_type="song", song_id=111, title="Song A",
+                 artist="Artist A", duration_ms=120000, played_at=None,
+                 campaign_name=None),
+        _FakeRow(entry_type="song", song_id=111, title="Song A",
+                 artist="Artist A", duration_ms=120000, played_at=None,
+                 campaign_name=None),
+        _FakeRow(entry_type="song", song_id=111, title="Song A",
+                 artist="Artist A", duration_ms=120000, played_at=None,
+                 campaign_name=None),
+        _FakeRow(entry_type="song", song_id=111, title="Song A",
+                 artist="Artist A", duration_ms=120000, played_at=None,
+                 campaign_name=None),
+        # Spot resets the dedupe streak
+        _FakeRow(entry_type="spot", song_id=None, title=None,
+                 artist=None, duration_ms=30000, played_at=None,
+                 campaign_name="Test Spot"),
+        # Legit replay of song_a after a spot — should render again
+        _FakeRow(entry_type="song", song_id=111, title="Song A",
+                 artist="Artist A", duration_ms=120000, played_at=None,
+                 campaign_name=None),
+    ]
+
+    original_get_history = studio._db.get_history
+    studio._db.get_history = lambda limit=24: fake_rows
+    try:
+        studio._refresh_history()
+
+        entries = studio._history_panel._entries
+        # Top 4 rendered entries should be: Song B, Song A, Test Spot,
+        # Song A. The 5 consecutive Song A duplicates collapsed to 1;
+        # the post-spot Song A re-renders because the spot reset the
+        # consecutive-streak.
+        assert entries[0].title == "Song B"
+        assert entries[1].title == "Song A"
+        assert entries[2].title == "Test Spot"
+        assert entries[3].title == "Song A"
+        # The 5 consecutive Song A duplicates would have spanned
+        # entries[1..5] without dedupe. Post-fix: only entries[1] +
+        # entries[3] carry "Song A" — exactly 2, NOT 6.
+        song_a_count = sum(1 for e in entries if e.title == "Song A")
+        assert song_a_count == 2, (
+            f"5 consecutive Song A dupes should collapse to 1, plus "
+            f"the post-spot legit replay → 2 total (got {song_a_count})")
+    finally:
+        studio._db.get_history = original_get_history
