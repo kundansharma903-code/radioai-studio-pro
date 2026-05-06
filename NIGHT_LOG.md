@@ -1180,3 +1180,70 @@ can land.
 ### Commit
 
 feat(ui): rebuild Studio with premium broadcast design (figma 312:2)
+
+---
+
+## Session 2026-05-06 — feat: Studio v3 disciplined 9-step rebuild (Plan A)
+
+The first Studio v3 rebuild (`f860fac` above) drifted structurally and
+was rolled back via `44fd3eb`. Plan A: rebuild against Figma 312:2 in
+nine verifiable per-step checkpoints, preserving every engine wire +
+internal API name verbatim from `ui/studio_legacy.py` so the 9 existing
+Studio tests pass at every step.
+
+### Build chain (commits `2e706eb..3368497`)
+
+| Step | Hash      | Scope |
+|------|-----------|-------|
+| 1    | `2e706eb` | 1920×1080 canvas + Header (logo + wordmark + clock + Active Station + 3 status pills + Control Panel + Settings cog) |
+| 2    | `f6efe30` | Master strip — NowPlayer 836w + NextChip 200w + ControlCluster 296w + LevelMeters + AnalogClock + Wordmark |
+| 3    | `cbbda7c` | Up Coming queue — 5 rich cards (AT timestamp + DUR + INTRO + type badges) + FADE NEXT toggle + footer |
+| 4    | `f11ac98` | Libraries — 7 type tiles + 5-button Action Stack + Songs table + Filter sub-panel + Category dropdown |
+| 5    | `928684c` | Instant Jingles — DEMO Sweep PLAYING + 3×3 jingle tiles + 1-5 hotkeys + Edit Bank (decorative — no engine wire) |
+| 6    | `525841e` | History — 12 alternating rose/amber rows + View Full History link |
+| 7    | `4f3a83b` | Next Break + RDS + Problems trio |
+| 8    | `9f5af52` | Bottom Transport — Loaded total + ▶/■ + slider + AutoPlay + 6-button cluster |
+| 9    | `3368497` | Final integration polish + cleanup (removed `_PlaceholderFrame` dead code) |
+
+Final `ui/studio.py` = 3663 lines (vs 2265 in legacy). Larger because
+every widget is hand-painted custom QWidget matching Figma's exact
+visual treatment — no QSS shortcuts.
+
+### State after Step 9
+
+- **Visual phase: COMPLETE.** Every region from Header through Bottom
+  Transport matches Figma 312:2 pixel-by-pixel.
+- **Wiring phase: PENDING.** Phase A (Instant Jingles via
+  `core.instant_jingle_engine`), Phase B (Up Coming queue → scheduler),
+  Phase C (status pills, master volume, navigation, MixFade, Problems)
+  scoped but not yet authorized.
+- **All 9 Studio tests pass at every step** (`test_studio_eos_paths.py`
+  + `test_studio_item_dispatch.py`). Suite total per commit msgs:
+  254 passed + 2 deselected = 256 collected. The 254↔256 difference is
+  just whether `--deselect` for slow/hung tests is applied — no new
+  tests landed across the 9 commits.
+
+### Decorative widgets pending Phase A/B/C wiring
+
+1. Instant Jingles 3×3 grid + 1-5 hotkeys + DEMO PLAYING — biggest gap;
+   `studio.py` does not import `core.instant_jingle_engine`.
+2. Status pills (SIGNAL / STREAM / AUTO) in Header.
+3. Up / Down navigation buttons in BottomTransport (no queue cursor).
+4. MixFade button — decorative; legacy only had Fade Out.
+5. Problems panel — sample seed only; no scheduler-error feed.
+6. Master volume slider — `_master_volume` exists, no UI surface.
+7. FadeNextToggle pill in Up Coming header.
+
+### Carry-over
+
+- `ui/studio_legacy.py` (2265 lines) retained as rollback insurance
+  until Kavish manually verifies actual audio routing on his
+  broadcast workstation. No commit deletes it without explicit OK.
+- All prior carry-overs (legacy `core/audio_engine.py`, Available
+  Clocks scroll, live-DB test debt, Clock Editor decorative dropdowns,
+  pre-existing `test_preview_without_engine_does_not_crash` modal hang)
+  unchanged.
+
+### Commit
+
+(9 commits — see hash table above)
