@@ -244,3 +244,77 @@ def test_auto_off_clears_pending_spot(qtbot, engine):
     assert sch.is_running() is False
     assert s._auto_advance_enabled is False
     assert s._pending_spot_campaign_id is None
+
+
+# ── 7. NowPlayer visual reflects the spot's name (regression guard) ────
+
+
+def test_spot_dispatch_updates_nowplayer_with_spot_name(qtbot, studio):
+    """After a spot fires, the NowPlayer panel must show the campaign's
+    name, NOT the previous song's title. Regression guard for the
+    listener-quality bug where the operator saw a misleading "song
+    still playing" display while audibly the spot was on air.
+
+    Uses a real on-disk audio file (lifted from the songs table) as
+    the spot file so engine.load_file succeeds. Test campaign +
+    spot_file rows are cleaned up in the finally block."""
+    import os as _os
+    import uuid as _uuid
+
+    db = studio._db
+
+    # Find any real on-disk audio path to attach as the spot's file.
+    rows = db._conn().execute(
+        "SELECT file_path FROM songs WHERE file_path IS NOT NULL "
+        "AND file_path != '' ORDER BY id LIMIT 5"
+    ).fetchall()
+    real_path = next(
+        (r[0] for r in rows if r[0] and _os.path.exists(r[0])), None)
+    if real_path is None:
+        pytest.skip("no real on-disk song file to use as spot audio")
+
+    test_name = f"_test_spot_now_{_uuid.uuid4().hex[:8]}"
+    cid = db.add_campaign({
+        "name":      test_name,
+        "is_active": 1,
+        "priority":  5,
+    })
+    fid = db.add_spot_file(cid, {
+        "filename":    f"{test_name}.mp3",
+        "file_path":   real_path,
+        "duration_ms": 5_000,
+        "is_active":   1,
+    })
+    try:
+        # Idle state — defer doesn't engage, spot plays immediately.
+        assert studio._playback_kind is None
+        studio._do_scheduler_spot_due(int(cid))
+        qtbot.wait(50)
+
+        # Visual binding contract — _apply_playing_state was called and
+        # NowPlayer reflects the spot's campaign name.
+        assert studio._playback_kind == "spot"
+        assert studio._current_track is not None
+        assert studio._current_track["title"] == test_name
+        assert studio._now_player._title == test_name, (
+            "NowPlayer title must show the spot's campaign name "
+            "while the spot is on air, not the prior song's title")
+        # Artist label is the standard auto-air tag — same field that
+        # the post-Phase-A spot dispatch dict carries.
+        assert studio._now_player._artist_year == "Spot · auto-aired"
+    finally:
+        try:
+            db.delete_spot_file(fid)
+        except Exception:
+            pass
+        try:
+            db._conn().execute(
+                "DELETE FROM campaigns WHERE id = ?", [int(cid)])
+            db._conn().commit()
+        except Exception:
+            pass
+        if studio._playback_cid is not None:
+            try:
+                studio._engine.cleanup(studio._playback_cid)
+            except Exception:
+                pass

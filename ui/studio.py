@@ -3854,6 +3854,13 @@ class Studio(QWidget):
             "duration_ms": int(self._current_duration_ms),
             "tags":        ["Ad Break", "Auto"],
         }
+        # Push the spot's track info to NowPlayer / NextChip / RDS /
+        # ControlCluster / BottomTransport. Without this call the visual
+        # state stays on the previous song's name even though the spot
+        # is audibly playing — operator + listener (via on-air display)
+        # would see misleading metadata. Same call the deck path does
+        # in _on_queue_song_play.
+        self._apply_playing_state(self._current_track)
         try:
             self._db.log_play(
                 entry_type="spot",
