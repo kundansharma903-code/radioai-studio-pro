@@ -432,6 +432,66 @@ class SchedulerEngine(QObject):
                 }
         return None
 
+    def peek_next(self, n: int = 5,
+                  now: Optional[datetime] = None) -> list[dict]:
+        """Read-only preview of the next ``n`` items the scheduler would
+        dispatch — without mutating any internal state.
+
+        Studio v3's Up Coming panel needs to display upcoming items but
+        must NOT cause the dispatch cursor to skip slots in the actual
+        broadcast. This method snapshots every mutable scheduler state
+        variable touched by the pick-pipeline (``_clock_slot_cursor``,
+        ``_active_hour_key``, ``_fired_breaks``), calls ``pick_next_item``
+        ``n`` times in a try/finally, and restores the snapshot in
+        ``finally`` regardless of success or exception.
+
+        Returns:
+            list of item dicts (same shape as ``pick_next_item``), in
+            dispatch order. Length ≤ ``n``. Empty list if no clock is
+            assigned, or if every reachable slot's picker returns None.
+
+        Notes:
+            - Per-type pickers do read-only DB queries and ``random.choice``
+              over candidate sets. Because the random state advances on
+              each call, repeating ``peek_next`` may return different
+              song picks for ``random_from_category`` slots — the
+              CURSOR sequence is deterministic, the song identity is
+              not. Slots backed by ``specific_song_id`` remain
+              deterministic.
+            - Safe to call from any thread (matches ``pick_next_item``).
+        """
+        try:
+            n = max(0, int(n))
+        except (TypeError, ValueError):
+            return []
+        if n == 0:
+            return []
+
+        # Snapshot every state variable touched by the pick pipeline.
+        # _fired_breaks is mutated inside _pick_break (line 826); we copy
+        # the set so add/remove operations during the simulated picks
+        # don't bleed back into real dispatch.
+        saved_cursor = self._clock_slot_cursor
+        saved_hour_key = self._active_hour_key
+        saved_fired_breaks = set(self._fired_breaks)
+
+        out: list[dict] = []
+        try:
+            for _ in range(n):
+                item = self.pick_next_item(now=now)
+                if item is None:
+                    break
+                out.append(item)
+        finally:
+            # Restore unconditionally — covers both the success path and
+            # any exception thrown deep inside a picker. The scheduler's
+            # actual dispatch sequence is unchanged after this method
+            # returns.
+            self._clock_slot_cursor = saved_cursor
+            self._active_hour_key = saved_hour_key
+            self._fired_breaks = saved_fired_breaks
+        return out
+
     # ── Per-type pickers ──────────────────────────────────────────────────
 
     @staticmethod
