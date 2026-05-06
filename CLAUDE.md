@@ -38,7 +38,7 @@ py main.py --debug        # verbose logging
 | Stitcher | `core/stitcher_engine.py` | pydub pre-mix, single VLC output |
 | Sweeper | `core/sweeper_engine.py` | Overlay VLC player, timed trigger |
 | Style | `assets/style.qss` | Global dark QSS theme |
-| Main window | `ui/main_window.py` | 1440×900 shell: header+stack+statusbar |
+| Main window | `ui/main_window.py` | 1920×1080 shell (design canvas); older 1440×900 screens letterbox inside |
 | Entry point | `main.py` | Logging→DB→Settings→QApplication→Window |
 
 ## Design Colors
@@ -76,7 +76,9 @@ URL: https://www.figma.com/design/7oN9K61g94wKx3nu44KKDF
 | Clock Editor          | 165:2   |
 | AI Magic              | 170:2   |
 | Spots AI Monitor      | 174:2   |
-| Studio Single Deck    | 182:2   |
+| Studio v3 (Premium)   | 312:2   |
+
+Studio v3 lives on the **Studio Screens v3** page (frame "Studio v3 — Premium Jazler Style"). The earlier `182:2` Single Deck mapping is superseded — do not fetch it.
 
 URL pattern: `https://www.figma.com/design/7oN9K61g94wKx3nu44KKDF?node-id=<node-id>` (use hyphen form, e.g. `5-2`).
 
@@ -87,23 +89,21 @@ URL pattern: `https://www.figma.com/design/7oN9K61g94wKx3nu44KKDF?node-id=<node-
 4. Build PyQt6 matching the design exactly — pure native widgets, no HTML/WebView
 5. Compare result with screenshot; iterate until pixel-aligned
 
-### Studio (182:2) layout reference
-- LEFT (0–300px): Playlist Queue
-- CENTER (301–840px, w=540): Now Playing + Waveform + Controls + Jingles
-- RIGHT (842–1440px, w=598): History + Next Break
+### Studio v3 (312:2) layout reference — 1920×1080
+- HEADER (1920×72): Logo + Wordmark stack + Active Station + 3 status pills + Control Panel + Settings
+- MASTER STRIP (1920×96): NowPlayer 836w · NextChip 200w · ControlCluster 296w · LevelMeters 80w · AnalogClock 80w · Wordmark 320w
+- BODY (1920×820):
+  - LEFT (380w): Up Coming queue (5 rich cards + footer)
+  - CENTER (720w): Libraries (7 type tiles + Action Stack + Songs table + Filter + Category)
+  - RIGHT-TOP (420w + 320w): Instant Jingles · History
+  - RIGHT-BOTTOM (420w + 320w): Next Break · RDS · Problems trio
+- BOTTOM TRANSPORT (1920×80): Loaded total · ▶/■ · slider · AutoPlay · 6-button cluster
 
-## Screen Layout (1440×900)
-```
-┌────────────────────────── HEADER 44px ─────────────────────────────┐
-│ ◈ RadioAI  [KISS FM 91.5]    [00:00:00]    [AUTO] [CTRL] [Studio] │
-├──────────────┬──────────────────────────┬──────────────────────────┤
-│ LEFT 300px   │ CENTER 540px             │ RIGHT 598px              │
-│ Playlist     │ Now Playing + Waveform   │ History + Next Break     │
-│ Queue        │ Controls + Jingles       │                          │
-├──────────────┴──────────────────────────┴──────────────────────────┤
-│ STATUS BAR 36px:  [DB OK 395 songs]          RadioAI Studio v2.0  │
-└────────────────────────────────────────────────────────────────────┘
-```
+Older premium screens (Hub, Playlists, AutoSchedule, ClockEditor, PlaylistEdit) still hardcode 1440×900 and render top-left-anchored inside the larger 1920×1080 MainWindow stack — visually correct, just letterboxed.
+
+### Studio v3 build chain (Plan A — 9 disciplined commits)
+Built incrementally against Figma 312:2, commits `2e706eb..3368497`:
+Step 1 `2e706eb` Header · Step 2 `f6efe30` Master strip · Step 3 `cbbda7c` Up Coming · Step 4 `f11ac98` Libraries · Step 5 `928684c` Instant Jingles · Step 6 `525841e` History · Step 7 `4f3a83b` Next Break/RDS/Problems · Step 8 `9f5af52` Bottom Transport · Step 9 `3368497` integration cleanup. Legacy `ui/studio_legacy.py` (2265 lines) retained as rollback insurance until on-air smoke verification.
 
 ## Build Order for Screens
 1. `ui/screens/studio.py` — main broadcast screen (3-panel layout)
