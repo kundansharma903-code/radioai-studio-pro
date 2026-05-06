@@ -50,7 +50,7 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import (
     QPainter, QColor, QPen, QBrush, QLinearGradient, QRadialGradient,
-    QFont, QMouseEvent, QPaintEvent,
+    QFont, QMouseEvent, QPaintEvent, QShortcut, QKeySequence,
 )
 from PyQt6.QtWidgets import (
     QWidget, QFrame, QGraphicsDropShadowEffect, QMessageBox,
@@ -93,6 +93,16 @@ def _fmt_duration(ms: int) -> str:
     if h:
         return f"{h}:{m:02d}:{ss:02d}"
     return f"{m}:{ss:02d}"
+
+
+def _fmt_jingle_dur(seconds: float) -> str:
+    """Jingle tile duration label format — matches the existing 'XX.X'
+    style used by the placeholder data ('09.7', '04.2'…). Clamps to
+    99.9 because the tile cell is sized for two-digit-dot-decimal."""
+    s = max(0.0, float(seconds or 0.0))
+    if s >= 99.95:
+        return "99.9"
+    return f"{s:04.1f}"
 
 
 def _qcolor_a(hex_color: str, alpha: float) -> QColor:
@@ -1891,11 +1901,16 @@ class _LibrariesPanel(QWidget):
 # Helper text ("Tap any slot to play instantly · 1-5 hotkeys ...")
 # Footer: "Edit Bank" purple link + Last played status (right)
 #
-# Decorative per Q2 vote A — visual fidelity only, no wiring to
-# core.instant_jingle_engine in this commit.
+# Phase A — wired to core.instant_jingle_engine via Studio. Tile labels
+# + durations bind to real jingle_pads rows from db.get_jingle_pads_active()
+# (capped at 9). Tile accent colors stay per-index from the table below
+# (visual fidelity preserved). Click + 1-5 hotkeys + Esc-for-stop-all
+# routed through Studio's _instant_jingle_engine.
 # ════════════════════════════════════════════════════════════════════════
 
-# Sample jingle tile data (visual placeholder per Q2 — wire later)
+# Tile accent palette (per-index visual). Real label + duration come
+# from DB at construction; if fewer than 9 pads exist, the trailing
+# tiles render with label="Empty" and click is a no-op.
 _JINGLE_TILES_DATA = [
     ("CLAPS",        "09.7", AMBER),
     ("SCREAM",       "09.5", AMBER),
@@ -1925,6 +1940,15 @@ class _JingleTile(QWidget):
         self._font_dur  = mono(11, bold=True, letter_spacing=-0.3)
         self._font_unit = inter(7, QFont.Weight.Bold, letter_spacing=1.2)
         self._font_play = inter(11, QFont.Weight.Black)
+
+    def set_label(self, name: str, dur_str: str) -> None:
+        """Phase A: refresh tile text from real DB pad data without
+        rebuilding the widget. Layout/colors/sizes untouched."""
+        if name == self._name and dur_str == self._dur_str:
+            return
+        self._name = name
+        self._dur_str = dur_str
+        self.update(self.rect())
 
     def mousePressEvent(self, e: QMouseEvent) -> None:
         if e.button() == Qt.MouseButton.LeftButton:
@@ -1998,14 +2022,29 @@ class _JingleHotkey(QWidget):
 
 
 class _InstantJinglesPanel(QWidget):
-    """420 × 540 — full Instant Jingles panel."""
+    """420 × 540 — full Instant Jingles panel.
+
+    Phase A: tile labels + DEMO display update via public methods
+    driven by Studio. Click signals carry tile index / hotkey number /
+    Edit Bank — Studio dispatches to the InstantJingleEngine."""
+
+    tile_clicked      = pyqtSignal(int)   # tile index 0..N-1
+    hotkey_clicked    = pyqtSignal(int)   # hotkey number 1..5
+    edit_bank_clicked = pyqtSignal()
+
+    # Geometry of the DEMO display box — used for partial repaint so the
+    # 10Hz countdown doesn't re-paint the whole panel.
+    _DEMO_RECT = QRect(14, 44, 420 - 28, 56)
+    # Edit Bank hit-test rect (matches paintEvent coords).
+    _EDIT_BANK_RECT = QRect(14, 494, 80, 18)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedSize(420, 540)
-        self._demo_label = "DEMO Sweep"
-        self._demo_remaining_s = 0.0       # seconds remaining (decorative)
-        self._last_played_label = "SF Yes OK · 14s ago"
+        self._demo_label = ""
+        self._demo_remaining_s = 0.0
+        self._demo_active = False
+        self._last_played_label = "—"
 
         self._font_h            = inter(11, QFont.Weight.Black, letter_spacing=1.6)
         self._font_slot_pill    = mono(8, bold=True, letter_spacing=0.5)
@@ -2017,7 +2056,8 @@ class _InstantJinglesPanel(QWidget):
         self._font_helper       = inter(9, QFont.Weight.Medium)
         self._font_link         = inter(10, QFont.Weight.Bold, letter_spacing=0.4)
 
-        # 3×3 = 9 jingle tiles
+        # 3×3 = 9 jingle tiles. Default labels from the placeholder table;
+        # Studio overwrites these via set_tiles() with real DB pad data.
         self._tiles: list[_JingleTile] = []
         for i, (name, dur, accent) in enumerate(_JINGLE_TILES_DATA):
             tile = _JingleTile(name, dur, accent, self)
@@ -2026,14 +2066,60 @@ class _InstantJinglesPanel(QWidget):
             x = 14 + col * 132
             y = 110 + row * 78
             tile.move(x, y)
+            tile.clicked.connect(lambda idx=i: self.tile_clicked.emit(idx))
             self._tiles.append(tile)
 
-        # 5 numbered hotkeys (y=346)
+        # 5 numbered hotkeys (y=360)
         self._hotkeys: list[_JingleHotkey] = []
         for i in range(5):
             hk = _JingleHotkey(i + 1, self)
             hk.move(14 + i * 70, 360)
+            hk.clicked.connect(self.hotkey_clicked.emit)
             self._hotkeys.append(hk)
+
+    # ── Public API ───────────────────────────────────────────────────────
+
+    def set_tiles(self, pads: list[dict]) -> None:
+        """Bind tile labels + durations to real DB pad rows. `pads` is a
+        list of dicts with keys 'label', 'duration_ms'. Trailing tiles
+        beyond len(pads) render as 'Empty' (no-op on click)."""
+        for i, tile in enumerate(self._tiles):
+            if i < len(pads):
+                lbl = (pads[i].get("label") or "—").strip() or "—"
+                dur_s = (int(pads[i].get("duration_ms") or 0)) / 1000.0
+                tile.set_label(lbl, _fmt_jingle_dur(dur_s))
+            else:
+                tile.set_label("Empty", "—")
+
+    def set_demo_active(self, label: str, total_seconds: float) -> None:
+        """A pad just started — show its label + remaining countdown."""
+        self._demo_label = label or ""
+        self._demo_remaining_s = max(0.0, float(total_seconds))
+        self._demo_active = True
+        self._last_played_label = label or self._last_played_label
+        self.update(self._DEMO_RECT)
+
+    def update_demo_remaining(self, remaining_seconds: float) -> None:
+        """Driven by Studio's 10Hz countdown timer. Repaints DEMO rect only."""
+        self._demo_remaining_s = max(0.0, float(remaining_seconds))
+        self.update(self._DEMO_RECT)
+
+    def set_demo_inactive(self) -> None:
+        """A pad ended/stopped — clear the DEMO display."""
+        self._demo_active = False
+        self._demo_label = ""
+        self._demo_remaining_s = 0.0
+        self.update(self._DEMO_RECT)
+
+    def mousePressEvent(self, e: QMouseEvent) -> None:
+        # Edit Bank link is decorative drawn text; surface a click via
+        # hit-test so it can route to the standalone Instant Jingles
+        # screen without adding a separate widget.
+        if (e.button() == Qt.MouseButton.LeftButton
+                and self._EDIT_BANK_RECT.contains(e.pos())):
+            self.edit_bank_clicked.emit()
+            return
+        super().mousePressEvent(e)
 
     def paintEvent(self, e: QPaintEvent) -> None:
         p = QPainter(self); p.setClipRect(e.rect())
@@ -2072,7 +2158,9 @@ class _InstantJinglesPanel(QWidget):
         p.drawText(QRectF(self.width() - 22, 8, 14, 18),
                    Qt.AlignmentFlag.AlignCenter, "×")
 
-        # DEMO Sweep PLAYING display
+        # DEMO Sweep PLAYING display (frame always drawn; inner content
+        # only when a pad is actively playing, so an idle Studio doesn't
+        # falsely advertise PLAYING).
         demo = QRectF(14, 44, self.width() - 28, 56)
         demo_grad = QLinearGradient(demo.topLeft(), demo.bottomLeft())
         demo_grad.setColorAt(0.0, _qcolor_a(GREEN, 0.18))
@@ -2081,29 +2169,30 @@ class _InstantJinglesPanel(QWidget):
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.setPen(QPen(_qcolor_a(GREEN, 0.45)))
         p.drawRoundedRect(demo.adjusted(0.5, 0.5, -0.5, -0.5), 8, 8)
-        # PLAYING pill (top-left of demo)
-        playing_pill = QRectF(demo.x() + 10, demo.y() + 8, 64, 18)
-        p.fillRect(playing_pill, _qcolor_a(GREEN, 0.4))
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        p.setPen(QPen(_qcolor_a(GREEN, 0.7)))
-        p.drawRoundedRect(playing_pill.adjusted(0.5, 0.5, -0.5, -0.5), 4, 4)
-        p.setPen(QColor(255, 255, 255)); p.setFont(self._font_playing_pill)
-        p.drawText(playing_pill, Qt.AlignmentFlag.AlignCenter, "PLAYING")
-        # Demo label (below pill)
-        p.setPen(QColor(GREEN_LIGHT)); p.setFont(self._font_demo_label)
-        p.drawText(QRectF(demo.x() + 10, demo.y() + 28, 200, 22),
-                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                   self._demo_label)
-        # Big countdown (right side of demo)
-        p.setPen(QColor(AMBER_LIGHT)); p.setFont(self._font_demo_count)
-        p.drawText(QRectF(demo.right() - 130, demo.y() + 8, 100, 36),
-                   Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
-                   f"{self._demo_remaining_s:04.1f}")
-        # SEC unit
-        p.setPen(QColor(GREEN_LIGHT)); p.setFont(self._font_demo_unit)
-        p.drawText(QRectF(demo.right() - 28, demo.y() + 22, 26, 14),
-                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                   "SEC")
+        if self._demo_active:
+            # PLAYING pill (top-left of demo)
+            playing_pill = QRectF(demo.x() + 10, demo.y() + 8, 64, 18)
+            p.fillRect(playing_pill, _qcolor_a(GREEN, 0.4))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.setPen(QPen(_qcolor_a(GREEN, 0.7)))
+            p.drawRoundedRect(playing_pill.adjusted(0.5, 0.5, -0.5, -0.5), 4, 4)
+            p.setPen(QColor(255, 255, 255)); p.setFont(self._font_playing_pill)
+            p.drawText(playing_pill, Qt.AlignmentFlag.AlignCenter, "PLAYING")
+            # Demo label (below pill)
+            p.setPen(QColor(GREEN_LIGHT)); p.setFont(self._font_demo_label)
+            p.drawText(QRectF(demo.x() + 10, demo.y() + 28, 200, 22),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                       self._demo_label)
+            # Big countdown (right side of demo)
+            p.setPen(QColor(AMBER_LIGHT)); p.setFont(self._font_demo_count)
+            p.drawText(QRectF(demo.right() - 130, demo.y() + 8, 100, 36),
+                       Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                       f"{self._demo_remaining_s:04.1f}")
+            # SEC unit
+            p.setPen(QColor(GREEN_LIGHT)); p.setFont(self._font_demo_unit)
+            p.drawText(QRectF(demo.right() - 28, demo.y() + 22, 26, 14),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                       "SEC")
 
         # Helper text below hotkey row
         p.setPen(QColor(TEXT_DIM)); p.setFont(self._font_helper)
@@ -2910,11 +2999,23 @@ class Studio(QWidget):
     DEFAULT_VOLUME = 85
     FADE_OUT_MS = 3000
 
-    def __init__(self, db, parent=None, engine=None, scheduler=None):
+    def __init__(self, db, parent=None, engine=None, scheduler=None,
+                 instant_jingle_engine=None):
         super().__init__(parent)
         self._db = db
         self._engine = engine
         self._scheduler = scheduler
+        self._instant_jingle_engine = instant_jingle_engine
+        # Jingle pad cache: list of dicts {id, label, file_path,
+        # duration_ms, volume, behaviour} — populated from
+        # db.get_jingle_pads_active() at construction, capped at 9 to
+        # match the 3×3 tile grid. Used by tile-click + hotkey dispatch
+        # and by the DEMO display lookup on pad_started.
+        self._jingle_pads: list[dict] = []
+        # 10Hz countdown timer for the DEMO display. Lives for the full
+        # session; started when a pad begins, stopped on pad_ended/stopped.
+        self._jingle_demo_timer: Optional[QTimer] = None
+        self._jingle_demo_remaining_s: float = 0.0
         self.setFixedSize(WINDOW_W, WINDOW_H)
         self.setStyleSheet(
             "background: qlineargradient("
@@ -2958,6 +3059,10 @@ class Studio(QWidget):
                 self._on_scheduler_next_break_in)
             self._scheduler.started.connect(self._update_status_pills)
             self._scheduler.stopped.connect(self._update_status_pills)
+
+        # Phase A — InstantJingleEngine signal connections + jingle pad
+        # bindings + 1-5 hotkeys + Esc-for-stop-all.
+        self._wire_instant_jingles()
 
         # 1Hz tick for header clock
         self._tick_timer = QTimer(self)
@@ -3637,6 +3742,176 @@ class Studio(QWidget):
 
     def _on_settings(self) -> None:
         QMessageBox.information(self, "Settings", "Settings — coming soon.")
+
+    # ────────────────────────────────────────────────────────────────────
+    # Phase A — InstantJingleEngine wiring
+    # ────────────────────────────────────────────────────────────────────
+
+    def _wire_instant_jingles(self) -> None:
+        """Bind tile labels to real DB pads, wire panel click signals,
+        install 1-5 + Esc shortcuts, and subscribe to IJE pad signals.
+        Safe to call when ``_instant_jingle_engine`` is None — the panel
+        still gets real labels; clicks just no-op."""
+        # Load up to 9 active pads from DB. Failures are non-fatal —
+        # the panel keeps its placeholder labels.
+        self._jingle_pads = self._load_jingle_pads_from_db()
+        if hasattr(self, "_instant_jingles") and self._instant_jingles is not None:
+            self._instant_jingles.set_tiles(self._jingle_pads)
+            self._instant_jingles.tile_clicked.connect(
+                self._on_jingle_tile_clicked)
+            self._instant_jingles.hotkey_clicked.connect(
+                self._on_jingle_hotkey_clicked)
+            self._instant_jingles.edit_bank_clicked.connect(
+                self._on_jingle_edit_bank)
+
+        # Subscribe to engine signals if available. None means tests /
+        # legacy callers that constructed Studio without an IJE — the
+        # panel + tiles still render, just no playback.
+        if self._instant_jingle_engine is not None:
+            self._instant_jingle_engine.pad_started.connect(
+                self._on_ije_pad_started)
+            self._instant_jingle_engine.pad_ended.connect(
+                self._on_ije_pad_inactive)
+            self._instant_jingle_engine.pad_stopped.connect(
+                self._on_ije_pad_inactive)
+
+        # 1-5 hotkeys + Esc-for-stop-all. WidgetWithChildrenShortcut so
+        # the keys only fire while Studio is the visible widget (Jazler
+        # convention; matches the standalone screen's pattern).
+        self._jingle_shortcuts: list[QShortcut] = []
+        for i in range(1, 6):
+            sc = QShortcut(QKeySequence(str(i)), self)
+            sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            sc.activated.connect(
+                lambda n=i: self._on_jingle_hotkey_clicked(n))
+            self._jingle_shortcuts.append(sc)
+        sc_esc = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
+        sc_esc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        sc_esc.activated.connect(self._on_jingle_stop_all)
+        self._jingle_shortcuts.append(sc_esc)
+
+    def _load_jingle_pads_from_db(self) -> list[dict]:
+        """Pull up to 9 active jingle_pads rows from the DB. Each entry
+        is the minimum field set the dispatcher + DEMO display needs.
+        Pads whose file is missing on disk are excluded (broadcast tool
+        — clicking a missing-file tile during a live show would just
+        flash; better to surface an Empty tile in the first place)."""
+        out: list[dict] = []
+        try:
+            rows = self._db.get_jingle_pads_active()
+        except Exception as exc:
+            log.debug(f"[studio] get_jingle_pads_active failed: {exc}")
+            return out
+        for r in rows:
+            try:
+                fp = r["file_path"]
+            except (KeyError, IndexError, TypeError):
+                fp = None
+            if not fp or not os.path.exists(fp):
+                continue
+            try:
+                pad = {
+                    "id":          int(r["id"]),
+                    "label":       (r["label"] or "—"),
+                    "file_path":   fp,
+                    "duration_ms": int(r["duration_ms"] or 0),
+                    "volume":      int(r["volume"] or 100),
+                    "behaviour":   (r["behaviour"] or "play_once"),
+                }
+            except (KeyError, IndexError, TypeError, ValueError) as exc:
+                log.debug(f"[studio] skipping malformed pad row: {exc}")
+                continue
+            out.append(pad)
+            if len(out) >= 9:
+                break
+        return out
+
+    def _on_jingle_tile_clicked(self, idx: int) -> None:
+        self._play_jingle_at_index(idx)
+
+    def _on_jingle_hotkey_clicked(self, n: int) -> None:
+        # Hotkeys are 1-indexed (1..5); tiles are 0-indexed.
+        self._play_jingle_at_index(n - 1)
+
+    def _play_jingle_at_index(self, idx: int) -> None:
+        """Common dispatcher — used by tile clicks and hotkeys. Guards
+        on engine + index range. The proven volume/loop pattern is
+        copied from ui/instant_jingles.py:_on_pad_left_clicked."""
+        if self._instant_jingle_engine is None:
+            return
+        if not (0 <= idx < len(self._jingle_pads)):
+            return
+        pad = self._jingle_pads[idx]
+        if not pad.get("file_path"):
+            return
+        loop = (pad.get("behaviour") == "loop")
+        try:
+            self._instant_jingle_engine.play_pad(
+                int(pad["id"]),
+                pad["file_path"],
+                volume=int(pad.get("volume") or 100),
+                loop=loop,
+            )
+        except Exception as exc:
+            log.warning(f"[studio] play_pad failed: {exc}")
+
+    def _on_jingle_stop_all(self) -> None:
+        """Esc handler — emergency dump of every jingle pad. AudioEngine's
+        cleanup_all is broader (kills deck + spots too); this is the
+        narrow IJE-only stop the operator wants when a wrong jingle is
+        on air."""
+        if self._instant_jingle_engine is None:
+            return
+        try:
+            self._instant_jingle_engine.stop_all()
+        except Exception as exc:
+            log.warning(f"[studio] ije.stop_all failed: {exc}")
+
+    def _on_jingle_edit_bank(self) -> None:
+        # Routes to the standalone Instant Jingles screen for editing.
+        # Route name 'instant_jingles' is registered at
+        # ui/main_window.py:261.
+        self.breadcrumb_clicked.emit("instant_jingles")
+
+    def _on_ije_pad_started(self, pad_id: int) -> None:
+        """A pad just started — light up the DEMO display with that
+        pad's label + total duration, and start the 10Hz countdown."""
+        pad = next((p for p in self._jingle_pads
+                    if int(p["id"]) == int(pad_id)), None)
+        if pad is None or not hasattr(self, "_instant_jingles"):
+            return
+        total_s = (int(pad.get("duration_ms") or 0)) / 1000.0
+        self._jingle_demo_remaining_s = total_s
+        self._instant_jingles.set_demo_active(pad.get("label") or "—",
+                                              total_s)
+        # Start (or restart) the countdown timer
+        if self._jingle_demo_timer is None:
+            self._jingle_demo_timer = QTimer(self)
+            self._jingle_demo_timer.setInterval(100)   # 10 Hz
+            self._jingle_demo_timer.timeout.connect(self._on_jingle_demo_tick)
+        if not self._jingle_demo_timer.isActive():
+            self._jingle_demo_timer.start()
+
+    def _on_ije_pad_inactive(self, _pad_id: int) -> None:
+        """Single handler for pad_ended + pad_stopped. Stops the
+        countdown timer and clears the DEMO display."""
+        if self._jingle_demo_timer is not None and self._jingle_demo_timer.isActive():
+            self._jingle_demo_timer.stop()
+        self._jingle_demo_remaining_s = 0.0
+        if hasattr(self, "_instant_jingles"):
+            self._instant_jingles.set_demo_inactive()
+
+    def _on_jingle_demo_tick(self) -> None:
+        """10Hz countdown — decrement remaining; stop at 0 (we still
+        wait for pad_ended/stopped to fully clear so the visual state
+        stays in sync with the engine)."""
+        self._jingle_demo_remaining_s = max(
+            0.0, self._jingle_demo_remaining_s - 0.1)
+        if hasattr(self, "_instant_jingles"):
+            self._instant_jingles.update_demo_remaining(
+                self._jingle_demo_remaining_s)
+        if self._jingle_demo_remaining_s <= 0.0 and self._jingle_demo_timer is not None:
+            self._jingle_demo_timer.stop()
 
     def _on_library_song_double_clicked(self, idx: int) -> None:
         """Library row double-click → if the row maps to a real queue

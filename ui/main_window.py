@@ -43,6 +43,15 @@ class MainWindow(QMainWindow):
         from core.scheduler import SchedulerEngine
         self._scheduler = SchedulerEngine(self._db, parent=self)
 
+        # Studio's InstantJingleEngine (Phase A — Option 2 topology).
+        # Independent from ui/instant_jingles.py's own IJE instance —
+        # both share the underlying AudioEngine; the only divergence is
+        # the per-instance 8-pad polyphony cap. Future cleanup will
+        # consolidate to a single shared instance.
+        from core.instant_jingle_engine import InstantJingleEngine
+        self._instant_jingle_engine = InstantJingleEngine(
+            engine=self._engine, parent=self)
+
         # Phase B5: aboutToQuit safety net. Fires on app force-quit, OS
         # shutdown, or any path that bypasses closeEvent. cleanup_all is
         # idempotent so the dual-hook is cheap.
@@ -186,7 +195,8 @@ class MainWindow(QMainWindow):
             from ui.studio import Studio
             self.studio = Studio(
                 self._db, parent=None,
-                engine=self._engine, scheduler=self._scheduler)
+                engine=self._engine, scheduler=self._scheduler,
+                instant_jingle_engine=self._instant_jingle_engine)
             self.studio.breadcrumb_clicked.connect(self._on_breadcrumb)
             self._stack.addWidget(self.studio)
 

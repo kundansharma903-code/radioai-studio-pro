@@ -1247,3 +1247,102 @@ visual treatment — no QSS shortcuts.
 ### Commit
 
 (9 commits — see hash table above)
+
+---
+
+## Session 2026-05-06 — Phase A: wire Instant Jingles into Studio v3
+
+Studio v3's InstantJinglesPanel was visual-only (hardcoded `_JINGLE_TILES_DATA`
+of fake names like CLAPS / SCREAM, no DB or engine wires). Phase A
+makes it functional without touching the visual layout.
+
+### Files
+
+- **MODIFIED** `ui/main_window.py` — instantiate one
+  `InstantJingleEngine(engine=self._engine)` as
+  `self._instant_jingle_engine` next to AudioEngine + SchedulerEngine;
+  pass to Studio constructor as 5th kwarg. Standalone
+  `ui/instant_jingles.py` is **not** refactored — it keeps its own IJE
+  instance per the Option 2 topology decision.
+- **MODIFIED** `ui/studio.py` — Studio ctor adds 5th kwarg
+  `instant_jingle_engine=None` (default keeps existing 9 Studio tests
+  green without modification). New `_wire_instant_jingles()` block
+  loads up to 9 active pads from `db.get_jingle_pads_active()`,
+  binds tile labels + durations to real DB rows via the new
+  `_JingleTile.set_label()` and `_InstantJinglesPanel.set_tiles()`
+  methods, installs 1-5 + Esc QShortcuts (WidgetWithChildrenShortcut
+  context, matching the standalone screen pattern), wires panel
+  click signals to `_play_jingle_at_index`, subscribes to IJE
+  `pad_started/ended/stopped`, and runs a 10Hz QTimer that decrements
+  the DEMO display countdown. Edit Bank link uses a hit-test rect on
+  the panel's `mousePressEvent` to emit `breadcrumb_clicked('instant_jingles')`.
+- **NEW** `tests/test_studio_instant_jingles_wiring.py` — 7 tests
+  using a `_FakeIJE` mock matching the proven `_FakeEngine` pattern
+  from `tests/test_frame9_onair_smoke.py`. Live-DB fixture seeds
+  3 jingle pads in a uniquely-named test pallet (`_test_studio_ije_<uuid8>`)
+  and cleans up via try/finally. Covers tile→play_pad arg shape,
+  1-5 hotkey dispatch, Esc-for-stop_all, DEMO active/inactive
+  transitions, Edit Bank routing, and the no-IJE no-crash path.
+
+### Wiring decisions confirmed by Kavish
+
+- **Option 2 IJE topology** (independent instances per screen). Studio's
+  IJE is constructed once at MainWindow init (Studio is mounted once
+  and reused via `setCurrentWidget()` — no leak path).
+- **DEMO countdown:** local QTimer-decrement at 10Hz after `pad_started`
+  (engine has no `slot_progress` signal).
+- **Tile text content** allowed to reflect real DB pad labels; layout /
+  colors / sizes preserved.
+- **Esc-only** for IJE stop_all (no new visible button — matches
+  standalone screen Jazler-precedent).
+
+### Engine API observations (corrected from prompt assumptions)
+
+- API is **pad-based not slot-based**: `play_pad(pad_id, file_path,
+  volume, loop) → bool`. Caller resolves pad data from DB before the
+  call. No `slot_started` / `slot_progress` signals exist.
+- Polyphony cap is per-IJE-instance (8 pads). Studio's IJE and the
+  standalone screen's IJE each have their own cap.
+
+### Manual on-air verification — DEFERRED
+
+Automated tests cover the wire integrity. Real audio routing on
+Kavish's broadcast workstation (does the jingle actually emit through
+the cue/preview channel? does Esc kill mid-pad sound?) requires the
+human + hardware. Recommend a 2-minute smoke:
+  1. Open Studio. Click tile 0 — verify jingle plays.
+  2. With jingle still playing, click tile 1 — both should layer
+     (multi-pad polyphony).
+  3. Press Esc — both should cut immediately.
+  4. Press 1 — same as click on tile 0.
+  5. Click Edit Bank — verify standalone screen opens.
+
+### Carry-overs flagged for follow-up commits
+
+1. **IJE consolidation** — Phase A used Option 2 (independent
+   instances). A future cleanup should hoist IJE to a single
+   MainWindow-owned shared instance and refactor
+   `ui/instant_jingles.py` to accept it via constructor injection.
+   Both screens share the underlying AudioEngine so audio routing is
+   already correct; the only divergence is the per-instance polyphony
+   cap.
+2. **Numeric pad row visual gap** — Figma 312:2 design includes a
+   numeric pad row with a visible "■ Stop All" button below the 3×2
+   jingle grid. The current PyQt build does not render this row.
+   Phase A wired Esc-for-stop-all as a functional substitute. Visual
+   rebuild deferred to a later UI polish commit.
+3. **Tile playing-state indicator** — Phase A.5 will add a per-tile
+   accent stroke / glow for the currently-playing pad and a
+   multi-pad-aware DEMO display. Current state: only the LAST-started
+   pad's countdown is shown.
+
+### Suite
+
+256 → 263 passed (+7 net new). 2 deselected (unchanged: slow soak +
+the pre-existing `test_preview_without_engine_does_not_crash` modal
+hang). All 9 existing Studio tests (`test_studio_eos_paths.py` +
+`test_studio_item_dispatch.py`) pass unchanged.
+
+### Commit
+
+feat(studio): wire Instant Jingles panel to core.instant_jingle_engine
