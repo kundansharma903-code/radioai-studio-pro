@@ -4,8 +4,8 @@ RadioAI Studio Pro — Studio v3 (Figma 312:2 — Premium Jazler Style).
 STEP-BY-STEP REBUILD per Plan A (Kavish, 2026-05-06):
   ✅ Step 1: 1920×1080 canvas + new Header
   ✅ Step 2: Master strip (NowPlayer + NextChip + ControlCluster +
-             LevelMeters + ClockFace + Wordmark)              ← THIS COMMIT
-  □  Step 3: Up Coming queue (rich track cards)
+             LevelMeters + ClockFace + Wordmark)
+  ✅ Step 3: Up Coming queue (rich track cards)              ← THIS COMMIT
   □  Step 4: Libraries panel (type icons + Action Stack + table + filter)
   □  Step 5: Instant Jingles (6-pad + numeric pad + hotkeys)
   □  Step 6: History panel (12 alternating rows)
@@ -988,6 +988,358 @@ class _Wordmark(QWidget):
 
 
 # ════════════════════════════════════════════════════════════════════════
+# UP COMING — 380 × 820 (Figma 321:2)
+#
+# Header (UP COMING amber + FADE NEXT toggle + "+5 MORE" pill)
+# 5 stacked track cards: AT timestamp + DUR + optional INTRO/NEXT badge
+#   + colored album-art tile + title + artist + type badge
+# Footer: LOADED PLAYLIST + total mono + Morning Drive Mix subtitle
+#   + $ pill + ≡ menu
+# ════════════════════════════════════════════════════════════════════════
+
+# Map UI element type → (album-art tile color, type-badge color, label)
+_TYPE_VISUAL = {
+    "song":        (GREEN_LIGHT,  GREEN,        "SONG"),
+    "jingle":      (AMBER_LIGHT,  AMBER,        "JINGLE"),
+    "spot":        (RED_LIGHT,    RED,          "BREAK"),
+    "break":       (RED_LIGHT,    RED,          "BREAK"),
+    "voice_track": (PINK_LIGHT,   PINK,         "VOICE"),
+    "voice":       (PINK_LIGHT,   PINK,         "VOICE"),
+    "sweeper":     (PURPLE_LIGHT, PURPLE_LIGHT, "SWEEPER"),
+    "station_id":  (CYAN_LIGHT,   CYAN,         "STATION"),
+}
+
+
+def _fmt_at_clock(seconds_into_hour: int) -> str:
+    """Convert seconds-from-now to a wall-clock 'HH:MM:SS' string. The
+    queue rolls forward from current time so each card shows when it
+    will air."""
+    now = datetime.now()
+    base = now.hour * 3600 + now.minute * 60 + now.second + seconds_into_hour
+    base %= 24 * 3600
+    h = (base // 3600) % 24
+    m = (base // 60) % 60
+    s = base % 60
+    return f"{h:02d}:{m:02d}:{s:02d}"
+
+
+def _fmt_dur_short(ms: int) -> str:
+    """Compact duration like '3.5s' or '4:23'."""
+    s = max(0, int(ms or 0)) // 1000
+    if s < 60:
+        # Show one decimal if under a minute
+        ms_rem = (int(ms or 0) % 1000) // 100
+        return f"{s}.{ms_rem}s"
+    m, ss = divmod(s, 60)
+    return f"{m}:{ss:02d}"
+
+
+class _UpComingCard(QWidget):
+    """One track card in the Up Coming list (360 × 124)."""
+
+    double_clicked = pyqtSignal(dict)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(360, 124)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._song: Optional[dict] = None
+        self._is_next = False
+        self._at_text = "—"
+
+        self._font_at        = mono(8, bold=True, letter_spacing=0.5)
+        self._font_dur       = mono(9, bold=True, letter_spacing=0.3)
+        self._font_intro     = mono(8, bold=True, letter_spacing=0.4)
+        self._font_title     = inter(13, QFont.Weight.Bold, letter_spacing=-0.1)
+        self._font_artist    = inter(10, QFont.Weight.Medium)
+        self._font_badge     = inter(8, QFont.Weight.Black, letter_spacing=1.4)
+        self._font_glyph     = inter(15, QFont.Weight.Black)
+        self._font_next_pill = inter(8, QFont.Weight.Black, letter_spacing=1.4)
+
+    def set_song(self, song: Optional[dict], is_next: bool = False,
+                 at_text: str = "—") -> None:
+        self._song = dict(song) if song else None
+        self._is_next = bool(is_next)
+        self._at_text = at_text or "—"
+        self.update(self.rect())
+
+    def mouseDoubleClickEvent(self, e: QMouseEvent) -> None:
+        if self._song is not None:
+            self.double_clicked.emit(self._song)
+        super().mouseDoubleClickEvent(e)
+
+    def paintEvent(self, e: QPaintEvent) -> None:
+        p = QPainter(self); p.setClipRect(e.rect())
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(0, 0, self.width(), self.height())
+        # Card background — NEXT card gets rose tint + glow
+        if self._is_next:
+            grad = QLinearGradient(0, 0, self.width(), 0)
+            grad.setColorAt(0.0, _qcolor_a(RED, 0.18))
+            grad.setColorAt(1.0, _qcolor_a(RED, 0.04))
+            p.fillRect(r, QBrush(grad))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.setPen(QPen(_qcolor_a(RED, 0.45)))
+        else:
+            bg = QLinearGradient(0, 0, 0, self.height())
+            bg.setColorAt(0.0, QColor(14, 16, 32, 230))
+            bg.setColorAt(1.0, QColor(7, 9, 18, 230))
+            p.fillRect(r, QBrush(bg))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.setPen(QPen(QColor(255, 255, 255, 18)))
+        p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 8, 8)
+
+        if self._song is None:
+            p.setPen(QColor(TEXT_DIM))
+            p.setFont(inter(11, QFont.Weight.Medium))
+            p.drawText(r, Qt.AlignmentFlag.AlignCenter, "—")
+            p.end()
+            return
+
+        # Resolve type visuals
+        item_type = self._song.get("_item_type") or "song"
+        tile_color, badge_color, badge_label = _TYPE_VISUAL.get(
+            item_type, _TYPE_VISUAL["song"])
+
+        # AT timestamp (top-left)
+        p.setPen(QColor(TEXT_DIM)); p.setFont(self._font_at)
+        p.drawText(QRectF(12, 8, 100, 12),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   f"AT  {self._at_text}")
+
+        # DUR (top, right-of-center)
+        dur_ms = int(self._song.get("duration_ms") or 0)
+        p.setPen(QColor(TEXT_DIM)); p.setFont(self._font_dur)
+        p.drawText(QRectF(140, 8, 90, 12),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   f"DUR  {_fmt_dur_short(dur_ms)}")
+
+        # INTRO badge or NEXT pill (top-right)
+        if self._is_next:
+            badge = QRectF(self.width() - 60, 6, 50, 18)
+            p.fillRect(badge, _qcolor_a(RED, 0.4))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.setPen(QPen(_qcolor_a(RED, 0.7)))
+            p.drawRoundedRect(badge.adjusted(0.5, 0.5, -0.5, -0.5), 4, 4)
+            p.setPen(QColor(TEXT_PRI)); p.setFont(self._font_next_pill)
+            p.drawText(badge, Qt.AlignmentFlag.AlignCenter, "NEXT")
+        else:
+            intro_ms = int(self._song.get("intro_point_ms") or 0)
+            if intro_ms > 0:
+                intro_s = max(1, intro_ms // 1000)
+                badge = QRectF(232, 6, 80, 14)
+                p.setPen(QColor(AMBER_LIGHT)); p.setFont(self._font_intro)
+                p.drawText(badge, Qt.AlignmentFlag.AlignLeft
+                           | Qt.AlignmentFlag.AlignVCenter,
+                           f"INTRO  {intro_s:02d}.0s")
+
+        # Album art tile (44×44 colored square, left side, vertically centered)
+        art_rect = QRectF(12, 36, 60, 60)
+        # Background gradient (darker variant of tile color)
+        art_grad = QLinearGradient(art_rect.topLeft(), art_rect.bottomRight())
+        art_grad.setColorAt(0.0, _qcolor_a(tile_color, 0.95))
+        art_grad.setColorAt(1.0, _qcolor_a(tile_color, 0.55))
+        p.setBrush(QBrush(art_grad)); p.setPen(Qt.PenStyle.NoPen)
+        p.drawRoundedRect(art_rect, 8, 8)
+        # Center glyph based on type
+        p.setPen(QColor(BG_BASE)); p.setFont(self._font_glyph)
+        glyph = {"song": "♪", "jingle": "🔔", "spot": "$",
+                 "break": "$", "voice": "🎤", "voice_track": "🎤",
+                 "sweeper": "★", "station_id": "ID"}.get(item_type, "♪")
+        p.drawText(art_rect, Qt.AlignmentFlag.AlignCenter, glyph)
+
+        # Title + artist (right of album art)
+        title = str(self._song.get("title") or "—")
+        artist = str(self._song.get("artist") or "")
+        p.setPen(QColor(TEXT_PRI)); p.setFont(self._font_title)
+        p.drawText(QRectF(82, 38, self.width() - 100, 18),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   title)
+        p.setPen(QColor(TEXT_SEC)); p.setFont(self._font_artist)
+        p.drawText(QRectF(82, 56, self.width() - 100, 16),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   artist)
+
+        # Type badge (bottom-right)
+        badge_w = 76
+        type_badge = QRectF(self.width() - badge_w - 12, 96, badge_w, 18)
+        p.fillRect(type_badge, _qcolor_a(badge_color, 0.18))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(_qcolor_a(badge_color, 0.45)))
+        p.drawRoundedRect(type_badge.adjusted(0.5, 0.5, -0.5, -0.5), 4, 4)
+        p.setPen(QColor(badge_color)); p.setFont(self._font_badge)
+        p.drawText(type_badge, Qt.AlignmentFlag.AlignCenter, badge_label)
+
+        p.end()
+
+
+class _FadeNextToggle(QWidget):
+    """Small toggle pill at top-right of UP COMING header."""
+
+    toggled = pyqtSignal(bool)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(86, 22)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._on = False
+        self._font = inter(8, QFont.Weight.Bold, letter_spacing=1.2)
+
+    def mousePressEvent(self, e: QMouseEvent) -> None:
+        if e.button() == Qt.MouseButton.LeftButton:
+            self._on = not self._on
+            self.update(self.rect())
+            self.toggled.emit(self._on)
+        super().mousePressEvent(e)
+
+    def paintEvent(self, e: QPaintEvent) -> None:
+        p = QPainter(self); p.setClipRect(e.rect())
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        # Label
+        p.setPen(QColor(TEXT_DIM if not self._on else CYAN_LIGHT))
+        p.setFont(self._font)
+        p.drawText(QRectF(0, 0, 60, 22),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   "FADE NEXT")
+        # Toggle pill
+        pill = QRectF(60, 4, 22, 14)
+        p.fillRect(pill, _qcolor_a(CYAN if self._on else TEXT_DIM, 0.3))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(_qcolor_a(CYAN if self._on else TEXT_DIM, 0.5)))
+        p.drawRoundedRect(pill.adjusted(0.5, 0.5, -0.5, -0.5), 7, 7)
+        # Knob
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(CYAN_LIGHT) if self._on else QColor(TEXT_SEC))
+        knob_x = 76 if self._on else 64
+        p.drawEllipse(QPointF(knob_x, 11), 5, 5)
+        p.end()
+
+
+class _UpComingQueue(QWidget):
+    """380 × 820 panel: header + 5 cards + footer."""
+
+    song_double_clicked = pyqtSignal(dict)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(380, 820)
+        self._loaded_total = "0:00:00"
+        self._loaded_label = "Morning Drive Mix"
+
+        self._font_h        = inter(11, QFont.Weight.Black, letter_spacing=1.6)
+        self._font_more     = inter(9, QFont.Weight.Bold, letter_spacing=0.8)
+        self._font_footer_l = inter(8, QFont.Weight.Bold, letter_spacing=1.4)
+        self._font_footer_v = mono(22, bold=True, letter_spacing=-0.5)
+        self._font_footer_s = inter(10, QFont.Weight.Medium)
+
+        self._fade_toggle = _FadeNextToggle(self)
+        self._fade_toggle.move(12, 30)
+
+        # 5 cards stacked vertically — y=64 + i*128
+        self._cards: list[_UpComingCard] = []
+        for i in range(5):
+            c = _UpComingCard(self)
+            c.move(10, 64 + i * 128)
+            c.double_clicked.connect(self.song_double_clicked.emit)
+            self._cards.append(c)
+
+    def set_queue(self, songs: list[dict], current_id: Optional[int] = None) -> None:
+        """Populate cards. AT timestamps cumulative from now. The first
+        card is rendered as NEXT (rose glow + NEXT pill)."""
+        cum_s = 0
+        for i, card in enumerate(self._cards):
+            if i < len(songs):
+                song = songs[i]
+                at_text = _fmt_at_clock(cum_s)
+                card.set_song(song, is_next=(i == 1), at_text=at_text)
+                # NOTE: index 1 = "NEXT" because index 0 is currently
+                # playing (or just-played, in idle); the broadcast
+                # operator's "what plays next" mental model points to
+                # the row immediately below the active one.
+                cum_s += int(song.get("duration_ms", 0) or 0) // 1000
+            else:
+                card.set_song(None)
+        # Loaded total
+        total_ms = sum(int(s.get("duration_ms") or 0) for s in songs)
+        s_total = total_ms // 1000
+        h, rem = divmod(s_total, 3600)
+        m, ss = divmod(rem, 60)
+        self._loaded_total = f"{h}:{m:02d}:{ss:02d}"
+        self.update(QRect(0, self.height() - 100, self.width(), 100))
+
+    def paintEvent(self, e: QPaintEvent) -> None:
+        p = QPainter(self); p.setClipRect(e.rect())
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(0, 0, self.width(), self.height())
+        # Card background (panel)
+        bg = QLinearGradient(0, 0, 0, self.height())
+        bg.setColorAt(0.0, QColor(14, 16, 32, 235))
+        bg.setColorAt(1.0, QColor(7, 9, 18, 235))
+        p.fillRect(r, QBrush(bg))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(QColor(255, 255, 255, 18)))
+        p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 12, 12)
+        # 3px amber accent at top
+        accent = QLinearGradient(0, 0, self.width(), 0)
+        accent.setColorAt(0.0, QColor(AMBER))
+        accent.setColorAt(1.0, _qcolor_a(AMBER, 0.4))
+        p.fillRect(QRectF(0, 0, self.width(), 3), QBrush(accent))
+
+        # "UP COMING" header
+        p.setPen(QColor(AMBER_LIGHT)); p.setFont(self._font_h)
+        p.drawText(QRectF(12, 10, 200, 16),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   "UP COMING")
+        # "+5 MORE" pill (right of header)
+        more_pill = QRectF(self.width() - 78, 10, 66, 16)
+        p.fillRect(more_pill, _qcolor_a(AMBER, 0.18))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(_qcolor_a(AMBER, 0.45)))
+        p.drawRoundedRect(more_pill.adjusted(0.5, 0.5, -0.5, -0.5), 4, 4)
+        p.setPen(QColor(AMBER_LIGHT)); p.setFont(self._font_more)
+        p.drawText(more_pill, Qt.AlignmentFlag.AlignCenter, "+5 MORE")
+
+        # Footer separator hairline
+        fy = self.height() - 88
+        p.fillRect(QRectF(8, fy, self.width() - 16, 1),
+                   QColor(255, 255, 255, 20))
+        # LOADED PLAYLIST label
+        p.setPen(QColor(TEXT_DIM)); p.setFont(self._font_footer_l)
+        p.drawText(QRectF(12, fy + 8, 200, 14),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   "LOADED PLAYLIST")
+        # Big total time
+        p.setPen(QColor(AMBER_LIGHT)); p.setFont(self._font_footer_v)
+        p.drawText(QRectF(12, fy + 22, 220, 30),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   self._loaded_total)
+        # Subtitle
+        p.setPen(QColor(TEXT_SEC)); p.setFont(self._font_footer_s)
+        p.drawText(QRectF(12, fy + 56, 220, 14),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   self._loaded_label)
+        # $ pill (right)
+        dollar = QRectF(self.width() - 80, fy + 28, 30, 28)
+        p.fillRect(dollar, _qcolor_a(GREEN, 0.18))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(_qcolor_a(GREEN, 0.45)))
+        p.drawRoundedRect(dollar.adjusted(0.5, 0.5, -0.5, -0.5), 6, 6)
+        p.setPen(QColor(GREEN_LIGHT))
+        p.setFont(inter(13, QFont.Weight.Bold))
+        p.drawText(dollar, Qt.AlignmentFlag.AlignCenter, "$")
+        # ≡ menu (right)
+        menu_box = QRectF(self.width() - 44, fy + 28, 30, 28)
+        p.fillRect(menu_box, QColor(7, 8, 16, 178))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(QColor(255, 255, 255, 30)))
+        p.drawRoundedRect(menu_box.adjusted(0.5, 0.5, -0.5, -0.5), 6, 6)
+        p.setPen(QColor(TEXT_SEC))
+        p.setFont(inter(13, QFont.Weight.Bold))
+        p.drawText(menu_box, Qt.AlignmentFlag.AlignCenter, "≡")
+        p.end()
+
+
+# ════════════════════════════════════════════════════════════════════════
 # PLACEHOLDER widgets — solid frames with section labels.
 # Replaced widget-by-widget in subsequent steps.
 # ════════════════════════════════════════════════════════════════════════
@@ -1110,7 +1462,7 @@ class Studio(QWidget):
         self._apply_idle_state()
         self._update_status_pills()
 
-        log.info("Studio ready (Figma 312:2 — Step 2: Master strip)")
+        log.info("Studio ready (Figma 312:2 — Step 3: Up Coming)")
 
     # ── Widget builders ──────────────────────────────────────────────────
 
@@ -1151,10 +1503,9 @@ class Studio(QWidget):
         self._wordmark.move(1584, MASTER_Y + 8)
 
     def _build_body_placeholders(self) -> None:
-        self._upcoming_placeholder = _PlaceholderFrame(
-            "UP COMING — track cards", "Step 3",
-            380, BODY_H, accent=AMBER, parent=self)
-        self._upcoming_placeholder.move(16, BODY_Y)
+        self._upcoming = _UpComingQueue(self)
+        self._upcoming.move(16, BODY_Y)
+        self._upcoming.song_double_clicked.connect(self._on_queue_song_play)
 
         self._libraries_placeholder = _PlaceholderFrame(
             "LIBRARIES — type icons + Action Stack + table + filter",
@@ -1573,6 +1924,9 @@ class Studio(QWidget):
                     intro_s=0)
             else:
                 self._next_chip.set_next("—", "")
+        # Up Coming queue: full 5-card refresh from in-memory queue
+        if hasattr(self, "_upcoming"):
+            self._upcoming.set_queue(self._queue_songs[:5])
 
     def _apply_playing_state(self, song: dict) -> None:
         if hasattr(self, "_now_player"):
@@ -1595,6 +1949,18 @@ class Studio(QWidget):
                     str(nxt.get("artist") or ""))
             else:
                 self._next_chip.set_next("—", "")
+        # Up Coming: roll the queue starting from the currently-playing
+        # song so the playing song is visible at slot 0 and "next" is
+        # at slot 1 (NEXT pill).
+        if hasattr(self, "_upcoming"):
+            cur_id = song.get("id")
+            try:
+                idx = next(i for i, s in enumerate(self._queue_songs)
+                           if s.get("id") == cur_id)
+            except StopIteration:
+                idx = 0
+            self._upcoming.set_queue(self._queue_songs[idx:idx + 5],
+                                     current_id=cur_id)
 
     # ────────────────────────────────────────────────────────────────────
     # Transport handlers (PRESERVED from legacy)
