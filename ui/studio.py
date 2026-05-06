@@ -402,90 +402,114 @@ class _NowPlayer(QWidget):
         _qfill_card(p, r)
         _qstroke_card(p, r, radius=10)
 
-        # Vinyl album art (left circle)
-        cx, cy, rad = 50, 44, 30
-        for i, c_alpha in enumerate([(0.6, 30), (0.45, 22), (0.30, 14)]):
-            grad = QRadialGradient(QPointF(cx, cy), rad - i * 6)
-            grad.setColorAt(c_alpha[0], _qcolor_a(PURPLE_LIGHT, 0.7))
-            grad.setColorAt(1.0, _qcolor_a(PURPLE_DARK, 0.3))
-            p.setBrush(QBrush(grad))
-            p.setPen(Qt.PenStyle.NoPen)
-            p.drawEllipse(QPointF(cx, cy), rad - i * 6, rad - i * 6)
+        # Vinyl album art — bigger, more prominent (Figma 312:2 NOW Player)
+        cx, cy, rad = 56, 44, 38
+        # Outer cyan glow ring
+        glow = QRadialGradient(QPointF(cx, cy), rad + 6)
+        glow.setColorAt(0.85, _qcolor_a(CYAN, 0.0))
+        glow.setColorAt(1.00, _qcolor_a(CYAN, 0.18))
+        p.setBrush(QBrush(glow)); p.setPen(Qt.PenStyle.NoPen)
+        p.drawEllipse(QPointF(cx, cy), rad + 6, rad + 6)
+        # Vinyl rings
+        for i, ring_alpha in enumerate([(rad, 0.85), (rad - 6, 0.6),
+                                         (rad - 14, 0.35)]):
+            grad = QRadialGradient(QPointF(cx, cy), ring_alpha[0])
+            grad.setColorAt(0.0, _qcolor_a(PURPLE_DARK, 0.4))
+            grad.setColorAt(0.7, _qcolor_a(PURPLE_LIGHT, ring_alpha[1]))
+            grad.setColorAt(1.0, _qcolor_a(PURPLE_DARK, 0.6))
+            p.setBrush(QBrush(grad)); p.setPen(Qt.PenStyle.NoPen)
+            p.drawEllipse(QPointF(cx, cy), ring_alpha[0], ring_alpha[0])
         # Center hole
         p.setBrush(QColor(BG_BASE)); p.setPen(Qt.PenStyle.NoPen)
-        p.drawEllipse(QPointF(cx, cy), 4, 4)
+        p.drawEllipse(QPointF(cx, cy), 5, 5)
+        p.setBrush(QColor(CYAN_LIGHT))
+        p.drawEllipse(QPointF(cx, cy), 1.5, 1.5)
 
-        # LIVE pulse — small red dot top-right of vinyl
+        # LIVE pulse — red dot top-right of vinyl
         if not self._idle:
-            p.setBrush(QColor(RED)); p.setPen(Qt.PenStyle.NoPen)
-            p.drawEllipse(QPointF(76, 18), 4, 4)
+            p.setBrush(_qcolor_a(RED, 0.4)); p.setPen(Qt.PenStyle.NoPen)
+            p.drawEllipse(QPointF(86, 14), 7, 7)
+            p.setBrush(QColor(RED))
+            p.drawEllipse(QPointF(86, 14), 4, 4)
 
-        # NOW pill (cyan)
-        pill = QRectF(96, 12, 50, 16)
-        p.fillRect(pill, _qcolor_a(CYAN, 0.20))
+        # NOW pill (cyan, larger)
+        pill = QRectF(108, 8, 48, 18)
+        p.fillRect(pill, _qcolor_a(CYAN, 0.25))
         p.setBrush(Qt.BrushStyle.NoBrush)
-        p.setPen(QPen(_qcolor_a(CYAN, 0.45)))
+        p.setPen(QPen(_qcolor_a(CYAN, 0.55)))
         p.drawRoundedRect(pill.adjusted(0.5, 0.5, -0.5, -0.5), 4, 4)
         p.setPen(QColor(CYAN_LIGHT)); p.setFont(self._font_now)
         p.drawText(pill, Qt.AlignmentFlag.AlignCenter, "NOW")
 
-        # Title + artist
+        # Title + artist (bigger, bolder)
         p.setPen(QColor(TEXT_PRI)); p.setFont(self._font_title)
-        p.drawText(QRectF(96, 26, 540, 22),
+        p.drawText(QRectF(108, 24, 510, 24),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                    self._title)
         p.setPen(QColor(TEXT_SEC)); p.setFont(self._font_artist)
-        p.drawText(QRectF(96, 46, 540, 14),
+        p.drawText(QRectF(108, 46, 510, 16),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                    self._artist)
 
-        # Elapsed / total time
+        # Elapsed / total time (mono, larger)
         p.setPen(QColor(CYAN_LIGHT)); p.setFont(self._font_time)
-        p.drawText(QRectF(640, 8, 80, 16),
+        p.drawText(QRectF(620, 6, 100, 20),
                    Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
                    _fmt_duration(self._elapsed_ms))
         p.setPen(QColor(TEXT_DIM))
-        p.drawText(QRectF(640, 24, 80, 16),
+        p.drawText(QRectF(620, 26, 100, 16),
                    Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
                    _fmt_duration(self._total_ms))
 
-        # REMAINING box
+        # REMAINING box — bigger, more visible
         rem = self._total_ms - self._elapsed_ms if not self._idle else 0
-        rem_box = QRectF(730, 6, 96, 36)
-        p.fillRect(rem_box, _qcolor_a(AMBER, 0.10))
+        rem_box = QRectF(728, 6, 100, 42)
+        p.fillRect(rem_box, _qcolor_a(AMBER, 0.14))
         p.setBrush(Qt.BrushStyle.NoBrush)
-        p.setPen(QPen(_qcolor_a(AMBER, 0.4)))
+        p.setPen(QPen(_qcolor_a(AMBER, 0.5)))
         p.drawRoundedRect(rem_box.adjusted(0.5, 0.5, -0.5, -0.5), 6, 6)
         p.setPen(QColor(TEXT_DIM)); p.setFont(self._font_remlbl)
-        p.drawText(QRectF(rem_box.x(), rem_box.y() + 2, rem_box.width(), 10),
+        p.drawText(QRectF(rem_box.x(), rem_box.y() + 4, rem_box.width(), 12),
                    Qt.AlignmentFlag.AlignCenter, "REMAINING")
         p.setPen(QColor(AMBER_LIGHT)); p.setFont(self._font_remain)
-        p.drawText(QRectF(rem_box.x(), rem_box.y() + 13, rem_box.width(), 18),
+        p.drawText(QRectF(rem_box.x(), rem_box.y() + 16, rem_box.width(), 22),
                    Qt.AlignmentFlag.AlignCenter, _fmt_duration(rem))
 
-        # Waveform — full-width bars below the meta line
+        # Waveform — full-width bars, taller for prominence
         self._paint_waveform(p)
         p.end()
 
     def _paint_waveform(self, p: QPainter) -> None:
-        wf_x, wf_y, wf_w, wf_h = 96, 64, 620, 18
+        wf_x, wf_y, wf_w, wf_h = 108, 64, 720, 20
         bar_count = len(self._wf_bars)
-        bar_w = max(1.0, wf_w / bar_count - 0.5)
+        step = wf_w / bar_count
+        bar_w = max(1.5, step - 0.6)
         for i, h_frac in enumerate(self._wf_bars):
-            x = wf_x + i * (wf_w / bar_count)
+            x = wf_x + i * step
             h = wf_h * h_frac
             y = wf_y + (wf_h - h) / 2
             played = (i / bar_count) <= self._progress
             if played:
-                # Played portion gradient (cyan→purple→pink)
+                # Played portion gradient (cyan→purple→pink across the bar)
                 t = i / bar_count
-                if t < 0.5:
+                if t < 0.33:
                     color = QColor(CYAN_LIGHT)
+                elif t < 0.66:
+                    color = QColor(PURPLE_LIGHT)
                 else:
                     color = QColor(PINK_LIGHT)
             else:
-                color = QColor(255, 255, 255, 32)
+                color = QColor(255, 255, 255, 38)
             p.fillRect(QRectF(x, y, bar_w, h), color)
+        # Playhead glow at progress position
+        if self._progress > 0:
+            ph_x = wf_x + wf_w * self._progress
+            playhead = QRectF(ph_x - 2, wf_y - 2, 3, wf_h + 4)
+            grad = QLinearGradient(playhead.topLeft(), playhead.bottomLeft())
+            grad.setColorAt(0.0, _qcolor_a(PINK_LIGHT, 0.0))
+            grad.setColorAt(0.5, QColor(PINK_LIGHT))
+            grad.setColorAt(1.0, _qcolor_a(PINK_LIGHT, 0.0))
+            p.fillRect(playhead, QBrush(grad))
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -1364,7 +1388,7 @@ class _NextBreakPanel(QWidget):
         super().__init__(parent)
         self.setFixedSize(420, 264)
         self._countdown_s = 0
-        self._countdown_label = "—"
+        self._countdown_label = "00:00"
         self._break_type = "Ad Break"
         self._break_dur = "—"
         self._spots = 0
@@ -1380,9 +1404,11 @@ class _NextBreakPanel(QWidget):
     def set_countdown(self, seconds: int) -> None:
         if seconds == self._countdown_s:
             return
-        self._countdown_s = max(0, int(seconds or 0))
-        if self._countdown_s == -1 or seconds < 0:
-            self._countdown_label = "—"
+        # -1 from the engine means "no upcoming break today" — show
+        # "00:00" rather than "—" so the visual block stays balanced.
+        self._countdown_s = int(seconds or 0)
+        if self._countdown_s < 0:
+            self._countdown_label = "00:00"
         else:
             m = self._countdown_s // 60
             s = self._countdown_s % 60
@@ -2028,14 +2054,23 @@ class Studio(QWidget):
         self._control_cluster.set_paused(False)
         self._bottom.set_progress(0.0)
         self._bottom.set_transport_enabled(False)
-        # NEXT chip from queue head
+        # NEXT chip from queue head — pre-populate with intro hint if available
         next_song = self._compute_next_up()
         if next_song:
+            intro_ms = int(next_song.get("intro_point_ms") or 0)
+            intro_s = max(0, intro_ms // 1000)
             self._next_chip.set_next(
                 next_song.get("title") or "—",
-                next_song.get("artist") or "")
+                next_song.get("artist") or "",
+                to_air_s=0,
+                intro_s=intro_s)
         else:
             self._next_chip.set_next("—", "")
+        # RDS panel — default to next-up so the panel isn't empty in idle
+        if next_song:
+            self._rds.set_on_air(
+                str(next_song.get("title") or "—"),
+                str(next_song.get("artist") or ""))
 
     def _apply_playing_state(self, song: dict) -> None:
         track = {
