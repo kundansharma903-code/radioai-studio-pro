@@ -139,6 +139,7 @@ class _Header(QWidget):
 
     control_panel_clicked = pyqtSignal()
     settings_clicked      = pyqtSignal()
+    auto_clicked          = pyqtSignal()   # Phase C — AUTO pill click
 
     # Clock + status state
     def __init__(self, parent=None):
@@ -184,9 +185,11 @@ class _Header(QWidget):
         self._cp_grad.setColorAt(0.0, QColor(167, 139, 250))
         self._cp_grad.setColorAt(1.0, QColor(124,  58, 237))
 
-        # Hit zones
-        self._cp_btn_rect = QRect(WINDOW_W - 180, 16, 140, 40)
-        self._cog_rect    = QRect(WINDOW_W - 32 - 4, 20, 32, 32)
+        # Hit zones (kept in sync with paint coordinates in
+        # _paint_status_pills — pills at x=1320 + i*72, y=18, 64×32).
+        self._cp_btn_rect    = QRect(WINDOW_W - 180, 16, 140, 40)
+        self._cog_rect       = QRect(WINDOW_W - 32 - 4, 20, 32, 32)
+        self._auto_pill_rect = QRect(1320 + 2 * 72, 18, 64, 32)
 
     # ── Public API ───────────────────────────────────────────────────────
 
@@ -233,6 +236,8 @@ class _Header(QWidget):
                 self.control_panel_clicked.emit()
             elif self._cog_rect.contains(p):
                 self.settings_clicked.emit()
+            elif self._auto_pill_rect.contains(p):
+                self.auto_clicked.emit()
         super().mousePressEvent(e)
 
     # ── Paint ────────────────────────────────────────────────────────────
@@ -3027,6 +3032,14 @@ class Studio(QWidget):
         # no scheduler is wired or no clock is currently assigned —
         # in that case the legacy _queue_songs[:5] fallback path runs.
         self._upcoming_preview: list[dict] = []
+        # Phase C: auto-advance master switch. Default True preserves
+        # the legacy "always advance on EOS" behavior the existing
+        # 9 Studio EOS-path tests assert. Turning it off (via the AUTO
+        # header pill) puts Studio in Live-Assist mode — operator must
+        # click Play after each track ends. AUTO pill click toggles
+        # both this flag AND scheduler.start/stop together so the two
+        # stay in lockstep.
+        self._auto_advance_enabled: bool = True
         self.setFixedSize(WINDOW_W, WINDOW_H)
         self.setStyleSheet(
             "background: qlineargradient("
@@ -3108,6 +3121,7 @@ class Studio(QWidget):
         self._header.move(0, 0)
         self._header.control_panel_clicked.connect(self._on_control_panel)
         self._header.settings_clicked.connect(self._on_settings)
+        self._header.auto_clicked.connect(self._on_auto_pill_clicked)
 
     def _build_master_strip(self) -> None:
         """Step 2 — six widgets in a horizontal row covering y=72..168.
@@ -3167,8 +3181,13 @@ class Studio(QWidget):
     def _build_bottom_transport_placeholder(self) -> None:
         self._bottom = _BottomTransport(self)
         self._bottom.move(0, BOTTOM_TRANS_Y)
-        self._bottom.play_clicked.connect(self._on_pause_clicked)
-        self._bottom.stop_clicked.connect(self._on_stop_all_clicked)
+        # Phase C: ▶ play_clicked routes to the new _on_play_clicked
+        # (idle → start queue + auto-on scheduler; playing → pause/resume
+        # toggle). ■ stop_clicked routes to the narrow deck-only stop
+        # so jingle pads stay alive. The right-cluster Stop All button
+        # (stop_all_clicked) keeps its broader cleanup_all semantic.
+        self._bottom.play_clicked.connect(self._on_play_clicked)
+        self._bottom.stop_clicked.connect(self._on_deck_stop)
         self._bottom.seek_requested.connect(self._on_bottom_seek)
         self._bottom.up_clicked.connect(self._on_up_clicked)
         self._bottom.down_clicked.connect(self._on_down_clicked)
@@ -3379,8 +3398,12 @@ class Studio(QWidget):
             self._on_queue_song_play(pre_track)
             return
 
-        # (d) auto-advance
-        if kind == "deck":
+        # (d) auto-advance — gated on _auto_advance_enabled (Phase C).
+        # Default True preserves the legacy "always advance" behavior
+        # that the existing 9 Studio EOS-path tests depend on. The
+        # AUTO header pill flips this off → Live-Assist mode where
+        # operator must click Play after each track ends.
+        if kind == "deck" and self._auto_advance_enabled:
             cur_id = (pre_track or {}).get("id")
             next_song = self._compute_next_song(after_id=cur_id)
             if next_song is not None:
@@ -3388,6 +3411,12 @@ class Studio(QWidget):
                 self._on_queue_song_play(next_song)
                 return
             log.info("[studio] queue exhausted — idle")
+            self._current_track = None
+            self._apply_idle_state()
+            self._update_status_pills()
+            return
+        if kind == "deck" and not self._auto_advance_enabled:
+            log.info("[studio] EOS — Live-Assist mode, idle until next play click")
             self._current_track = None
             self._apply_idle_state()
             self._update_status_pills()
@@ -3652,6 +3681,100 @@ class Studio(QWidget):
                 self._control_cluster.set_paused(False)
             log.info("[studio] resumed")
 
+    def _on_play_clicked(self) -> None:
+        """Phase C — bottom transport ▶ semantic.
+
+        Idle (no _playback_cid): start the next track from the queue.
+        Mirrors Jazler's "Play = go on air" — also auto-starts the
+        scheduler if it's wired but not yet running, and flips
+        auto-advance ON so EOS keeps the show rolling.
+
+        Already loaded: forward to the existing pause/resume toggle.
+        """
+        if self._engine is None:
+            return
+        if self._playback_cid is not None:
+            self._on_pause_clicked()
+            return
+        next_song = self._compute_next_song(after_id=None)
+        if next_song is None:
+            log.info("[studio] play clicked but queue is empty — no-op")
+            return
+        # Auto-start scheduler when going on air from idle. The is_running
+        # check covers the "already running" case so we don't double-start.
+        if self._scheduler is not None:
+            try:
+                if not self._scheduler.is_running():
+                    self._scheduler.start()
+                    log.info("[studio] play → scheduler.start()")
+            except Exception as exc:
+                log.warning(f"[studio] scheduler.start failed: {exc}")
+        self._auto_advance_enabled = True
+        self._on_queue_song_play(next_song)
+
+    def _on_deck_stop(self) -> None:
+        """Phase C — bottom transport ■ semantic. Narrow scope: stops
+        and cleans up the deck channel only. Active jingle pads (which
+        share the same AudioEngine via the InstantJingleEngine adapter)
+        are NOT touched. The right-cluster Stop All button retains its
+        broader cleanup_all semantic for the operator's emergency
+        nuclear option.
+
+        Latent broadcast-critical bug fix — prior wiring routed
+        bottom-transport stop to cleanup_all, which would mid-show-cut
+        any jingle pad active at that instant."""
+        if self._playback_cid is None or self._engine is None:
+            return
+        try:
+            self._engine.stop(self._playback_cid)
+        except Exception as exc:
+            log.debug(f"[studio] deck stop: engine.stop: {exc}")
+        try:
+            self._engine.cleanup(self._playback_cid)
+        except Exception as exc:
+            log.debug(f"[studio] deck stop: engine.cleanup: {exc}")
+        self._playback_cid = None
+        self._playback_kind = None
+        self._playback_campaign_id = None
+        self._current_track = None
+        self._apply_idle_state()
+        self._update_status_pills()
+        log.info("[studio] deck stop (jingle pads untouched)")
+
+    def _on_auto_pill_clicked(self) -> None:
+        """Phase C — AUTO header pill toggles BOTH scheduler.start/stop
+        AND ``_auto_advance_enabled``. Operator's mental model: AUTO
+        ON = "tum chalao, mai dekhunga"; AUTO OFF = "main control hu,
+        jab tak click na karu kuch nahi chalega" (Live-Assist mode).
+        The two stay in lockstep so a stopped scheduler never auto-
+        advances and a running scheduler always does.
+
+        When ``_scheduler`` is None (tests, decorative), we still flip
+        the local flag so the operator can toggle Live-Assist behavior
+        even without an engine attached."""
+        if self._scheduler is None:
+            self._auto_advance_enabled = not self._auto_advance_enabled
+            log.info(f"[studio] AUTO pill (no scheduler) → "
+                     f"_auto_advance_enabled={self._auto_advance_enabled}")
+            self._update_status_pills()
+            return
+        try:
+            running = self._scheduler.is_running()
+        except Exception:
+            running = False
+        try:
+            if running:
+                self._scheduler.stop()
+                self._auto_advance_enabled = False
+                log.info("[studio] AUTO pill → scheduler.stop() + Live-Assist")
+            else:
+                self._scheduler.start()
+                self._auto_advance_enabled = True
+                log.info("[studio] AUTO pill → scheduler.start() + auto-advance")
+        except Exception as exc:
+            log.warning(f"[studio] AUTO pill toggle failed: {exc}")
+        self._update_status_pills()
+
     def _on_restart_clicked(self) -> None:
         if self._playback_cid is None or self._engine is None:
             return
@@ -3710,10 +3833,47 @@ class Studio(QWidget):
             return
         on_air = (self._playback_cid is not None
                   and self._playback_kind in ("deck", "spot"))
-        auto_mode = (self._scheduler is not None
+        # Phase C: AUTO pill reflects the unified Live-Assist state.
+        # Source-of-truth = _auto_advance_enabled, which is flipped in
+        # lockstep with scheduler start/stop. is_running() is still the
+        # external check but the local flag is what gates EOS behavior.
+        auto_mode = (self._auto_advance_enabled
+                     and self._scheduler is not None
                      and self._scheduler.is_running())
         self._header.set_on_air(on_air)
         self._header.set_auto_mode(auto_mode)
+        # Phase C: SIGNAL pill reflects whether AudioEngine has any
+        # playing channel. Polled at 1Hz from _on_tick (no separate
+        # timer). True = at least one channel in 'playing' state.
+        self._header.set_signal(self._compute_signal_state())
+
+    def _compute_signal_state(self) -> bool:
+        """SIGNAL pill source-of-truth. True when the AudioEngine has
+        at least one channel in 'playing' state (deck OR jingle pad).
+        Defensive against engines that don't expose get_active_channels
+        (older legacy stubs / tests with simpler fakes) — falls back to
+        checking just the deck channel."""
+        eng = self._engine
+        if eng is None:
+            return False
+        # Preferred: get_active_channels returns playing+paused; we
+        # then filter to playing only via get_state.
+        try:
+            ids = eng.get_active_channels()
+        except Exception:
+            ids = None
+        if ids is not None:
+            try:
+                return any(eng.get_state(cid) == "playing" for cid in ids)
+            except Exception:
+                pass
+        # Fallback: just the deck channel
+        if self._playback_cid is None:
+            return False
+        try:
+            return eng.get_state(self._playback_cid) == "playing"
+        except Exception:
+            return False
 
     def _refresh_history(self) -> None:
         """Populate the History panel from db.get_history(). Called on
@@ -4031,6 +4191,11 @@ class Studio(QWidget):
         # cumulative AT values stay fresh even when no song is
         # advancing (late-night automation, long song, etc.).
         self._refresh_upcoming_panel()
+        # Phase C: SIGNAL pill 1Hz poll. _update_status_pills now also
+        # calls header.set_signal(...) using _compute_signal_state.
+        # set_signal/set_auto_mode/set_on_air are all change-gated so
+        # repaint happens only when the state actually flips — cheap.
+        self._update_status_pills()
 
     # ────────────────────────────────────────────────────────────────────
     # Lifecycle

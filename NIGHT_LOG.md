@@ -1482,4 +1482,171 @@ least 5 song slots. Recommended 2-minute smoke:
 ### Commits
 
 - `42a6160` feat(scheduler): add non-destructive peek_next(n) for queue preview
-- (Commit 2 hash inserted after this entry's commit lands)
+- `c76d753` feat(studio): wire Up Coming queue to scheduler.peek_next with live AT timestamps
+
+---
+
+## Session 2026-05-06 — Phase C: wire playback controls (Play / Stop / AUTO / SIGNAL / auto-advance gating)
+
+Studio v3 transport buttons + the AUTO/SIGNAL header pills were
+mostly visual-only after Phases A+B. Phase A had wired the master-strip
+Pause button; the bottom-transport Play wire, however, was incorrectly
+routed at construction time to the same handler as Pause — so clicking
+▶ on an idle Studio did nothing (the pause guard returned early when
+``_playback_cid is None``). The bottom-transport Stop wire was even
+worse: it routed to ``_on_stop_all_clicked`` which calls
+``engine.cleanup_all()`` — a latent broadcast-critical bug that would
+mid-show-cut any active jingle pad if the operator ever touched ■.
+
+### Senior-dev pushback at scoping
+
+The original Phase C prompt asked for "auto-advance only when AUTO is
+ON," which directly conflicted with the existing 9 EOS-path tests
+(``tests/test_studio_eos_paths.py``) that construct Studio with
+``scheduler=None`` and assert auto-advance happens unconditionally.
+Both constraints could not be satisfied in the same shape — gating
+auto-advance on ``scheduler.is_running()`` would break the legacy
+tests; not gating it would skip the prompt's core intent.
+
+Resolution: introduce ``_auto_advance_enabled`` flag (default True,
+preserving legacy semantics verbatim). The AUTO header pill click
+flips this flag in lockstep with ``scheduler.start/stop`` — so the
+two are always in sync from the operator's mental model perspective,
+but the legacy "scheduler=None always advances" path is preserved
+because the flag remains True when nothing toggles it. Existing tests
+unchanged; new prompt semantic delivered.
+
+### Files
+
+- **MODIFIED** ``ui/studio.py``:
+  - ``_Header``: new ``auto_clicked`` pyqtSignal + ``_auto_pill_rect``
+    hit-test box matching the AUTO pill's paint coordinates
+    (``QRect(1320 + 2*72, 18, 64, 32)``); ``mousePressEvent`` extended
+    to emit on hit.
+  - ``Studio.__init__``: ``_auto_advance_enabled = True`` (default
+    preserves legacy "always advance" behavior).
+  - ``_build_header``: connects ``header.auto_clicked`` to new
+    ``_on_auto_pill_clicked``.
+  - ``_build_bottom_transport_placeholder``: ▶ ``play_clicked`` now
+    routes to new ``_on_play_clicked``; ■ ``stop_clicked`` now routes
+    to new ``_on_deck_stop`` (was the broad ``_on_stop_all_clicked``).
+    Right-cluster Stop All retains the broad ``cleanup_all()``
+    semantic for emergency-dump.
+  - ``_on_play_clicked``: idle path → ``_compute_next_song`` +
+    ``scheduler.start()`` (if wired and not running) +
+    ``_auto_advance_enabled = True`` + ``_on_queue_song_play``.
+    Already-playing path → forwards to ``_on_pause_clicked`` (the
+    legacy pause/resume toggle the master-strip Pause button has
+    always used).
+  - ``_on_deck_stop``: narrow scope — ``engine.stop`` +
+    ``engine.cleanup`` on ``_playback_cid`` only. Jingle pads
+    (riding the same shared AudioEngine via the IJE adapter) are
+    untouched. Resets Studio's deck state and triggers
+    ``_apply_idle_state``.
+  - ``_on_auto_pill_clicked``: toggles
+    ``scheduler.start/stop`` + ``_auto_advance_enabled`` together.
+    When ``_scheduler is None`` (tests, decorative), still flips the
+    local flag so Live-Assist behavior can be tested without an
+    engine attached.
+  - ``_on_engine_playback_ended`` path (d): gated on
+    ``_auto_advance_enabled``. Default True path identical to legacy.
+    Disabled path: cleans up + idles + updates pills, no fresh
+    ``_on_queue_song_play``.
+  - ``_update_status_pills``: new dependency on
+    ``_compute_signal_state()``; pushes the result to
+    ``header.set_signal(...)`` every call.
+  - ``_compute_signal_state``: True when AudioEngine has any channel
+    in 'playing' state. Defensive ``get_active_channels`` →
+    ``get_state`` chain with fallback to the deck channel for engines
+    without ``get_active_channels``.
+  - ``_on_tick`` (1Hz, existing timer): now also calls
+    ``_update_status_pills`` so SIGNAL/AUTO/ON-AIR pills repaint when
+    their underlying state actually flips. ``set_signal`` /
+    ``set_auto_mode`` / ``set_on_air`` are change-gated, so cost is
+    negligible when nothing changed.
+- **NEW** ``tests/test_studio_playback_wiring.py`` (8 tests):
+  Play idle-start (load+play+scheduler.start+state), Play already-
+  playing → pause toggle, Stop narrow scope (no cleanup_all), AUTO
+  pill toggles both directions, auto-advance gated when flag off,
+  SIGNAL pill source-of-truth, no-engine no-crash. Uses
+  ``_FakeAudioEngine`` (records calls + tracks per-channel state for
+  realistic ``get_state``) and an enriched ``_FakeScheduler`` with
+  ``pick_next_item`` / ``is_running`` / ``start`` / ``stop``.
+
+### Latent broadcast-critical bug fix flagged
+
+Pre-Phase C, ``_build_bottom_transport_placeholder`` wired
+``bottom.stop_clicked → _on_stop_all_clicked``, which calls
+``engine.cleanup_all()`` — kills every channel including any active
+jingle pad. An operator pressing the bottom-transport ■ during a
+live jingle would have abruptly cut the jingle mid-play. Phase C
+narrows that wire to ``_on_deck_stop`` (deck channel only). The
+right-cluster Stop All button retains the nuclear semantic so the
+operator still has an explicit emergency-dump.
+
+### Wiring decisions
+
+- **Auto-advance via flag, not direct ``is_running()`` gate** —
+  preserves the 9 existing Studio EOS-path tests verbatim. AUTO pill
+  click is the explicit toggle that flips the flag.
+- **AUTO + scheduler in lockstep** — single click toggles both.
+  Operator never sees a mismatch (e.g., scheduler running but
+  auto-advance off, or vice versa).
+- **SIGNAL via 1Hz polling reuses the existing tick** — no new
+  timer. Future improvement: AudioEngine emits an
+  ``output_state_changed`` signal so polling can be removed
+  altogether.
+- **Pause toggle preserved** — the master-strip Pause button keeps
+  its existing wire to ``_on_pause_clicked`` unchanged. The bottom-
+  transport ▶ now also forwards to that same handler when something
+  is already loaded, so both surfaces share one toggle path.
+
+### Carry-overs flagged for follow-up
+
+1. **AUTO pill visual on hover** — the click hit zone works but the
+   pill doesn't yet show a hover/cursor-pointer affordance. Cosmetic
+   polish in a later UI pass.
+2. **SIGNAL polling vs. signal-driven** — AudioEngine could emit
+   ``output_state_changed`` which would let the SIGNAL pill update
+   instantly + remove the 1Hz polling path. Flagged as a future
+   AudioEngine enhancement (would also benefit transport bar
+   predictions).
+3. **STREAM pill** — the third status indicator stays decorative.
+   Will be wired when the streaming-output infrastructure lands
+   (RDS / Icecast / etc.).
+4. **Jingle pad 8-cap survives a deck stop** — verified by the
+   Stop button narrowing. Worth a manual smoke after the next
+   on-air session: trigger a jingle pad, then press the bottom
+   transport ■, confirm jingle audio continues.
+
+### Suite
+
+275 → 283 passed (+8 net new). 2 deselected (unchanged: slow soak +
+pre-existing modal hang). All existing tests untouched, including
+the 9 Studio EOS / item-dispatch tests, 7 Phase A IJE tests,
+7 Phase B Up Coming tests, 5 Phase B scheduler peek_next tests.
+
+### Manual on-air verification — DEFERRED to operator hardware
+
+Recommended 3-minute smoke after Phase C lands:
+  1. Open Studio. Click bottom-transport ▶ — a track should start
+     playing (audible through speakers); SIGNAL pill should turn
+     bright green within ~1 second.
+  2. Click an Instant Jingle tile while the deck is playing — both
+     should layer (deck + pad audio simultaneous).
+  3. With the jingle still playing, click bottom-transport ■ — deck
+     audio stops, jingle continues. (Pre-Phase C: jingle would have
+     been cut.)
+  4. Click Esc — jingle stops too. (Phase A: emergency-dump for IJE
+     pads only.)
+  5. Click ▶ again — fresh deck playback starts; AUTO pill goes
+     bright purple (scheduler auto-started).
+  6. Click AUTO pill — pill dims; scheduler stops; flag flips off.
+     Wait for current track to end → Studio idles instead of
+     auto-advancing.
+  7. Click ▶ again — single track plays then idles (Live-Assist
+     mode confirmed).
+
+### Commit
+
+feat(studio): wire playback controls to AudioEngine + SchedulerEngine
