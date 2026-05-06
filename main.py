@@ -63,6 +63,38 @@ def load_fonts() -> int:
     return loaded
 
 
+def verify_inter_weights() -> None:
+    """One-shot startup check: log which Inter weight styles QFontDatabase
+    actually registered. The Studio premium typography uses Black /
+    Bold / SemiBold weights — if any are missing, log a warning so
+    operators / future-us notice typography is rendering at fallback.
+
+    QFont auto-falls-back gracefully (Qt picks the closest available
+    weight), so a missing Black isn't fatal — just visually less
+    crisp. This check surfaces the situation rather than masking it.
+    """
+    families = QFontDatabase.families()
+    inter_families = [f for f in families if "Inter" in f]
+    if not inter_families:
+        log.warning("[font check] No Inter family registered — Studio "
+                    "typography will fall back to default sans-serif")
+        return
+    target_family = "Inter Variable"
+    if target_family not in families:
+        # Variable font registers under multiple names; fall back to
+        # the first Inter-prefixed one we find.
+        target_family = inter_families[0]
+    styles = QFontDatabase.styles(target_family)
+    log.info(f"[font check] Inter family={target_family!r} "
+             f"styles={styles}")
+    needed = ["Black", "Bold", "Semi Bold", "Medium"]
+    missing = [s for s in needed
+               if not any(s.lower() in st.lower() for st in styles)]
+    if missing:
+        log.warning(f"[font check] Inter missing weights: {missing} — "
+                    f"Qt will substitute the closest available weight")
+
+
 def load_stylesheet(app: QApplication) -> bool:
     # Prefer premium.qss (built for Phase 2+); fall back to style.qss
     for name in ("premium.qss", "style.qss"):
@@ -102,6 +134,7 @@ def main():
     # 4a. Fonts (must be loaded BEFORE stylesheet so fontDatabase is ready)
     n_fonts = load_fonts()
     log.info(f"Fonts registered: {n_fonts}")
+    verify_inter_weights()
 
     # 4b. Stylesheet
     load_stylesheet(app)

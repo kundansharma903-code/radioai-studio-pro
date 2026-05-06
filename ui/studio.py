@@ -191,6 +191,18 @@ class _Header(QWidget):
         self._cp_btn_rect    = QRect(WINDOW_W - 180, 16, 140, 40)
         self._cog_rect       = QRect(WINDOW_W - 32 - 4, 20, 32, 32)
         self._auto_pill_rect = QRect(1320 + 2 * 72, 18, 64, 32)
+        # Visual polish 2/Area 7: AUTO pill pulse halo. Same pattern
+        # as NowPlayer's LIVE dot — opacity loops 0.20→0.60→0.20 over
+        # 1500ms when scheduler is running. set_auto_mode(True) starts
+        # the animation; set_auto_mode(False) stops it. Partial repaint
+        # is already scoped to the AUTO pill region only via set_auto_mode.
+        self._auto_pulse_alpha: float = 0.0
+        self._auto_pulse_anim = QPropertyAnimation(self, b"autoPulseAlpha")
+        self._auto_pulse_anim.setDuration(1500)
+        self._auto_pulse_anim.setStartValue(0.20)
+        self._auto_pulse_anim.setKeyValueAt(0.5, 0.60)
+        self._auto_pulse_anim.setEndValue(0.20)
+        self._auto_pulse_anim.setLoopCount(-1)
 
     # ── Public API ───────────────────────────────────────────────────────
 
@@ -213,8 +225,31 @@ class _Header(QWidget):
         if on == self._auto_mode:
             return
         self._auto_mode = bool(on)
+        # Visual polish 2/Area 7: spin up / tear down the AUTO pulse
+        # animation when the mode flips. Idle state = no animation
+        # cost (timer not running).
+        if self._auto_mode:
+            if self._auto_pulse_anim.state() != QPropertyAnimation.State.Running:
+                self._auto_pulse_anim.start()
+        else:
+            self._auto_pulse_anim.stop()
+            self._auto_pulse_alpha = 0.0
         # Repaint the AUTO pill region
         self.update(QRect(1320, 12, 280, 32))
+
+    # ── AUTO pulse property (visual polish 2/Area 7) ────────────────────
+
+    def _get_auto_pulse_alpha(self) -> float:
+        return self._auto_pulse_alpha
+
+    def _set_auto_pulse_alpha(self, v: float) -> None:
+        self._auto_pulse_alpha = max(0.0, min(1.0, float(v)))
+        # Partial repaint scoped to just the AUTO pill region — the
+        # whole 1920×72 header NEVER repaints on each pulse frame.
+        self.update(self._auto_pill_rect.adjusted(-6, -6, 6, 6))
+
+    autoPulseAlpha = pyqtProperty(float, _get_auto_pulse_alpha,
+                                  _set_auto_pulse_alpha)
 
     def set_signal(self, ok: bool) -> None:
         if ok == self._signal_ok:
@@ -390,6 +425,19 @@ class _Header(QWidget):
         for i, (label, color) in enumerate(pills):
             x = 1320 + i * 72
             r = QRectF(x, 18, 64, 32)
+            # Visual polish 2/Area 7: AUTO pulse halo. Painted BEFORE
+            # the pill body so it sits behind. Alpha driven by the
+            # _auto_pulse_alpha property animation (active only when
+            # _auto_mode is True; otherwise alpha stays 0 → no draw).
+            if i == 2 and self._auto_pulse_alpha > 0.0:
+                halo = QRadialGradient(r.center(), 28)
+                halo.setColorAt(0.0,
+                    _qcolor_a(PURPLE_LIGHT, self._auto_pulse_alpha))
+                halo.setColorAt(0.6,
+                    _qcolor_a(PURPLE, self._auto_pulse_alpha * 0.4))
+                halo.setColorAt(1.0, _qcolor_a(PURPLE, 0.0))
+                p.setBrush(QBrush(halo)); p.setPen(Qt.PenStyle.NoPen)
+                p.drawEllipse(r.center(), 28, 28)
             p.fillRect(r, _qcolor_a(color, 0.12))
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.setPen(QPen(_qcolor_a(color, 0.40)))
@@ -523,9 +571,11 @@ class _NowPlayer(QWidget):
         self._total_ms = max(0, int(total_ms or 0))
         if self._total_ms > 0:
             self._progress = max(0.0, min(1.0, self._elapsed_ms / self._total_ms))
-        # Repaint just the elapsed-time and waveform regions
+        # Repaint just the elapsed-time and waveform regions.
+        # Waveform rect widened upward to include the playhead top
+        # dot + halo (visual polish 2/Area 5) which sits at y≈53..65.
         self.update(QRect(530, 14, 280, 30))    # elapsed/total/rem block
-        self.update(QRect(116, 56, 700, 26))    # waveform
+        self.update(QRect(102, 50, 720, 38))    # waveform + playhead halo
 
     def paintEvent(self, e: QPaintEvent) -> None:
         p = QPainter(self); p.setClipRect(e.rect())
@@ -540,6 +590,11 @@ class _NowPlayer(QWidget):
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.setPen(QPen(_qcolor_a(GREEN, 0.30)))
         p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 10, 10)
+        # Visual polish 2/Area 6: 3px solid-green top accent stripe so
+        # NowPlayer matches the visual rhythm of the other panels
+        # (every other panel has a 3px top accent; only NowPlayer +
+        # NextChip didn't).
+        p.fillRect(QRectF(0, 0, self.width(), 3), QColor(GREEN))
 
         # Vinyl (left, ~80h - centered)
         cx, cy = 56, 44
@@ -657,15 +712,37 @@ class _NowPlayer(QWidget):
                 # Remaining: dim green
                 color = _qcolor_a(GREEN, 0.20)
             p.fillRect(QRectF(x, y, bar_w, h), color)
-        # Playhead — vertical white line with green glow
+        # Playhead — vertical white line with green glow + top dot.
+        # Visual polish 2/Area 5: stronger glow (radial halo around the
+        # line, not just the fade-out at top/bottom), plus a 4×4 white
+        # head dot floating above the waveform with its own green halo.
         if self._progress > 0:
             ph_x = wf_x + wf_w * self._progress
+            # Glow halo — soft green radial centered on the bar mid
+            halo_r = 14
+            halo = QRadialGradient(QPointF(ph_x, wf_y + wf_h / 2), halo_r)
+            halo.setColorAt(0.0, _qcolor_a(GREEN_LIGHT, 0.55))
+            halo.setColorAt(0.5, _qcolor_a(GREEN, 0.20))
+            halo.setColorAt(1.0, _qcolor_a(GREEN, 0.0))
+            p.setBrush(QBrush(halo)); p.setPen(Qt.PenStyle.NoPen)
+            p.drawEllipse(QPointF(ph_x, wf_y + wf_h / 2),
+                          halo_r, halo_r)
+            # Vertical playhead line — 2px white core, full height of
+            # the waveform region (no top/bot fade — the halo handles
+            # that softly via the radial gradient above).
             playhead = QRectF(ph_x - 1, wf_y - 2, 2, wf_h + 4)
-            grad = QLinearGradient(playhead.topLeft(), playhead.bottomLeft())
-            grad.setColorAt(0.0, _qcolor_a(GREEN_LIGHT, 0.0))
-            grad.setColorAt(0.5, QColor(255, 255, 255))
-            grad.setColorAt(1.0, _qcolor_a(GREEN_LIGHT, 0.0))
-            p.fillRect(playhead, QBrush(grad))
+            p.fillRect(playhead, QColor(255, 255, 255))
+            # Top dot — 4×4 white circle just above the playhead, with
+            # its own green halo so the position read is unmistakable
+            # at a glance from across the studio.
+            dot_cy = wf_y - 5
+            dot_halo = QRadialGradient(QPointF(ph_x, dot_cy), 6)
+            dot_halo.setColorAt(0.0, _qcolor_a(GREEN_LIGHT, 0.7))
+            dot_halo.setColorAt(1.0, _qcolor_a(GREEN, 0.0))
+            p.setBrush(QBrush(dot_halo)); p.setPen(Qt.PenStyle.NoPen)
+            p.drawEllipse(QPointF(ph_x, dot_cy), 6, 6)
+            p.setBrush(QColor(255, 255, 255))
+            p.drawEllipse(QPointF(ph_x, dot_cy), 2, 2)
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -708,6 +785,9 @@ class _NextChip(QWidget):
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.setPen(QPen(_qcolor_a(RED, 0.30)))
         p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 10, 10)
+        # Visual polish 2/Area 6: 3px solid-rose top accent stripe to
+        # match the visual rhythm of the other panels.
+        p.fillRect(QRectF(0, 0, self.width(), 3), QColor(RED))
         # NEXT pill
         pill = QRectF(10, 10, 56, 18)
         p.fillRect(pill, _qcolor_a(RED, 0.30))
@@ -778,6 +858,22 @@ class _ControlButton(QWidget):
         if on == self._active:
             return
         self._active = bool(on)
+        # Visual polish 2/Area 7: when a ControlButton enters its
+        # active state (Pause when paused, Loop when looping), attach
+        # an accent-tinted drop shadow halo so the button visibly
+        # lights up. Toggled off → effect cleared. Single effect per
+        # widget (Qt limitation), no conflict with other graphics
+        # effects since the base button carries none.
+        if self._active:
+            halo = QGraphicsDropShadowEffect(self)
+            c = QColor(self._accent)
+            c.setAlpha(180)
+            halo.setBlurRadius(20)
+            halo.setColor(c)
+            halo.setOffset(0, 0)
+            self.setGraphicsEffect(halo)
+        else:
+            self.setGraphicsEffect(None)
         self.update(self.rect())
 
     def set_enabled(self, on: bool) -> None:
@@ -1623,6 +1719,10 @@ class _LibSongsTable(QWidget):
             # Background: amber tint, alternating; selected = lighter
             if i == self._selected:
                 p.fillRect(row_rect, _qcolor_a(AMBER, 0.30))
+                # Visual polish 2/Area 7: 3px cyan left-edge accent
+                # strip on the selected row — operator's eye locks
+                # onto the highlighted song instantly.
+                p.fillRect(QRectF(0, ry, 3, self.ROW_H), QColor(CYAN))
             else:
                 tint = 0.10 if (i % 2 == 0) else 0.06
                 p.fillRect(row_rect, _qcolor_a(AMBER, tint))
