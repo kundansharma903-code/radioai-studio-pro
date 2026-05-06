@@ -1001,3 +1001,182 @@ modal-dialog hang).
 ### Commit
 
 feat(ui): build Edit Playlist screen + automated on-air smoke (figma 248:2)
+
+---
+
+## Session 2026-05-06 — feat: Studio v3 rebuild (Frame 312:2, premium broadcast)
+
+### The most production-critical rebuild we've done
+
+The legacy `ui/studio.py` was the highest-stakes screen — Phase D
+audio engine wiring, instant jingle integration (visual only), full
+scheduler integration, EOS handling for the four playback paths
+(spot resume / stop-next / loop / auto-advance). Goes on-air to
+actual radio broadcast on Kavish's KISS FM 91.5 Jaipur workstation.
+
+Strategy: **never rebuild in place.** Two-commit sequence:
+
+1. **Commit `42fec1d`** — `git mv ui/studio.py ui/studio_legacy.py`
+   + transitional shim `ui/studio.py` re-exports `Studio` from
+   `studio_legacy`. Suite stays green (9/9 Studio tests pass via
+   the shim verbatim). Legacy preserved as rollback insurance.
+2. **This commit** — replace the shim with the rebuilt premium-
+   design Studio. Internal API names + engine signal handlers
+   preserved verbatim so all 9 existing tests still pass without
+   modification.
+3. **Deferred** — `ui/studio_legacy.py` deletion. Stays around
+   until Kavish manually verifies actual audio routing on his
+   broadcast workstation (automated tests + boot trace pass; only
+   the human can hear actual audio).
+
+### Scope decisions (votes from Kavish)
+
+- **Q1 — Canvas size: B (1920×1080 globally).** `core/constants.py`
+  bumped from 1440×900 to 1920×1080. `ui/widgets/app_chrome.py`
+  hardcodes its own `WINDOW_W = 1440` so existing premium screens
+  (Hub, Playlists, AutoSchedule, ClockEditor, PlaylistEdit) stay at
+  1440×900 — they live top-left-anchored inside the larger
+  MainWindow stack. Functional but not centered on full-HD displays.
+  *Future polish: re-anchor center, or upgrade each screen to
+  1920×1080 native.*
+- **Q2 — Instant Jingles: A (visual-only).** Legacy file does NOT
+  import `core.instant_jingle_engine`; the 6-pad grid + 1-5 hotkey
+  row + numeric pad are all decorative in this commit. Wiring is a
+  follow-up, ~150 lines + tests.
+- **Q3 — Top-right Control Panel button: B (route to Hub).** Studio
+  now has BOTH `breadcrumb_clicked = pyqtSignal(str)` (legacy
+  back-compat, still emits `"control_panel"`) AND
+  `screen_requested = pyqtSignal(str)` (premium pattern, emits
+  `"scheduling_hub"`). MainWindow connects both — joins the standard
+  premium-screen pattern.
+- **Q4 — Decorative-with-flag: confirmed for** SIGNAL/STREAM/AUTO
+  status pills, Up/Down navigation, MixFade, Problems panel (empty
+  state). Up Coming AT timestamps + INTRO badges WERE wired (trivial
+  — derived from `_queue_songs[i].intro_point_ms`).
+- **Q5 — Tests: confirmed.** Internal API names preserved verbatim;
+  all 9 legacy tests pass on the new file without modification.
+
+### Files
+
+- **MODIFIED** `core/constants.py` — `WINDOW_W = 1920, WINDOW_H = 1080`
+  (was 1440×900). Comment documents the trade-off for the existing
+  smaller screens.
+- **NEW** `ui/studio.py` (~1700 lines, replacing the 16-line shim)
+  — premium broadcast layout per Figma 312:2:
+    - **Header (60h):** Logo + STUDIO ON AIR + center clock +
+      Active Station + 3 status pills + Control Panel button +
+      Settings cog
+    - **Master strip (96h):** NowPlayer (vinyl + LIVE pulse +
+      waveform) + NextChip + ControlCluster (Restart/Loop/Pause/
+      StopNext) + LevelMeters + AnalogClock + STUDIO PRO Wordmark
+    - **Body (820h):** UpComing queue (5 cards) + Libraries (table)
+      + InstantJingles (decorative) + History (12 rows) + NextBreak
+      + RDS + Problems
+    - **Bottom transport (80h):** Loaded total + ▶/■ + slider +
+      AutoPlay + 6-button cluster (Up/Down/StopAll/Auto/MixFade/Loop)
+- **PRESERVED** `ui/studio_legacy.py` (2265 lines, untouched). Stays
+  for rollback until Kavish OKs deletion.
+
+### Wiring preserved verbatim from legacy
+
+Every wire in the new Studio matches the legacy file — same signal
+names, same handler bodies, same internal state attributes:
+
+| Source | Signal | Handler |
+| --- | --- | --- |
+| AudioEngine | position_changed | _on_engine_position |
+| AudioEngine | playback_ended | _on_engine_playback_ended |
+| AudioEngine | error_occurred | _on_engine_error |
+| SchedulerEngine | spot_due | _on_scheduler_spot_due |
+| SchedulerEngine | song_auto_advance | _on_scheduler_song_advance |
+| SchedulerEngine | break_approaching | _on_scheduler_break_warn |
+| SchedulerEngine | next_break_in | _on_scheduler_next_break_in |
+| SchedulerEngine | started/stopped | _update_status_pills |
+
+State preserved (test-touched names):
+`_queue_songs, _playback_cid, _current_track, _loop_enabled,
+_stop_after_current, _pre_spot_song_id, _playback_kind,
+_playback_campaign_id, _master_volume, _fade_out_timer,
+_current_duration_ms`.
+
+Methods preserved:
+`_on_queue_song_play, _on_engine_playback_ended, _compute_next_song,
+_tags_for_item_type (staticmethod), _derive_tags (staticmethod)`.
+
+The four EOS paths (spot resume / stop-next / loop / auto-advance)
+are copied verbatim from legacy. Tests confirm intact behaviour.
+
+### Performance invariants honored
+
+- `event.rect()` clipping in every paintEvent
+- Waveform: cached 160-bar geometry; partial QRect updates for
+  playhead progress only
+- Level meters: 30Hz decay timer with peak-hold (decorative until
+  RMS signal lands)
+- Clock face: 1Hz wall-clock tick (NOT engine-driven; correct
+  semantics)
+- No `setMouseTracking` anywhere
+- No DB calls in paintEvent — `_load_queue_from_db` runs once at
+  construction
+- No nested QScrollArea
+- Cached QGradient/QColor/QFont per widget in `__init__`
+
+### Decorative widgets (NOT engine-wired in this commit)
+
+Flagged carry-overs:
+
+1. **Status pills (SIGNAL/STREAM/AUTO)** — visual only; wire to
+   real signals when those infrastructure pieces exist.
+2. **Instant Jingles 6-pad + 1-5 hotkeys + numeric pad** — visual
+   only; legacy doesn't import `core.instant_jingle_engine`. Wire
+   in dedicated follow-up commit (~150 lines + tests).
+3. **Up/Down navigation buttons** — no queue-cursor in legacy.
+4. **MixFade button** — legacy has Fade Out only.
+5. **Problems panel** — empty-state only; no scheduler errors
+   collection in legacy. Currently shows "All systems nominal"
+   when empty.
+6. **Master volume slider** — moved from legacy `_MasterVolumeStrip`
+   widget into the bottom transport's slider; partial wiring (no
+   visible volume control yet, just transport seek). Re-wire later
+   if Kavish wants explicit master vol on screen.
+
+### Tests
+
+All 9 legacy Studio tests pass on the new file:
+
+- `test_studio_eos_paths.py` (4 tests): auto-advance / loop replay
+  / stop-next idle / spot EOS resume — all 4 EOS paths green
+- `test_studio_item_dispatch.py` (5 tests): tags helper coverage
+  + log_play with non-song item_type — all 5 green
+
+Full suite: 254 passed + 2 deselected (slow soak + the pre-existing
+modal-dialog hung test). Zero regressions.
+
+### Manual smoke status
+
+**Boot trace verified clean** (logged at 09:23:14):
+
+```
+Studio ready (Figma 312:2 — Premium Broadcast)
+MainWindow ready — window=1338x691, design canvas=1920x1080
+```
+
+**Manual on-air verification — DEFERRED to Kavish.** I (the agent)
+cannot drive a PyQt window or hear audio. The criteria #19 5-minute
+playback test (start → load → play → next track auto-advance →
+trigger jingle → Control Panel route → Pause/Resume/Stop → idle)
+must be human-driven. Once Kavish OKs, commit #3 (legacy deletion)
+can land.
+
+### Carry-over carry-overs (still flagged from prior commits)
+
+- Pre-existing `test_preview_without_engine_does_not_crash` modal-
+  dialog hang in `test_playlists_screen.py` — unchanged.
+- Live-DB test debt across `test_auto_schedule.py`,
+  `test_clock_editor.py`, `test_playlist_edit.py`, etc.
+- Decorative dropdowns (Sound Code / Popularity / Properties) on
+  Clock Editor — no song-schema mapping yet.
+
+### Commit
+
+feat(ui): rebuild Studio with premium broadcast design (figma 312:2)
