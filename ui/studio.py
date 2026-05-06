@@ -5,7 +5,9 @@ STEP-BY-STEP REBUILD per Plan A (Kavish, 2026-05-06):
   ✅ Step 1: 1920×1080 canvas + new Header
   ✅ Step 2: Master strip (NowPlayer + NextChip + ControlCluster +
              LevelMeters + ClockFace + Wordmark)
-  ✅ Step 3: Up Coming queue (rich track cards)              ← THIS COMMIT
+  ✅ Step 3: Up Coming queue (rich track cards)
+  ✅ Step 4: Libraries panel (type icons + Action Stack +
+             Songs table + Filter + Category)                ← THIS COMMIT
   □  Step 4: Libraries panel (type icons + Action Stack + table + filter)
   □  Step 5: Instant Jingles (6-pad + numeric pad + hotkeys)
   □  Step 6: History panel (12 alternating rows)
@@ -1340,6 +1342,538 @@ class _UpComingQueue(QWidget):
 
 
 # ════════════════════════════════════════════════════════════════════════
+# LIBRARIES — 720 × 820 (Figma 322:2)
+#
+# Header: LIBRARIES + "+5 IDEAS" pill
+# 7 type icon tiles row: Songs / Tracks / Jingles / Spots / Voice /
+#                         Folders / Favorites (Songs active green)
+# Action Stack (left column): 5 buttons ADD / INSERT / REPLACE /
+#                              prepAIR / DELETE
+# Songs table: amber-tinted alternating rows, artist + title
+# Filter sub-panel: SEARCH & FILTER + search input + Search/Reset
+#                    buttons + 3 checkboxes
+# Category dropdown: All Songs cyan + Manage Categories link
+# ════════════════════════════════════════════════════════════════════════
+
+# Type icon row entries (7) — name + glyph + accent color
+_LIB_TYPE_ICONS = [
+    ("Songs",     "♪",  GREEN_LIGHT,  True),    # active by default
+    ("Tracks",    "≡",  CYAN_LIGHT,   False),
+    ("Jingles",   "🔔", AMBER_LIGHT,  False),
+    ("Spots",     "$",  GREEN,        False),
+    ("Voice",     "🎤", PINK_LIGHT,   False),
+    ("Folders",   "📁", PURPLE_LIGHT, False),
+    ("Favorites", "♥",  RED,          False),
+]
+
+
+class _LibTypeTile(QWidget):
+    """One 86 × 60 tile in the type icons row."""
+    clicked = pyqtSignal(str)
+
+    def __init__(self, name: str, glyph: str, accent: str, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(86, 60)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._name = name; self._glyph = glyph
+        self._accent = accent
+        self._active = False
+        self._font_glyph = inter(20, QFont.Weight.Black)
+        self._font_label = inter(8, QFont.Weight.Bold, letter_spacing=1.4)
+
+    def set_active(self, on: bool) -> None:
+        if on == self._active:
+            return
+        self._active = bool(on)
+        self.update(self.rect())
+
+    def mousePressEvent(self, e: QMouseEvent) -> None:
+        if e.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit(self._name)
+        super().mousePressEvent(e)
+
+    def paintEvent(self, e: QPaintEvent) -> None:
+        p = QPainter(self); p.setClipRect(e.rect())
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(0, 0, self.width(), self.height())
+        # Tile background
+        if self._active:
+            grad = QLinearGradient(0, 0, 0, self.height())
+            grad.setColorAt(0.0, _qcolor_a(self._accent, 0.30))
+            grad.setColorAt(1.0, _qcolor_a(self._accent, 0.10))
+            p.fillRect(r, QBrush(grad))
+            border_alpha = 0.55
+        else:
+            p.fillRect(r, QColor(7, 8, 16, 178))
+            border_alpha = 0.20
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(_qcolor_a(self._accent, border_alpha)))
+        p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 8, 8)
+        # Glyph
+        p.setPen(QColor(self._accent)); p.setFont(self._font_glyph)
+        p.drawText(QRectF(0, 4, self.width(), 32),
+                   Qt.AlignmentFlag.AlignCenter, self._glyph)
+        # Label
+        p.setPen(_qcolor_a(self._accent, 0.95))
+        p.setFont(self._font_label)
+        p.drawText(QRectF(0, 36, self.width(), 18),
+                   Qt.AlignmentFlag.AlignCenter, self._name.upper())
+        p.end()
+
+
+class _LibActionButton(QWidget):
+    """One 76 × 76 button in the action stack (vertical icon + label)."""
+    clicked = pyqtSignal()
+
+    def __init__(self, label: str, glyph: str, accent: str,
+                 primary: bool = False, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(76, 76)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._label = label; self._glyph = glyph
+        self._accent = accent
+        self._primary = primary
+        self._enabled = True
+        self._font_glyph = inter(22, QFont.Weight.Black)
+        self._font_label = inter(8, QFont.Weight.Black, letter_spacing=0.6)
+        if primary:
+            self.setGraphicsEffect(_drop_shadow(14, _qcolor_a(accent, 0.4), 4))
+
+    def set_enabled(self, on: bool) -> None:
+        self._enabled = bool(on)
+        self.setCursor(Qt.CursorShape.PointingHandCursor if on
+                       else Qt.CursorShape.ForbiddenCursor)
+        self.update(self.rect())
+
+    def mousePressEvent(self, e: QMouseEvent) -> None:
+        if self._enabled and e.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(e)
+
+    def paintEvent(self, e: QPaintEvent) -> None:
+        p = QPainter(self); p.setClipRect(e.rect())
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(0, 0, self.width(), self.height())
+        if self._primary and self._enabled:
+            grad = QLinearGradient(0, 0, 0, self.height())
+            grad.setColorAt(0.0, _qcolor_a(self._accent, 0.95))
+            grad.setColorAt(1.0, _qcolor_a(GREEN_DK if self._accent == GREEN
+                                          else self._accent, 0.65))
+            p.fillRect(r, QBrush(grad))
+            text_color = QColor(255, 255, 255)
+        else:
+            alpha = 0.20 if self._enabled else 0.06
+            p.fillRect(r, _qcolor_a(self._accent, alpha))
+            text_color = (_qcolor_a(self._accent, 0.95) if self._enabled
+                          else _qcolor_a(self._accent, 0.30))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(_qcolor_a(self._accent,
+                                0.5 if self._enabled else 0.18)))
+        p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 8, 8)
+        p.setPen(text_color); p.setFont(self._font_glyph)
+        p.drawText(QRectF(0, 8, self.width(), 32),
+                   Qt.AlignmentFlag.AlignCenter, self._glyph)
+        p.setFont(self._font_label)
+        p.drawText(QRectF(0, 46, self.width(), 18),
+                   Qt.AlignmentFlag.AlignCenter, self._label)
+        p.end()
+
+
+# Need GREEN_DK fallback if not in tokens
+GREEN_DK = "#047857"
+
+
+class _LibSongRow:
+    """Plain data slot for one row in the songs table."""
+    def __init__(self, artist: str = "", title: str = ""):
+        self.artist = artist
+        self.title = title
+
+
+class _LibSongsTable(QWidget):
+    """Custom-paint songs table with amber-tinted alternating rows.
+    Rows = list[_LibSongRow]. Selected row is highlighted lighter."""
+
+    row_selected = pyqtSignal(int)
+    row_double_clicked = pyqtSignal(int)
+
+    ROW_H = 26
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(620, 380)
+        self._rows: list[_LibSongRow] = []
+        self._selected = -1
+        self._font_artist = inter(11, QFont.Weight.Bold, letter_spacing=-0.1)
+        self._font_title  = inter(10, QFont.Weight.Medium)
+
+    def set_rows(self, rows: list[_LibSongRow]) -> None:
+        self._rows = list(rows or [])
+        self._selected = -1
+        self.update(self.rect())
+
+    def mousePressEvent(self, e: QMouseEvent) -> None:
+        if e.button() != Qt.MouseButton.LeftButton:
+            super().mousePressEvent(e); return
+        y = e.position().toPoint().y()
+        idx = y // self.ROW_H
+        if 0 <= idx < len(self._rows):
+            self._selected = idx
+            self.update(self.rect())
+            self.row_selected.emit(int(idx))
+        super().mousePressEvent(e)
+
+    def mouseDoubleClickEvent(self, e: QMouseEvent) -> None:
+        y = e.position().toPoint().y()
+        idx = y // self.ROW_H
+        if 0 <= idx < len(self._rows):
+            self.row_double_clicked.emit(int(idx))
+        super().mouseDoubleClickEvent(e)
+
+    def paintEvent(self, e: QPaintEvent) -> None:
+        p = QPainter(self); p.setClipRect(e.rect())
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        clip = e.rect()
+        # Determine visible row range from clip
+        first = max(0, clip.y() // self.ROW_H)
+        last = min(len(self._rows) - 1,
+                   (clip.y() + clip.height() - 1) // self.ROW_H)
+        for i in range(first, last + 1):
+            row = self._rows[i]
+            ry = i * self.ROW_H
+            row_rect = QRectF(0, ry, self.width(), self.ROW_H)
+            # Background: amber tint, alternating; selected = lighter
+            if i == self._selected:
+                p.fillRect(row_rect, _qcolor_a(AMBER, 0.30))
+            else:
+                tint = 0.10 if (i % 2 == 0) else 0.06
+                p.fillRect(row_rect, _qcolor_a(AMBER, tint))
+            # Artist (bold white)
+            p.setPen(QColor(TEXT_PRI)); p.setFont(self._font_artist)
+            p.drawText(QRect(int(12), int(ry), int(190), int(self.ROW_H)),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                       row.artist or "—")
+            # Title (muted)
+            p.setPen(QColor(TEXT_SEC)); p.setFont(self._font_title)
+            p.drawText(QRect(int(212), int(ry),
+                            int(self.width() - 224), int(self.ROW_H)),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                       row.title or "—")
+        p.end()
+
+
+class _LibCheckbox(QWidget):
+    """Small toggle checkbox for the filter strip."""
+    toggled = pyqtSignal(bool)
+
+    def __init__(self, label: str, accent: str = CYAN, checked: bool = False,
+                 parent=None):
+        super().__init__(parent)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._label = label
+        self._accent = accent
+        self._checked = bool(checked)
+        self._font = inter(10, QFont.Weight.Medium)
+        self.setFixedSize(int(20 + len(label) * 7), 20)
+
+    def is_checked(self) -> bool: return self._checked
+
+    def set_checked(self, on: bool) -> None:
+        if on == self._checked: return
+        self._checked = bool(on); self.update(self.rect())
+
+    def mousePressEvent(self, e: QMouseEvent) -> None:
+        if e.button() == Qt.MouseButton.LeftButton:
+            self._checked = not self._checked
+            self.update(self.rect())
+            self.toggled.emit(self._checked)
+        super().mousePressEvent(e)
+
+    def paintEvent(self, e: QPaintEvent) -> None:
+        p = QPainter(self); p.setClipRect(e.rect())
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        box = QRectF(0, 3, 14, 14)
+        if self._checked:
+            p.fillRect(box, _qcolor_a(self._accent, 0.30))
+            p.setPen(QPen(_qcolor_a(self._accent, 0.95), 1.5))
+        else:
+            p.fillRect(box, QColor(7, 8, 16, 178))
+            p.setPen(QPen(QColor(255, 255, 255, 50), 1.5))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawRoundedRect(box.adjusted(0.5, 0.5, -0.5, -0.5), 3, 3)
+        if self._checked:
+            p.setPen(QColor(self._accent))
+            p.setFont(inter(10, QFont.Weight.Bold))
+            p.drawText(box, Qt.AlignmentFlag.AlignCenter, "✓")
+        # Label
+        p.setPen(_qcolor_a(self._accent if self._checked else COL_TEXT_SECONDARY_FB, 0.95))
+        p.setFont(self._font)
+        p.drawText(QRectF(20, 0, self.width() - 22, self.height()),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   self._label)
+        p.end()
+
+
+# Token fallback for the checkbox (legacy _tokens.py exposes TEXT_SEC)
+COL_TEXT_SECONDARY_FB = TEXT_SEC
+
+
+class _LibPillBtn(QWidget):
+    clicked = pyqtSignal()
+
+    def __init__(self, label: str, color: str, w: int = 80, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(w, 30)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._label = label; self._color = color
+        self._hover = False
+        self._font = inter(10, QFont.Weight.Bold, letter_spacing=0.4)
+
+    def enterEvent(self, e):
+        if not self._hover:
+            self._hover = True; self.update(self.rect())
+        super().enterEvent(e)
+
+    def leaveEvent(self, e):
+        if self._hover:
+            self._hover = False; self.update(self.rect())
+        super().leaveEvent(e)
+
+    def mousePressEvent(self, e: QMouseEvent) -> None:
+        if e.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(e)
+
+    def paintEvent(self, e: QPaintEvent) -> None:
+        p = QPainter(self); p.setClipRect(e.rect())
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(0, 0, self.width(), self.height())
+        p.fillRect(r, _qcolor_a(self._color, 0.22 if self._hover else 0.12))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(_qcolor_a(self._color, 0.45)))
+        p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 6, 6)
+        p.setPen(_qcolor_a(self._color, 0.95)); p.setFont(self._font)
+        p.drawText(r, Qt.AlignmentFlag.AlignCenter, self._label)
+        p.end()
+
+
+class _LibCategoryDropdown(QWidget):
+    """Big 540×42 cyan-glow dropdown showing 'All Songs' + chevron."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(540, 42)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._label = "All Songs"
+        self._count = 0
+        self._font_main = inter(13, QFont.Weight.Bold, letter_spacing=-0.2)
+        self._font_count = mono(10)
+        self._font_chev = inter(10, QFont.Weight.Bold)
+        self.setGraphicsEffect(_drop_shadow(8, _qcolor_a(CYAN, 0.20), 3))
+
+    def set_data(self, label: str, count: int) -> None:
+        self._label = label
+        self._count = int(count or 0)
+        self.update(self.rect())
+
+    def paintEvent(self, e: QPaintEvent) -> None:
+        p = QPainter(self); p.setClipRect(e.rect())
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(0, 0, self.width(), self.height())
+        grad = QLinearGradient(0, 0, self.width(), 0)
+        grad.setColorAt(0.0, _qcolor_a(CYAN, 0.10))
+        grad.setColorAt(1.0, _qcolor_a(CYAN, 0.04))
+        p.fillRect(r, QBrush(grad))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(_qcolor_a(CYAN, 0.40)))
+        p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 8, 8)
+        # Color dot
+        p.setPen(Qt.PenStyle.NoPen); p.setBrush(_qcolor_a(CYAN_LIGHT, 0.95))
+        p.drawEllipse(QPointF(14, self.height() / 2), 5, 5)
+        # Label + count
+        p.setPen(_qcolor_a(CYAN_LIGHT, 0.95)); p.setFont(self._font_main)
+        p.drawText(QRectF(28, 4, 240, 22),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   self._label)
+        p.setPen(QColor(TEXT_SEC)); p.setFont(self._font_count)
+        p.drawText(QRectF(28, 22, 240, 16),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   f"{self._count:,} songs")
+        p.setPen(_qcolor_a(CYAN_LIGHT, 0.95)); p.setFont(self._font_chev)
+        p.drawText(QRectF(self.width() - 24, 0, 18, self.height()),
+                   Qt.AlignmentFlag.AlignCenter, "▾")
+        p.end()
+
+
+class _LibrariesPanel(QWidget):
+    """720 × 820 — full Libraries panel."""
+
+    song_double_clicked = pyqtSignal(int)    # row index in self._rows
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(720, 820)
+        self._rows: list[_LibSongRow] = []
+        self._total_song_count = 0
+
+        self._font_h        = inter(13, QFont.Weight.Black, letter_spacing=-0.1)
+        self._font_ideas    = inter(9, QFont.Weight.Bold, letter_spacing=0.6)
+        self._font_section  = inter(11, QFont.Weight.Black, letter_spacing=1.4)
+        self._font_results  = inter(10, QFont.Weight.Bold, letter_spacing=0.4)
+        self._font_helper   = inter(10, QFont.Weight.Medium)
+        self._font_manage   = inter(10, QFont.Weight.Bold, letter_spacing=0.4)
+
+        # 7 type icons row
+        self._type_tiles: dict[str, _LibTypeTile] = {}
+        for i, (name, glyph, accent, active) in enumerate(_LIB_TYPE_ICONS):
+            tile = _LibTypeTile(name, glyph, accent, self)
+            tile.move(14 + i * 90, 38)
+            tile.set_active(active)
+            tile.clicked.connect(self._on_type_clicked)
+            self._type_tiles[name] = tile
+
+        # Action stack (left column)
+        self._b_add = _LibActionButton("ADD", "+", GREEN, primary=True,
+                                       parent=self)
+        self._b_add.move(14, 110)
+        self._b_ins = _LibActionButton("INSERT", "↳", GREEN, parent=self)
+        self._b_ins.move(14, 192); self._b_ins.set_enabled(False)
+        self._b_rep = _LibActionButton("REPLACE", "⇄", GREEN, parent=self)
+        self._b_rep.move(14, 274); self._b_rep.set_enabled(False)
+        self._b_prep = _LibActionButton("PREPAIR", "🎙", PURPLE_LIGHT,
+                                        parent=self)
+        self._b_prep.move(14, 356)
+        self._b_del = _LibActionButton("DELETE", "🗑", RED, parent=self)
+        self._b_del.move(14, 438); self._b_del.set_enabled(False)
+
+        # Songs table
+        self._table = _LibSongsTable(self)
+        self._table.move(102, 110)
+        self._table.row_selected.connect(self._on_row_selected)
+        self._table.row_double_clicked.connect(self._on_row_double_clicked)
+
+        # Filter sub-panel — search input + Search/Reset buttons
+        from PyQt6.QtWidgets import QLineEdit
+        self._search = QLineEdit(self)
+        self._search.setGeometry(14, 540, 380, 32)
+        self._search.setPlaceholderText("Search by artist or title…")
+        self._search.setFont(inter(11, QFont.Weight.Medium))
+        self._search.setStyleSheet(
+            "QLineEdit { background: rgba(7,8,16,0.7); "
+            "border: 1px solid rgba(255,255,255,0.10); border-radius: 6px; "
+            f"color: {TEXT_PRI}; padding: 0 11px; }} "
+            f"QLineEdit::placeholder {{ color: {TEXT_DIM}; }} "
+            "QLineEdit:focus { border-color: rgba(6,182,212,0.5); }"
+        )
+
+        self._b_search = _LibPillBtn("Search", CYAN, 80, self)
+        self._b_search.move(404, 541)
+        self._b_reset = _LibPillBtn("Reset", RED, 80, self)
+        self._b_reset.move(490, 541)
+
+        # Checkboxes
+        self._cb_super = _LibCheckbox("SuperSearch", CYAN, checked=True,
+                                      parent=self)
+        self._cb_super.move(14, 584)
+        self._cb_new = _LibCheckbox("Show Only NEW Additions",
+                                    PURPLE_LIGHT, parent=self)
+        self._cb_new.move(140, 584)
+        self._cb_surname = _LibCheckbox("Sort by Surname", AMBER_LIGHT,
+                                        parent=self)
+        self._cb_surname.move(360, 584)
+
+        # Category dropdown
+        self._cat_dropdown = _LibCategoryDropdown(self)
+        self._cat_dropdown.move(14, 700)
+
+    # ── Public API ───────────────────────────────────────────────────────
+
+    def set_songs(self, songs: list[dict], total_song_count: int = 0) -> None:
+        rows = []
+        for s in songs:
+            rows.append(_LibSongRow(
+                artist=str(s.get("artist") or "—"),
+                title=str(s.get("title") or "—")))
+        self._rows = rows
+        self._total_song_count = int(total_song_count or len(songs))
+        self._table.set_rows(self._rows)
+        self._cat_dropdown.set_data("All Songs", self._total_song_count)
+
+    def _on_type_clicked(self, name: str) -> None:
+        for k, tile in self._type_tiles.items():
+            tile.set_active(k == name)
+
+    def _on_row_selected(self, idx: int) -> None:
+        # Enable INSERT/REPLACE/DELETE
+        sel = idx >= 0
+        self._b_ins.set_enabled(sel)
+        self._b_rep.set_enabled(sel)
+        self._b_del.set_enabled(sel)
+
+    def _on_row_double_clicked(self, idx: int) -> None:
+        self.song_double_clicked.emit(int(idx))
+
+    def paintEvent(self, e: QPaintEvent) -> None:
+        p = QPainter(self); p.setClipRect(e.rect())
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(0, 0, self.width(), self.height())
+        # Panel background
+        bg = QLinearGradient(0, 0, 0, self.height())
+        bg.setColorAt(0.0, QColor(14, 16, 32, 235))
+        bg.setColorAt(1.0, QColor(7, 9, 18, 235))
+        p.fillRect(r, QBrush(bg))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(QColor(255, 255, 255, 18)))
+        p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 12, 12)
+        # cyan→purple→pink accent at top (3px)
+        accent = QLinearGradient(0, 0, self.width(), 0)
+        accent.setColorAt(0.0, QColor(CYAN))
+        accent.setColorAt(0.5, QColor(PURPLE_LIGHT))
+        accent.setColorAt(1.0, QColor(PINK))
+        p.fillRect(QRectF(0, 0, self.width(), 3), QBrush(accent))
+
+        # Header "LIBRARIES"
+        p.setPen(QColor(CYAN_LIGHT)); p.setFont(self._font_h)
+        p.drawText(QRectF(14, 10, 200, 18),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   "LIBRARIES")
+        # "+5 IDEAS" pill (right of header)
+        ideas = QRectF(self.width() - 88, 12, 74, 16)
+        p.fillRect(ideas, QColor(7, 8, 16, 178))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(QColor(255, 255, 255, 30)))
+        p.drawRoundedRect(ideas.adjusted(0.5, 0.5, -0.5, -0.5), 4, 4)
+        p.setPen(QColor(TEXT_SEC)); p.setFont(self._font_ideas)
+        p.drawText(ideas, Qt.AlignmentFlag.AlignCenter, "+5 IDEAS")
+
+        # Filter sub-panel header
+        p.setPen(QColor(CYAN_LIGHT)); p.setFont(self._font_section)
+        p.drawText(QRectF(14, 510, 240, 14),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   "SEARCH & FILTER")
+        # Results count (right side of filter header)
+        p.setPen(QColor(AMBER_LIGHT)); p.setFont(self._font_results)
+        p.drawText(QRectF(self.width() - 200, 510, 186, 14),
+                   Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                   f"{self._total_song_count} RESULTS")
+
+        # Hairline above category section
+        p.fillRect(QRectF(14, 670, self.width() - 28, 1),
+                   QColor(255, 255, 255, 20))
+        # CATEGORY label
+        p.setPen(QColor(CYAN_LIGHT)); p.setFont(self._font_section)
+        p.drawText(QRectF(14, 678, 200, 14),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   "CATEGORY")
+        # Manage Categories link (right of dropdown)
+        p.setPen(QColor(PURPLE_LIGHT)); p.setFont(self._font_manage)
+        p.drawText(QRectF(self.width() - 170, 752, 160, 16),
+                   Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                   "⚙  Manage Categories")
+        p.end()
+
+
+# ════════════════════════════════════════════════════════════════════════
 # PLACEHOLDER widgets — solid frames with section labels.
 # Replaced widget-by-widget in subsequent steps.
 # ════════════════════════════════════════════════════════════════════════
@@ -1460,9 +1994,12 @@ class Studio(QWidget):
 
         # Initial state
         self._apply_idle_state()
+        if hasattr(self, "_libraries"):
+            self._libraries.set_songs(self._queue_songs,
+                                       len(self._queue_songs))
         self._update_status_pills()
 
-        log.info("Studio ready (Figma 312:2 — Step 3: Up Coming)")
+        log.info("Studio ready (Figma 312:2 — Step 4: Libraries)")
 
     # ── Widget builders ──────────────────────────────────────────────────
 
@@ -1507,11 +2044,10 @@ class Studio(QWidget):
         self._upcoming.move(16, BODY_Y)
         self._upcoming.song_double_clicked.connect(self._on_queue_song_play)
 
-        self._libraries_placeholder = _PlaceholderFrame(
-            "LIBRARIES — type icons + Action Stack + table + filter",
-            "Step 4",
-            720, BODY_H, accent=PURPLE_LIGHT, parent=self)
-        self._libraries_placeholder.move(412, BODY_Y)
+        self._libraries = _LibrariesPanel(self)
+        self._libraries.move(412, BODY_Y)
+        self._libraries.song_double_clicked.connect(
+            self._on_library_song_double_clicked)
 
         self._instant_placeholder = _PlaceholderFrame(
             "INSTANT JINGLES — 6-pad + numeric pad + 1-5 hotkeys",
@@ -2024,6 +2560,12 @@ class Studio(QWidget):
 
     def _on_settings(self) -> None:
         QMessageBox.information(self, "Settings", "Settings — coming soon.")
+
+    def _on_library_song_double_clicked(self, idx: int) -> None:
+        """Library row double-click → if the row maps to a real queue
+        song (same index), play it."""
+        if 0 <= idx < len(self._queue_songs):
+            self._on_queue_song_play(self._queue_songs[idx])
 
     # ────────────────────────────────────────────────────────────────────
     # 1Hz tick — header clock
