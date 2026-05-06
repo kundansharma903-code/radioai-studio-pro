@@ -12,7 +12,9 @@ STEP-BY-STEP REBUILD per Plan A (Kavish, 2026-05-06):
              1-5 hotkeys + Edit Bank)
   ✅ Step 6: History panel (12 alternating rows +
              View Full History link)
-  ✅ Step 7: Next Break + RDS + Problems trio                ← THIS COMMIT
+  ✅ Step 7: Next Break + RDS + Problems trio
+  ✅ Step 8: Bottom transport bar (▶/■ + slider + AutoPlay +
+             6-button cluster)                               ← THIS COMMIT
   □  Step 4: Libraries panel (type icons + Action Stack + table + filter)
   □  Step 5: Instant Jingles (6-pad + numeric pad + hotkeys)
   □  Step 6: History panel (12 alternating rows)
@@ -2576,6 +2578,320 @@ class _ProblemsPanel(QWidget):
 
 
 # ════════════════════════════════════════════════════════════════════════
+# BOTTOM TRANSPORT — 1920 × 80 (Figma 327:2)
+#
+# Left:    LOADED PLAYLIST + big amber time + $ pill + ≡ menu
+# Center:  ▶ play (big green circle) + ■ stop (red) + slider with time
+#          label + AutoPlay toggle
+# Right:   6-button cluster Up / Down / Stop All / Auto / MixFa.. / Loop
+# ════════════════════════════════════════════════════════════════════════
+
+class _CircleBtn(QWidget):
+    """Big circular transport button (▶ play green / ■ stop red)."""
+
+    clicked = pyqtSignal()
+
+    def __init__(self, glyph: str, accent: str, size: int = 52, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(size, size)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._glyph = glyph; self._accent = accent
+        self._enabled = True
+        self._font = inter(18, QFont.Weight.Black)
+        if accent == GREEN:
+            self.setGraphicsEffect(_drop_shadow(20, _qcolor_a(GREEN, 0.45), 6))
+
+    def set_enabled(self, on: bool) -> None:
+        self._enabled = bool(on)
+        self.setCursor(Qt.CursorShape.PointingHandCursor if on
+                       else Qt.CursorShape.ForbiddenCursor)
+        self.update(self.rect())
+
+    def mousePressEvent(self, e: QMouseEvent) -> None:
+        if self._enabled and e.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(e)
+
+    def paintEvent(self, e: QPaintEvent) -> None:
+        p = QPainter(self); p.setClipRect(e.rect())
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if self._enabled:
+            grad = QLinearGradient(0, 0, 0, self.height())
+            grad.setColorAt(0.0, _qcolor_a(self._accent, 0.95))
+            grad.setColorAt(1.0, _qcolor_a(self._accent, 0.55))
+            p.setBrush(QBrush(grad))
+        else:
+            p.setBrush(_qcolor_a(self._accent, 0.10))
+        p.setPen(QPen(_qcolor_a(self._accent, 0.5 if self._enabled else 0.15)))
+        cx, cy = self.width() / 2, self.height() / 2
+        p.drawEllipse(QPointF(cx, cy),
+                      self.width() / 2 - 1, self.height() / 2 - 1)
+        p.setPen(QColor(255, 255, 255) if self._enabled else QColor(TEXT_DIM))
+        p.setFont(self._font)
+        p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self._glyph)
+        p.end()
+
+
+class _ProgressSlider(QWidget):
+    """Progress slider with cyan→purple gradient + time label above."""
+
+    seek_requested = pyqtSignal(float)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(380, 50)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._progress = 0.0
+        self._enabled = False
+        self._elapsed_s = 0
+        self._total_s = 0
+        self._font = mono(9, bold=True)
+
+    def set_enabled(self, on: bool) -> None:
+        self._enabled = bool(on)
+        self.setCursor(Qt.CursorShape.PointingHandCursor if on
+                       else Qt.CursorShape.ArrowCursor)
+        self.update(self.rect())
+
+    def set_progress(self, frac: float, elapsed_s: int = 0,
+                     total_s: int = 0) -> None:
+        f = max(0.0, min(1.0, float(frac)))
+        self._progress = f
+        self._elapsed_s = int(elapsed_s)
+        self._total_s = int(total_s)
+        self.update(self.rect())
+
+    def mousePressEvent(self, e: QMouseEvent) -> None:
+        if self._enabled and e.button() == Qt.MouseButton.LeftButton:
+            x = e.position().toPoint().x()
+            self.seek_requested.emit(max(0.0, min(1.0, x / self.width())))
+        super().mousePressEvent(e)
+
+    def paintEvent(self, e: QPaintEvent) -> None:
+        p = QPainter(self); p.setClipRect(e.rect())
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        # Time label "MM:SS / MM:SS" mono
+        e_m = self._elapsed_s // 60; e_s = self._elapsed_s % 60
+        t_m = self._total_s // 60;   t_s = self._total_s % 60
+        p.setPen(QColor(TEXT_DIM)); p.setFont(self._font)
+        p.drawText(QRectF(0, 8, 100, 14),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   f"{e_m:02d}:{e_s:02d}  /  {t_m:02d}:{t_s:02d}")
+        # Track
+        track = QRectF(0, 32, self.width(), 6)
+        p.fillRect(track, QColor(255, 255, 255, 22))
+        # Fill
+        if self._progress > 0:
+            fill = QRectF(0, 32, self.width() * self._progress, 6)
+            grad = QLinearGradient(0, 0, fill.width(), 0)
+            grad.setColorAt(0.0, QColor(CYAN))
+            grad.setColorAt(1.0, QColor(PURPLE_LIGHT))
+            p.fillRect(fill, QBrush(grad))
+            cx = fill.right()
+            p.setPen(Qt.PenStyle.NoPen); p.setBrush(QColor(CYAN_LIGHT))
+            p.drawEllipse(QPointF(cx, 35), 7, 7)
+        p.end()
+
+
+class _AutoPlayToggle(QWidget):
+    toggled = pyqtSignal(bool)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(110, 36)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._on = False
+        self._font = inter(11, QFont.Weight.Bold, letter_spacing=0.4)
+
+    def is_on(self) -> bool: return self._on
+    def set_on(self, on: bool) -> None:
+        self._on = bool(on); self.update(self.rect())
+
+    def mousePressEvent(self, e: QMouseEvent) -> None:
+        if e.button() == Qt.MouseButton.LeftButton:
+            self._on = not self._on
+            self.update(self.rect())
+            self.toggled.emit(self._on)
+        super().mousePressEvent(e)
+
+    def paintEvent(self, e: QPaintEvent) -> None:
+        p = QPainter(self); p.setClipRect(e.rect())
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        # Label
+        p.setPen(QColor(TEXT_PRI if self._on else TEXT_SEC))
+        p.setFont(self._font)
+        p.drawText(QRectF(0, 0, 70, self.height()),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   "AutoPlay")
+        # Toggle pill
+        pill = QRectF(72, 10, 36, 16)
+        color = GREEN if self._on else TEXT_DIM
+        p.fillRect(pill, _qcolor_a(color, 0.30))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(_qcolor_a(color, 0.50)))
+        p.drawRoundedRect(pill.adjusted(0.5, 0.5, -0.5, -0.5), 8, 8)
+        # Knob
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(GREEN_LIGHT) if self._on else QColor(TEXT_SEC))
+        knob_x = 100 if self._on else 80
+        p.drawEllipse(QPointF(knob_x, 18), 6, 6)
+        p.end()
+
+
+class _ClusterBtn(QWidget):
+    """One of the 6 right-cluster buttons (Up/Down/StopAll/Auto/MixFa/Loop)."""
+
+    clicked = pyqtSignal()
+
+    def __init__(self, label: str, glyph: str, accent: str, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(80, 56)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._label = label; self._glyph = glyph
+        self._accent = accent
+        self._enabled = True
+        self._font_glyph = inter(15, QFont.Weight.Black)
+        self._font_label = inter(9, QFont.Weight.Bold, letter_spacing=0.4)
+
+    def mousePressEvent(self, e: QMouseEvent) -> None:
+        if self._enabled and e.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(e)
+
+    def paintEvent(self, e: QPaintEvent) -> None:
+        p = QPainter(self); p.setClipRect(e.rect())
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(0, 0, self.width(), self.height())
+        p.fillRect(r, _qcolor_a(self._accent, 0.20))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(_qcolor_a(self._accent, 0.50)))
+        p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 8, 8)
+        p.setPen(QColor(self._accent)); p.setFont(self._font_glyph)
+        p.drawText(QRectF(0, 4, self.width(), 24),
+                   Qt.AlignmentFlag.AlignCenter, self._glyph)
+        p.setFont(self._font_label)
+        p.drawText(QRectF(0, 32, self.width(), 18),
+                   Qt.AlignmentFlag.AlignCenter, self._label)
+        p.end()
+
+
+class _BottomTransport(QWidget):
+    play_clicked      = pyqtSignal()
+    stop_clicked      = pyqtSignal()
+    seek_requested    = pyqtSignal(float)
+    autoplay_toggled  = pyqtSignal(bool)
+    up_clicked        = pyqtSignal()
+    down_clicked      = pyqtSignal()
+    stop_all_clicked  = pyqtSignal()
+    auto_clicked      = pyqtSignal()
+    mixfade_clicked   = pyqtSignal()
+    loop_clicked      = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(WINDOW_W, BOTTOM_TRANS_H)
+        self._loaded_total = "0:00:00"
+        self._font_load_lbl = inter(8, QFont.Weight.Bold, letter_spacing=1.4)
+        self._font_load_val = mono(20, bold=True, letter_spacing=-0.5)
+
+        # Center transport
+        self._play = _CircleBtn("▶", GREEN, 56, self)
+        self._play.move(380, 12)
+        self._play.clicked.connect(self.play_clicked.emit)
+
+        self._stop = _CircleBtn("■", RED, 44, self)
+        self._stop.move(450, 18)
+        self._stop.clicked.connect(self.stop_clicked.emit)
+
+        self._slider = _ProgressSlider(self)
+        self._slider.move(510, 14)
+        self._slider.seek_requested.connect(self.seek_requested.emit)
+
+        self._autoplay = _AutoPlayToggle(self)
+        self._autoplay.move(910, 22)
+        self._autoplay.toggled.connect(self.autoplay_toggled.emit)
+
+        # 6-button right cluster (each 80×56, gap 8)
+        cluster_x0 = 1080
+        clusters = [
+            ("Up",       "▲", CYAN,         self.up_clicked),
+            ("Down",     "▼", CYAN,         self.down_clicked),
+            ("Stop All", "■", RED,          self.stop_all_clicked),
+            ("Auto",     "◉", PURPLE_LIGHT, self.auto_clicked),
+            ("MixFa..",  "⌒", AMBER,        self.mixfade_clicked),
+            ("Loop",     "↻", PURPLE_LIGHT, self.loop_clicked),
+        ]
+        for i, (label, glyph, color, signal) in enumerate(clusters):
+            b = _ClusterBtn(label, glyph, color, self)
+            b.move(cluster_x0 + i * 88, 12)
+            b.clicked.connect(signal.emit)
+
+    def set_loaded_total(self, txt: str) -> None:
+        if txt == self._loaded_total:
+            return
+        self._loaded_total = txt
+        self.update(QRect(0, 0, 360, self.height()))
+
+    def set_progress(self, frac: float, elapsed_s: int = 0,
+                     total_s: int = 0) -> None:
+        self._slider.set_progress(frac, elapsed_s, total_s)
+
+    def set_transport_enabled(self, on: bool) -> None:
+        self._play.set_enabled(on)
+        self._stop.set_enabled(on)
+        self._slider.set_enabled(on)
+
+    def is_autoplay_on(self) -> bool:
+        return self._autoplay.is_on()
+
+    def paintEvent(self, e: QPaintEvent) -> None:
+        p = QPainter(self); p.setClipRect(e.rect())
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(0, 0, self.width(), self.height())
+        # Background
+        bg = QLinearGradient(0, 0, 0, self.height())
+        bg.setColorAt(0.0, QColor(14, 16, 32, 235))
+        bg.setColorAt(1.0, QColor(7, 9, 18, 235))
+        p.fillRect(r, QBrush(bg))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(QColor(255, 255, 255, 18)))
+        p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 12, 12)
+
+        # Loaded Playlist label
+        p.setPen(QColor(GREEN_LIGHT)); p.setFont(self._font_load_lbl)
+        p.drawText(QRectF(20, 14, 200, 12),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   "LOADED PLAYLIST")
+        # Big total time
+        p.setPen(QColor(AMBER_LIGHT)); p.setFont(self._font_load_val)
+        p.drawText(QRectF(20, 30, 220, 28),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   self._loaded_total)
+        # $ pill (green)
+        dollar = QRectF(220, 22, 38, 36)
+        dg = QLinearGradient(0, 22, 0, 58)
+        dg.setColorAt(0.0, _qcolor_a(GREEN, 0.30))
+        dg.setColorAt(1.0, _qcolor_a(GREEN, 0.10))
+        p.fillRect(dollar, QBrush(dg))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(_qcolor_a(GREEN, 0.45)))
+        p.drawRoundedRect(dollar.adjusted(0.5, 0.5, -0.5, -0.5), 6, 6)
+        p.setPen(QColor(GREEN_LIGHT))
+        p.setFont(inter(15, QFont.Weight.Bold))
+        p.drawText(dollar, Qt.AlignmentFlag.AlignCenter, "$")
+        # ≡ menu
+        menu = QRectF(266, 22, 38, 36)
+        p.fillRect(menu, QColor(7, 8, 16, 178))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(QColor(255, 255, 255, 30)))
+        p.drawRoundedRect(menu.adjusted(0.5, 0.5, -0.5, -0.5), 6, 6)
+        p.setPen(QColor(TEXT_SEC))
+        p.setFont(inter(15, QFont.Weight.Bold))
+        p.drawText(menu, Qt.AlignmentFlag.AlignCenter, "≡")
+        p.end()
+
+
+# ════════════════════════════════════════════════════════════════════════
 # PLACEHOLDER widgets — solid frames with section labels.
 # Replaced widget-by-widget in subsequent steps.
 # ════════════════════════════════════════════════════════════════════════
@@ -2702,7 +3018,7 @@ class Studio(QWidget):
         self._refresh_history()
         self._update_status_pills()
 
-        log.info("Studio ready (Figma 312:2 — Step 7: NextBreak/RDS/Problems)")
+        log.info("Studio ready (Figma 312:2 — Step 8: Bottom Transport)")
 
     # ── Widget builders ──────────────────────────────────────────────────
 
@@ -2768,12 +3084,21 @@ class Studio(QWidget):
         self._problems.move(1584, BODY_Y + 712)
 
     def _build_bottom_transport_placeholder(self) -> None:
-        self._bottom_placeholder = _PlaceholderFrame(
-            "BOTTOM TRANSPORT — Loaded total + ▶/■ + slider + "
-            "AutoPlay + 6-button cluster",
-            "Step 8", WINDOW_W - 32, BOTTOM_TRANS_H - 8,
-            accent=CYAN, parent=self)
-        self._bottom_placeholder.move(16, BOTTOM_TRANS_Y + 4)
+        self._bottom = _BottomTransport(self)
+        self._bottom.move(0, BOTTOM_TRANS_Y)
+        self._bottom.play_clicked.connect(self._on_pause_clicked)
+        self._bottom.stop_clicked.connect(self._on_stop_all_clicked)
+        self._bottom.seek_requested.connect(self._on_bottom_seek)
+        self._bottom.up_clicked.connect(self._on_up_clicked)
+        self._bottom.down_clicked.connect(self._on_down_clicked)
+        self._bottom.stop_all_clicked.connect(self._on_stop_all_clicked)
+        # Compute total queue duration for "LOADED PLAYLIST" header
+        total_ms = sum(int(s.get("duration_ms") or 0)
+                       for s in self._queue_songs)
+        s_total = total_ms // 1000
+        h, rem = divmod(s_total, 3600)
+        m, ss = divmod(rem, 60)
+        self._bottom.set_loaded_total(f"{h}:{m:02d}:{ss:02d}")
 
     # ────────────────────────────────────────────────────────────────────
     # PRESERVED: queue loader — same as legacy
@@ -2918,6 +3243,12 @@ class Studio(QWidget):
         if hasattr(self, "_now_player") and self._now_player is not None:
             self._now_player.set_progress(position_ms,
                                            self._current_duration_ms)
+        # Step 8: drive bottom-transport progress slider
+        if hasattr(self, "_bottom") and self._bottom is not None:
+            dur = self._current_duration_ms
+            frac = (position_ms / dur) if dur > 0 else 0.0
+            self._bottom.set_progress(
+                frac, position_ms // 1000, dur // 1000)
 
     def _on_engine_playback_ended(self, channel_id: int) -> None:
         """PRESERVED verbatim from legacy — the four EOS paths."""
@@ -3142,6 +3473,9 @@ class Studio(QWidget):
         if hasattr(self, "_control_cluster"):
             self._control_cluster.set_idle(True)
             self._control_cluster.set_paused(False)
+        if hasattr(self, "_bottom"):
+            self._bottom.set_progress(0.0, 0, 0)
+            self._bottom.set_transport_enabled(False)
         # NEXT chip: pre-populate from queue head so the panel isn't blank
         if hasattr(self, "_next_chip"):
             head = self._compute_next_song(after_id=None)
@@ -3178,6 +3512,8 @@ class Studio(QWidget):
         if hasattr(self, "_control_cluster"):
             self._control_cluster.set_idle(False)
             self._control_cluster.set_paused(False)
+        if hasattr(self, "_bottom"):
+            self._bottom.set_transport_enabled(True)
         # NEXT chip = the song after this one in the queue
         if hasattr(self, "_next_chip"):
             nxt = self._compute_next_song(after_id=song.get("id"))
@@ -3241,6 +3577,37 @@ class Studio(QWidget):
     def _on_loop_toggled(self, on: bool) -> None:
         self._loop_enabled = on
         log.info(f"[studio] loop = {on}")
+
+    # Bottom-transport-specific handlers (Step 8)
+
+    def _on_bottom_seek(self, frac: float) -> None:
+        if (self._playback_cid is None or self._engine is None
+                or self._current_duration_ms <= 0):
+            return
+        target = int(self._current_duration_ms * frac)
+        try:
+            self._engine.seek_to_ms(self._playback_cid, target)
+        except Exception as exc:
+            log.warning(f"[studio] seek failed: {exc}")
+
+    def _on_up_clicked(self) -> None:
+        # Decorative — no queue cursor in legacy, flagged as carry-over
+        pass
+
+    def _on_down_clicked(self) -> None:
+        pass
+
+    def _on_stop_all_clicked(self) -> None:
+        if self._engine is not None:
+            try:
+                self._engine.cleanup_all()
+            except Exception:
+                pass
+        self._playback_cid = None
+        self._playback_kind = None
+        self._current_track = None
+        self._apply_idle_state()
+        self._update_status_pills()
 
     # ────────────────────────────────────────────────────────────────────
     # State sync
