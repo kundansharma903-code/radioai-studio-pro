@@ -1,8 +1,8 @@
 """
 RadioAI Studio Pro — Studio v3 (Figma 312:2 — Premium Jazler Style).
 
-STEP-BY-STEP REBUILD per Plan A (Kavish, 2026-05-06):
-  ✅ Step 1: 1920×1080 canvas + new Header
+REBUILD COMPLETE — Plan A (Kavish, 2026-05-06):
+  ✅ Step 1: 1920×1080 canvas + Header
   ✅ Step 2: Master strip (NowPlayer + NextChip + ControlCluster +
              LevelMeters + ClockFace + Wordmark)
   ✅ Step 3: Up Coming queue (rich track cards)
@@ -14,7 +14,8 @@ STEP-BY-STEP REBUILD per Plan A (Kavish, 2026-05-06):
              View Full History link)
   ✅ Step 7: Next Break + RDS + Problems trio
   ✅ Step 8: Bottom transport bar (▶/■ + slider + AutoPlay +
-             6-button cluster)                               ← THIS COMMIT
+             6-button cluster)
+  ✅ Step 9: Final integration + cleanup                     ← THIS COMMIT
   □  Step 4: Libraries panel (type icons + Action Stack + table + filter)
   □  Step 5: Instant Jingles (6-pad + numeric pad + hotkeys)
   □  Step 6: History panel (12 alternating rows)
@@ -2892,51 +2893,6 @@ class _BottomTransport(QWidget):
 
 
 # ════════════════════════════════════════════════════════════════════════
-# PLACEHOLDER widgets — solid frames with section labels.
-# Replaced widget-by-widget in subsequent steps.
-# ════════════════════════════════════════════════════════════════════════
-
-class _PlaceholderFrame(QWidget):
-    """Solid dark-tinted rectangle with a section label — temporary
-    visual marker until the real widget lands in its scheduled step."""
-
-    def __init__(self, label: str, step_n: str, w: int, h: int,
-                 accent: str = TEXT_DIM, parent=None):
-        super().__init__(parent)
-        self.setFixedSize(w, h)
-        self._label = label
-        self._step = step_n
-        self._accent = accent
-        self._font_label = inter(13, QFont.Weight.Black, letter_spacing=0.5)
-        self._font_step  = inter(9, QFont.Weight.Bold, letter_spacing=1.4)
-
-    def paintEvent(self, e: QPaintEvent) -> None:
-        p = QPainter(self); p.setClipRect(e.rect())
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        r = QRectF(0, 0, self.width(), self.height())
-        # Background
-        bg = QLinearGradient(0, 0, 0, self.height())
-        bg.setColorAt(0.0, QColor(14, 16, 32, 230))
-        bg.setColorAt(1.0, QColor(7, 9, 18, 230))
-        p.fillRect(r, QBrush(bg))
-        # Border
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        p.setPen(QPen(_qcolor_a(self._accent, 0.30)))
-        p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 10, 10)
-        # Label
-        p.setPen(_qcolor_a(self._accent, 0.85))
-        p.setFont(self._font_label)
-        p.drawText(QRectF(0, self.height() / 2 - 24, self.width(), 24),
-                   Qt.AlignmentFlag.AlignCenter, self._label)
-        # Step indicator
-        p.setPen(_qcolor_a(self._accent, 0.55))
-        p.setFont(self._font_step)
-        p.drawText(QRectF(0, self.height() / 2 + 4, self.width(), 14),
-                   Qt.AlignmentFlag.AlignCenter, self._step)
-        p.end()
-
-
-# ════════════════════════════════════════════════════════════════════════
 # STUDIO — the screen shell
 # ════════════════════════════════════════════════════════════════════════
 
@@ -3018,7 +2974,7 @@ class Studio(QWidget):
         self._refresh_history()
         self._update_status_pills()
 
-        log.info("Studio ready (Figma 312:2 — Step 8: Bottom Transport)")
+        log.info("Studio ready (Figma 312:2 — Premium Jazler Style)")
 
     # ── Widget builders ──────────────────────────────────────────────────
 
@@ -3705,8 +3661,3 @@ class Studio(QWidget):
 
     def hideEvent(self, event):
         super().hideEvent(event)
-
-
-# Compat: legacy used the constant ROSE_TEXT — provide a fallback in case
-# any token didn't import. Using ROSE direct.
-ROSE_TEXT = RED
