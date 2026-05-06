@@ -87,9 +87,17 @@ def verify_inter_weights() -> None:
     styles = QFontDatabase.styles(target_family)
     log.info(f"[font check] Inter family={target_family!r} "
              f"styles={styles}")
+    # Normalize both sides — Inter Variable registers SemiBold without
+    # a space ("Text SemiBold"), and the substring check would falsely
+    # miss it if we wrote "Semi Bold". Strip whitespace + lowercase
+    # both sides so "Semi Bold" / "SemiBold" / "Text SemiBold" all
+    # match equivalently.
+    def _norm(s: str) -> str:
+        return s.replace(" ", "").lower()
+    norm_styles = [_norm(st) for st in styles]
     needed = ["Black", "Bold", "Semi Bold", "Medium"]
     missing = [s for s in needed
-               if not any(s.lower() in st.lower() for st in styles)]
+               if not any(_norm(s) in ns for ns in norm_styles)]
     if missing:
         log.warning(f"[font check] Inter missing weights: {missing} — "
                     f"Qt will substitute the closest available weight")
