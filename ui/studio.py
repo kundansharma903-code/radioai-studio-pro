@@ -9,7 +9,9 @@ STEP-BY-STEP REBUILD per Plan A (Kavish, 2026-05-06):
   ✅ Step 4: Libraries panel (type icons + Action Stack +
              Songs table + Filter + Category)
   ✅ Step 5: Instant Jingles (3×3 tiles + DEMO PLAYING +
-             1-5 hotkeys + Edit Bank)                        ← THIS COMMIT
+             1-5 hotkeys + Edit Bank)
+  ✅ Step 6: History panel (12 alternating rows +
+             View Full History link)                         ← THIS COMMIT
   □  Step 4: Libraries panel (type icons + Action Stack + table + filter)
   □  Step 5: Instant Jingles (6-pad + numeric pad + hotkeys)
   □  Step 6: History panel (12 alternating rows)
@@ -2126,6 +2128,132 @@ class _InstantJinglesPanel(QWidget):
 
 
 # ════════════════════════════════════════════════════════════════════════
+# HISTORY — 320 × 540 (Figma 325:2)
+#
+# Header: HISTORY rose + LAST 12 dark pill (right) + 3px rose accent
+# 12 rows: timestamp (top, mono muted) + artist - title (bold white)
+#         alternating rose / amber-darker tinted backgrounds
+# Footer: View Full History → rose link
+# ════════════════════════════════════════════════════════════════════════
+
+class _HistoryEntry:
+    """Plain data slot for one history row."""
+    def __init__(self, time_str: str = "—", artist: str = "",
+                 title: str = "", dur: str = ""):
+        self.time_str = time_str
+        self.artist = artist
+        self.title = title
+        self.dur = dur
+
+
+class _HistoryPanel(QWidget):
+    """320 × 540 — Last 12 played panel."""
+
+    view_full_clicked = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(320, 540)
+        self._entries: list[_HistoryEntry] = [_HistoryEntry() for _ in range(12)]
+
+        self._font_h        = inter(11, QFont.Weight.Black, letter_spacing=1.6)
+        self._font_count    = mono(9, bold=True, letter_spacing=0.4)
+        self._font_time     = mono(8, bold=True, letter_spacing=0.3)
+        self._font_track    = inter(11, QFont.Weight.Bold, letter_spacing=-0.1)
+        self._font_link     = inter(11, QFont.Weight.Bold, letter_spacing=0.4)
+
+        # Footer link hit zone
+        self._link_rect = QRect(14, 500, 200, 28)
+
+    @property
+    def entries(self) -> list[_HistoryEntry]:
+        return self._entries
+
+    def set_entry(self, idx: int, time_str: str, artist: str,
+                  title: str, dur: str = "") -> None:
+        if 0 <= idx < len(self._entries):
+            self._entries[idx] = _HistoryEntry(time_str, artist, title, dur)
+            row_h = 38
+            row_y = 38 + idx * row_h
+            self.update(QRect(0, row_y, self.width(), row_h))
+
+    def refresh(self) -> None:
+        self.update(self.rect())
+
+    def mousePressEvent(self, e: QMouseEvent) -> None:
+        if (e.button() == Qt.MouseButton.LeftButton
+                and self._link_rect.contains(e.position().toPoint())):
+            self.view_full_clicked.emit()
+        super().mousePressEvent(e)
+
+    def paintEvent(self, e: QPaintEvent) -> None:
+        p = QPainter(self); p.setClipRect(e.rect())
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(0, 0, self.width(), self.height())
+        # Panel background
+        bg = QLinearGradient(0, 0, 0, self.height())
+        bg.setColorAt(0.0, QColor(14, 16, 32, 235))
+        bg.setColorAt(1.0, QColor(7, 9, 18, 235))
+        p.fillRect(r, QBrush(bg))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(QColor(255, 255, 255, 18)))
+        p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 12, 12)
+        # 3px rose accent at top
+        accent = QLinearGradient(0, 0, self.width(), 0)
+        accent.setColorAt(0.0, QColor(RED))
+        accent.setColorAt(1.0, _qcolor_a(RED, 0.4))
+        p.fillRect(QRectF(0, 0, self.width(), 3), QBrush(accent))
+
+        # Header "HISTORY"
+        p.setPen(QColor(RED_LIGHT)); p.setFont(self._font_h)
+        p.drawText(QRectF(14, 10, 200, 16),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   "HISTORY")
+        # LAST 12 pill (right of header)
+        last_pill = QRectF(self.width() - 64, 12, 50, 14)
+        p.fillRect(last_pill, QColor(7, 8, 16, 178))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(QColor(255, 255, 255, 30)))
+        p.drawRoundedRect(last_pill.adjusted(0.5, 0.5, -0.5, -0.5), 4, 4)
+        p.setPen(QColor(TEXT_SEC)); p.setFont(self._font_count)
+        p.drawText(last_pill, Qt.AlignmentFlag.AlignCenter, "LAST 12")
+
+        # 12 rows (y=38, each 38h)
+        row_h = 38
+        for i, entry in enumerate(self._entries):
+            y = 38 + i * row_h
+            row_rect = QRectF(8, y, self.width() - 16, row_h - 2)
+            # Alternating tint — rose / amber-dim
+            if i % 2 == 0:
+                p.fillRect(row_rect, _qcolor_a(RED, 0.10))
+            else:
+                p.fillRect(row_rect, _qcolor_a(AMBER, 0.06))
+            # Timestamp (top, mono muted)
+            p.setPen(QColor(TEXT_DIM)); p.setFont(self._font_time)
+            p.drawText(QRectF(16, y + 4, 120, 14),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                       entry.time_str)
+            # Artist - Title combined (bold white)
+            track_str = (f"{entry.artist} - {entry.title}"
+                         if entry.artist and entry.title
+                         else entry.title or entry.artist or "—")
+            p.setPen(QColor(TEXT_PRI)); p.setFont(self._font_track)
+            p.drawText(QRectF(16, y + 18, self.width() - 32, 16),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                       track_str)
+
+        # Footer separator hairline
+        p.fillRect(QRectF(14, 494, self.width() - 28, 1),
+                   QColor(255, 255, 255, 20))
+        # View Full History → link
+        p.setPen(QColor(RED_LIGHT)); p.setFont(self._font_link)
+        p.drawText(QRectF(self._link_rect),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   "View Full History →")
+        p.end()
+
+
+# ════════════════════════════════════════════════════════════════════════
 # PLACEHOLDER widgets — solid frames with section labels.
 # Replaced widget-by-widget in subsequent steps.
 # ════════════════════════════════════════════════════════════════════════
@@ -2249,9 +2377,10 @@ class Studio(QWidget):
         if hasattr(self, "_libraries"):
             self._libraries.set_songs(self._queue_songs,
                                        len(self._queue_songs))
+        self._refresh_history()
         self._update_status_pills()
 
-        log.info("Studio ready (Figma 312:2 — Step 5: Instant Jingles)")
+        log.info("Studio ready (Figma 312:2 — Step 6: History)")
 
     # ── Widget builders ──────────────────────────────────────────────────
 
@@ -2304,10 +2433,8 @@ class Studio(QWidget):
         self._instant_jingles = _InstantJinglesPanel(self)
         self._instant_jingles.move(1148, BODY_Y)
 
-        self._history_placeholder = _PlaceholderFrame(
-            "HISTORY — 12 alternating rows", "Step 6",
-            320, 540, accent=ROSE_TEXT, parent=self)
-        self._history_placeholder.move(1584, BODY_Y)
+        self._history_panel = _HistoryPanel(self)
+        self._history_panel.move(1584, BODY_Y)
 
         self._next_break_placeholder = _PlaceholderFrame(
             "NEXT BREAK — countdown + Skip + Preview",
@@ -2496,6 +2623,7 @@ class Studio(QWidget):
         if kind == "spot":
             anchor_id = self._pre_spot_song_id
             self._pre_spot_song_id = None
+            self._refresh_history()
             next_song = self._compute_next_song(after_id=anchor_id)
             if next_song is not None:
                 log.info(f"[studio] spot EOS → resume queue: "
@@ -2797,6 +2925,53 @@ class Studio(QWidget):
                      and self._scheduler.is_running())
         self._header.set_on_air(on_air)
         self._header.set_auto_mode(auto_mode)
+
+    def _refresh_history(self) -> None:
+        """Populate the History panel from db.get_history(). Called on
+        init + after every spot/song state transition that could have
+        written a broadcast_log row."""
+        if not hasattr(self, "_history_panel"):
+            return
+        try:
+            rows = self._db.get_history(limit=12)
+        except Exception as exc:
+            log.debug(f"[studio] history refresh failed: {exc}")
+            return
+        for i in range(12):
+            if i < len(rows):
+                r = rows[i]
+                keys = r.keys() if hasattr(r, "keys") else []
+                time_str = self._fmt_history_time(
+                    r["played_at"] if "played_at" in keys else None)
+                entry_type = (r["entry_type"] if "entry_type" in keys
+                              else "song")
+                if entry_type == "spot":
+                    title = (r["campaign_name"] if "campaign_name" in keys
+                             and r["campaign_name"] else "—")
+                    artist = "(spot)"
+                else:
+                    title = (r["title"] if "title" in keys
+                             and r["title"] else "—")
+                    artist = (r["artist"] if "artist" in keys
+                              and r["artist"] else "")
+                dur_ms = (r["duration_ms"] if "duration_ms" in keys
+                          and r["duration_ms"] else 0)
+                self._history_panel.set_entry(
+                    i, time_str, artist, title,
+                    _fmt_duration(int(dur_ms or 0)))
+            else:
+                self._history_panel.set_entry(i, "—", "", "", "")
+        self._history_panel.refresh()
+
+    @staticmethod
+    def _fmt_history_time(played_at) -> str:
+        """Convert sqlite TEXT 'YYYY-MM-DD HH:MM:SS' → 'HH:MM:SS'."""
+        if not played_at:
+            return "—"
+        s = str(played_at)
+        if len(s) >= 19 and s[10] == " ":
+            return s[11:19]
+        return "—"
 
     # ────────────────────────────────────────────────────────────────────
     # ROUTING
