@@ -1560,10 +1560,10 @@ class SpotsCommercials(QWidget):
                 f"QRadioButton::indicator {{ width: 14px; height: 14px; "
                 f"  border: 1.5px solid {rgba(accent_hex, 0.40)}; "
                 f"  border-radius: 7px; "
-                f"  background: {BG_DARK}; }}"
+                f"  background: {BG_BASE}; }}"
                 f"QRadioButton::indicator:checked {{ "
                 f"  background: {accent_hex}; "
-                f"  border: 4px solid {BG_DARK}; }}"
+                f"  border: 4px solid {BG_BASE}; }}"
             )
             b.setMinimumHeight(74)
             b.setProperty("mode", mode_val)
