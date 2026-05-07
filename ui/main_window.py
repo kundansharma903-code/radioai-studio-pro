@@ -190,6 +190,14 @@ class MainWindow(QMainWindow):
             self.spots_commercials.studio_clicked.connect(self._on_studio_clicked)
             self._stack.addWidget(self.spots_commercials)
 
+            # Sweepers Library (Figma 46:2)
+            from ui.sweepers_library import SweepersLibrary
+            self.sweepers_library = SweepersLibrary(
+                self._db, engine=self._engine)
+            self.sweepers_library.breadcrumb_clicked.connect(self._on_breadcrumb)
+            self.sweepers_library.studio_clicked.connect(self._on_studio_clicked)
+            self._stack.addWidget(self.sweepers_library)
+
             # Studio Single Deck — broadcast operator workstation (Figma 182:2)
             # Phase D1: skeleton; D2 wires manual audio; D3 passes scheduler.
             from ui.studio import Studio
@@ -272,6 +280,8 @@ class MainWindow(QMainWindow):
             self._stack.setCurrentWidget(self.instant_jingles)
         elif screen == "spots" and hasattr(self, "spots_commercials"):
             self._stack.setCurrentWidget(self.spots_commercials)
+        elif screen == "sweepers" and hasattr(self, "sweepers_library"):
+            self._stack.setCurrentWidget(self.sweepers_library)
         elif screen == "scheduling" and hasattr(self, "scheduling_hub"):
             # Hub becomes the visible screen; it injects studio reference
             # lazily so the now-playing poll picks up Studio if mounted.
