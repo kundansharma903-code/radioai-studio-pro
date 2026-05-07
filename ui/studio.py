@@ -3912,6 +3912,86 @@ class Studio(QWidget):
         self._on_engine_playback_ended(channel_id)
 
     # ────────────────────────────────────────────────────────────────────
+    # Non-destructive preview (NEXT chip, RDS) — uses scheduler.peek_next
+    # so the cursor does NOT advance on every UI refresh
+    # ────────────────────────────────────────────────────────────────────
+    #
+    # Audit incident (2026-05-07): _compute_next_song calls
+    # scheduler.pick_next_item which permanently advances
+    # _clock_slot_cursor. Three display-only call sites (NEXT chip pre-
+    # populate in _apply_idle_state, RDS panel in same, NEXT chip refresh
+    # in _apply_playing_state) were each calling _compute_next_song for
+    # preview purposes — every song-start triggered a cursor advance,
+    # so slots were being consumed twice (once for the preview, once for
+    # the real dispatch). Result: live broadcast skipped slots in pairs;
+    # operator (Kavish) saw the NEXT chip show a stale title while the
+    # Up Coming queue (peek_next-driven, already non-destructive) showed
+    # the correct order.
+
+    def _peek_next_for_display(self,
+                               after_id: Optional[int]
+                               ) -> Optional[dict]:
+        """Display-only preview of the next deck-bound item. Uses
+        scheduler.peek_next so the cursor does NOT mutate. Mirrors the
+        sweeper-skip logic of _compute_next_song so the previewed item
+        is what would actually land on the deck (overlay-style sweepers
+        get skipped past since they wouldn't take the deck slot)."""
+        # Scheduler-idle path: same static-queue lookup as
+        # _compute_next_song's fallback branch.
+        if not (self._scheduler is not None and self._scheduler.is_running()):
+            if not self._queue_songs:
+                return None
+            if after_id is None:
+                return self._queue_songs[0]
+            idx = next((i for i, s in enumerate(self._queue_songs)
+                        if s.get("id") == after_id), -1)
+            nxt = idx + 1
+            if 0 <= nxt < len(self._queue_songs):
+                return self._queue_songs[nxt]
+            return None
+
+        # Live scheduler — use the non-destructive peek and skip-past
+        # any overlay-style sweepers (they'd be eaten by the overlay
+        # path during real dispatch, not loaded to the deck).
+        try:
+            items = self._scheduler.peek_next(5) or []
+        except Exception as exc:
+            log.debug(f"[studio] peek_next for NEXT-chip failed: {exc}")
+            items = []
+
+        overlay_positions = ("Start of Song", "Before Intro",
+                              "Before End", "Bridge at End",
+                              "Custom Position", "Custom")
+        deck_has_song = (self._sweeper_engine is not None
+                         and self._playback_cid is not None
+                         and self._current_track)
+
+        for item in items:
+            item_type = (item.get("item_type") or "song").strip().lower()
+            if item_type == "sweeper":
+                position = (item.get("position") or "").strip()
+                if deck_has_song and position in overlay_positions:
+                    # Would overlay during real dispatch → skip in preview
+                    continue
+            return {
+                "id":          item.get("item_id"),
+                "title":       item.get("title"),
+                "artist":      item.get("artist"),
+                "file_path":   item.get("file_path"),
+                "duration_ms": int(item.get("duration_ms") or 0),
+                "tags":        self._tags_for_item_type(item_type),
+                "_clock_id":   item.get("clock_id"),
+                "_slot_idx":   item.get("slot_idx"),
+                "_item_type":  item_type,
+            }
+        # Peek empty (no clock assigned to current hour, or every
+        # peeked slot was an overlay sweeper) → static fallback so the
+        # chip still shows something meaningful.
+        if not self._queue_songs:
+            return None
+        return self._queue_songs[0]
+
+    # ────────────────────────────────────────────────────────────────────
     # Sweeper overlay dispatch (Phase 1 wiring — auto + manual share path)
     # ────────────────────────────────────────────────────────────────────
 
@@ -4184,9 +4264,12 @@ class Studio(QWidget):
         if hasattr(self, "_bottom"):
             self._bottom.set_progress(0.0, 0, 0)
             self._bottom.set_transport_enabled(False)
-        # NEXT chip: pre-populate from queue head so the panel isn't blank
+        # NEXT chip: pre-populate from queue head so the panel isn't blank.
+        # Uses peek (non-destructive) — historical bug was that the
+        # display refresh advanced the scheduler cursor, eating slots
+        # before they could be dispatched. See _peek_next_for_display.
         if hasattr(self, "_next_chip"):
-            head = self._compute_next_song(after_id=None)
+            head = self._peek_next_for_display(after_id=None)
             if head is not None:
                 self._next_chip.set_next(
                     str(head.get("title") or "—"),
@@ -4201,9 +4284,11 @@ class Studio(QWidget):
         #   wired or no clock is currently assigned (peek returned []).
         if hasattr(self, "_upcoming"):
             self._refresh_upcoming_panel()
-        # RDS panel: idle = queue head as next-up label
+        # RDS panel: idle = queue head as next-up label. Uses peek
+        # (non-destructive) — historical bug was the same cursor-eat
+        # pattern as the NEXT chip.
         if hasattr(self, "_rds"):
-            head = self._compute_next_song(after_id=None)
+            head = self._peek_next_for_display(after_id=None)
             if head is not None:
                 self._rds.set_on_air(
                     str(head.get("artist") or "—"),
@@ -4225,9 +4310,12 @@ class Studio(QWidget):
             self._control_cluster.set_paused(False)
         if hasattr(self, "_bottom"):
             self._bottom.set_transport_enabled(True)
-        # NEXT chip = the song after this one in the queue
+        # NEXT chip = the song after this one in the queue. Uses peek
+        # (non-destructive) — calling _compute_next_song here was eating
+        # a scheduler slot per song-start (audit 2026-05-07), so the
+        # NEXT chip drifted out of sync with the Up Coming queue.
         if hasattr(self, "_next_chip"):
-            nxt = self._compute_next_song(after_id=song.get("id"))
+            nxt = self._peek_next_for_display(after_id=song.get("id"))
             if nxt is not None:
                 self._next_chip.set_next(
                     str(nxt.get("title") or "—"),
