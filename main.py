@@ -163,6 +163,23 @@ def main():
             song_count = rows[0] if rows else 0
         except Exception:
             pass
+        # Auto-schedule persistence audit log — confirms the grid
+        # assignments survived the previous session. Operator can see
+        # at a glance how many cells are populated and which clock is
+        # assigned to the current (weekday, hour) cell.
+        try:
+            from datetime import datetime as _dt
+            now = _dt.now()
+            grid = db.get_auto_schedule_grid()
+            row = db.get_active_clock(int(now.weekday()), int(now.hour))
+            active = (f"clock id={row['id']} name={row['name']!r}"
+                      if row is not None else "(no clock assigned)")
+            log.info(
+                f"Auto-schedule grid: {len(grid)} cells assigned · "
+                f"current cell (weekday={now.weekday()}, "
+                f"hour={now.hour}) → {active}")
+        except Exception as exc:
+            log.warning(f"auto_schedule audit log failed: {exc}")
     else:
         log.error("Database verification failed — launching anyway")
 

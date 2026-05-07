@@ -658,3 +658,39 @@ class AudioEngine(QObject):
             return int(self._dll.BASS_ChannelBytes2Seconds(handle, len_bytes) * 1000)
         except Exception:
             return 0
+
+    # ── Peak-level read for the LR meter widget ──────────────────────────
+    #
+    # BASS packs the level into a single DWORD: low-word = left peak,
+    # high-word = right peak, each 0..32768 (= 0..1.0). We normalize to
+    # floats and return (left, right). A clamped 0,0 is returned on any
+    # error or when the channel id isn't known — paint-loop primitive,
+    # MUST NOT raise.
+
+    def get_levels(self, channel_id: int) -> tuple[float, float]:
+        """Return (left, right) peak levels normalized to 0.0–1.0 for
+        the given channel. Studio's _LevelMeters polls this at ~30Hz
+        from a QTimer so the bars react to whatever's currently audible
+        on the deck."""
+        try:
+            ch = self._channels.get(int(channel_id))
+        except Exception:
+            return (0.0, 0.0)
+        if ch is None:
+            return (0.0, 0.0)
+        try:
+            packed = int(self._dll.BASS_ChannelGetLevel(ch.handle))
+        except Exception:
+            return (0.0, 0.0)
+        if packed == 0xFFFFFFFF:   # BASS error sentinel (-1 cast to unsigned)
+            return (0.0, 0.0)
+        # Low word = left, high word = right; range 0..32768.
+        left  = (packed & 0xFFFF) / 32768.0
+        right = ((packed >> 16) & 0xFFFF) / 32768.0
+        # Clamp defensively — BASS occasionally returns slightly >1
+        # values during peak transients.
+        if left  > 1.0: left  = 1.0
+        if right > 1.0: right = 1.0
+        if left  < 0.0: left  = 0.0
+        if right < 0.0: right = 0.0
+        return (left, right)

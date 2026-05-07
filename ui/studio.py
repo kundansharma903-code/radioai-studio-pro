@@ -3426,6 +3426,14 @@ class Studio(QWidget):
 
         self._level_meters = _LevelMeters(self)
         self._level_meters.move(1392, MASTER_Y + 8)
+        # 30Hz poll → engine.get_levels(deck_cid) → _level_meters.set_levels.
+        # Visible only while a deck channel is playing; the meter widget
+        # has its own decorative idle-decay so an empty deck still shows
+        # the smooth fade rather than a sharp drop.
+        self._level_poll_timer = QTimer(self)
+        self._level_poll_timer.setInterval(33)        # ~30Hz
+        self._level_poll_timer.timeout.connect(self._poll_levels)
+        self._level_poll_timer.start()
 
         self._clock_face = _AnalogClock(self)
         self._clock_face.move(1488, MASTER_Y + 8)
@@ -3951,6 +3959,27 @@ class Studio(QWidget):
             return
         log.warning(f"[studio] engine error: {message}")
         self._on_engine_playback_ended(channel_id)
+
+    # ────────────────────────────────────────────────────────────────────
+    # Level meter polling — feeds the L/R bars at 30Hz from the deck channel
+    # ────────────────────────────────────────────────────────────────────
+
+    def _poll_levels(self) -> None:
+        """30Hz timer slot — read peak levels for the active deck
+        channel and push them into the _LevelMeters widget. No-op when
+        the deck is idle or the engine doesn't expose get_levels (older
+        engine variant or test fakes)."""
+        if not hasattr(self, "_level_meters") or self._level_meters is None:
+            return
+        if (self._engine is None
+                or self._playback_cid is None
+                or not hasattr(self._engine, "get_levels")):
+            return  # widget keeps its own idle-decay animation
+        try:
+            left, right = self._engine.get_levels(int(self._playback_cid))
+        except Exception:
+            return
+        self._level_meters.set_levels(float(left), float(right))
 
     # ────────────────────────────────────────────────────────────────────
     # Non-destructive preview (NEXT chip, RDS) — uses scheduler.peek_next

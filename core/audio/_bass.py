@@ -110,6 +110,12 @@ def get_dll() -> ctypes.WinDLL:
     ]
     dll.BASS_ChannelSeconds2Bytes.restype = ctypes.c_ulonglong
 
+    # Peak-level read for the LR meter widget. Returns a DWORD packed
+    # as low-word=left peak, high-word=right peak (each 0..32768).
+    # 0xFFFFFFFF (= -1 cast to unsigned) on error.
+    dll.BASS_ChannelGetLevel.argtypes = [ctypes.c_ulong]
+    dll.BASS_ChannelGetLevel.restype = ctypes.c_ulong
+
     _dll = dll
     return _dll
 
