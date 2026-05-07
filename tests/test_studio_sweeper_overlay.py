@@ -25,6 +25,8 @@ This file pins the new contract:
 
 from __future__ import annotations
 
+import os
+import sys
 import uuid
 
 import pytest
@@ -33,6 +35,12 @@ from PyQt6.QtCore import pyqtSignal, QObject
 
 from core.database import Database
 from ui.studio import Studio
+
+
+# Any always-existing local file works for the file_path validation
+# in _compute_next_song. We don't actually decode the file — Studio's
+# engine is None in these tests — so the path just needs to exist.
+_REAL_PATH = sys.executable
 
 
 # ── Fakes ───────────────────────────────────────────────────────────────────
@@ -118,7 +126,7 @@ def _make_studio(db, scheduler=None, sweeper_engine=None) -> Studio:
     return s
 
 
-def _song_item(item_id, title="Song", file_path="dummy.mp3"):
+def _song_item(item_id, title="Song", file_path=_REAL_PATH):
     return {
         "item_type":   "song",
         "item_id":     int(item_id),
@@ -137,7 +145,9 @@ def _sweeper_item(item_id, position="Bridge at End"):
         "item_id":            int(item_id),
         "title":              f"SW-{item_id}",
         "artist":             "SWEEPER",
-        "file_path":          f"sweeper_{item_id}.mp3",
+        # Use a real on-disk path so _compute_next_song's file-existence
+        # validation passes; the engine is None so nothing is decoded.
+        "file_path":          _REAL_PATH,
         "duration_ms":        8000,
         "position":           position,
         "volume_sweeper_pct": 95,
@@ -166,7 +176,7 @@ def test_compute_next_song_skips_sweeper_and_returns_song(qapp, db):
 
     assert nxt is not None and nxt["id"] == 101 and nxt["_item_type"] == "song"
     assert len(swe.scheduled) == 1
-    assert swe.scheduled[0]["sweeper"]["file_path"] == "sweeper_11.mp3"
+    assert swe.scheduled[0]["sweeper"]["file_path"] == _REAL_PATH
     assert swe.scheduled[0]["sweeper"]["position"] == "Bridge at End"
     assert swe.scheduled[0]["deck"] == 999
     studio.deleteLater()
@@ -199,13 +209,14 @@ def test_compute_next_song_skips_multiple_sweepers(qapp, db):
 
 def test_compute_next_song_skip_budget_bounded(qapp, db):
     """A clock that emits nothing but sweepers must not infinite-recurse.
-    After _SWEEPER_SKIP_BUDGET sweepers, _compute_next_song falls through
-    to the static-queue fallback (here empty → None)."""
+    After _SKIP_BUDGET sweepers, _compute_next_song falls through to the
+    static-queue fallback (here empty → None). Budget covers both
+    overlay-sweeper consumption AND broken-file skip-past."""
     sched = _FakeScheduler()
     swe = _FakeSweeperEngine()
     studio = _make_studio(db, scheduler=sched, sweeper_engine=swe)
-    # Budget is 4 → seed 10 sweepers; only 5 picks happen (initial + 4 skips).
-    sched.queue(*[_sweeper_item(i) for i in range(10)])
+    # Budget = 6 → seed 12 sweepers; only 7 picks happen (initial + 6 skips).
+    sched.queue(*[_sweeper_item(i) for i in range(12)])
     studio._playback_cid = 1
     studio._current_track = {"id": 1, "duration_ms": 180000}
     studio._current_duration_ms = 180000
@@ -214,8 +225,8 @@ def test_compute_next_song_skip_budget_bounded(qapp, db):
     nxt = studio._compute_next_song(after_id=None)
 
     assert nxt is None
-    # All 5 picks attempted (initial + 4 skips) were sweepers, all overlaid.
-    assert len(swe.scheduled) == 5
+    # All 7 picks attempted (initial + 6 skips) were sweepers, all overlaid.
+    assert len(swe.scheduled) == 7
     studio.deleteLater()
 
 

@@ -28,10 +28,18 @@ This file pins both contracts:
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from core.database import Database
 from ui.studio import Studio
+
+
+# _compute_next_song validates file_path exists on disk so dummy paths
+# get skipped. Use a known-existing local file as the stand-in — Studio's
+# engine is None in these tests so nothing actually decodes the file.
+_REAL_PATH = sys.executable
 
 
 # ── Fakes ───────────────────────────────────────────────────────────────────
@@ -112,7 +120,7 @@ def _song(item_id, title):
     return {
         "item_type": "song", "item_id": int(item_id),
         "title": title, "artist": "Artist",
-        "file_path": f"{title}.mp3", "duration_ms": 180000,
+        "file_path": _REAL_PATH, "duration_ms": 180000,
         "clock_id": 1, "slot_idx": item_id,
     }
 
@@ -121,7 +129,7 @@ def _sweeper(item_id, position="Bridge at End"):
     return {
         "item_type": "sweeper", "item_id": int(item_id),
         "title": f"SW-{item_id}", "artist": "SWEEPER",
-        "file_path": f"sw_{item_id}.mp3", "duration_ms": 8000,
+        "file_path": _REAL_PATH, "duration_ms": 8000,
         "position": position,
         "clock_id": 1, "slot_idx": item_id,
     }

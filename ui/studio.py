@@ -3592,10 +3592,20 @@ class Studio(QWidget):
     def _on_queue_song_play(self, song: dict) -> None:
         if self._engine is None:
             log.warning("[studio] no engine — playback unavailable")
+            self._current_track = None
+            self._apply_idle_state()
+            self._update_status_pills()
             return
         path = song.get("file_path")
         if not path or not os.path.exists(path):
+            # Defensive: _compute_next_song already filters bad files
+            # but a stale path on a manually-loaded queue song could
+            # still land here. Idle the UI rather than leaving the
+            # operator with a phantom "now playing" tile.
             log.warning(f"[studio] file missing: {path!r}")
+            self._current_track = None
+            self._apply_idle_state()
+            self._update_status_pills()
             return
 
         if self._fade_out_timer is not None:
@@ -3846,10 +3856,17 @@ class Studio(QWidget):
         play is what matches the operator's mental model today and
         what the scheduler API supports without a refactor.
         """
-        _SWEEPER_SKIP_BUDGET = 4    # max consecutive sweepers to absorb
+        # Skip budget covers both overlay-sweeper consumption AND
+        # broken-file skip-past. A clock with one or two misconfigured
+        # rows (sweeper without file, song with missing file_path) must
+        # not stall the broadcast — keep walking the cursor for up to
+        # _SKIP_BUDGET extra items per dispatch. After that, fall back
+        # to the static queue and log loudly so the operator can find
+        # the broken row.
+        _SKIP_BUDGET = 6
         if self._scheduler is not None and self._scheduler.is_running():
             from datetime import datetime as _dt
-            for _ in range(_SWEEPER_SKIP_BUDGET + 1):
+            for _ in range(_SKIP_BUDGET + 1):
                 try:
                     item = self._scheduler.pick_next_item(_dt.now())
                 except Exception as exc:
@@ -3883,11 +3900,28 @@ class Studio(QWidget):
                         f"[studio] sweeper id={item.get('item_id')!r} "
                         f"position={position!r} → deck-load "
                         f"(deck idle / Independent / no engine)")
+                # Validate file_path BEFORE returning — empty or missing
+                # files will short-circuit _on_queue_song_play with no
+                # next-item retry, stalling the broadcast (RR_SW
+                # regression 2026-05-07: operator added a sweeper via
+                # the Add dialog without picking an audio file; auto-
+                # advance landed on it, _on_queue_song_play warned
+                # "file missing" and the player stopped). Skip-past
+                # within the same loop's budget so the cursor walks to
+                # the next valid item.
+                fp = item.get("file_path")
+                if not fp or not os.path.exists(fp):
+                    log.warning(
+                        f"[studio] dispatch skipped {item_type} id="
+                        f"{item.get('item_id')!r} — file_path missing "
+                        f"or invalid: {fp!r}. Cursor advanced; "
+                        f"check this row in the library editor.")
+                    continue
                 song = {
                     "id":          item.get("item_id"),
                     "title":       item.get("title"),
                     "artist":      item.get("artist"),
-                    "file_path":   item.get("file_path"),
+                    "file_path":   fp,
                     "duration_ms": int(item.get("duration_ms") or 0),
                     "tags":        self._tags_for_item_type(item_type),
                     "_clock_id":   item.get("clock_id"),
