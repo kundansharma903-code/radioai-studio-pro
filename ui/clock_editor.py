@@ -839,6 +839,35 @@ class _AvailableElementsCard(QWidget):
         self._cat_dd.move(15, 455)
         self._cat_dd.selection_changed.connect(lambda *_: self.filter_changed.emit())
 
+        # Sweeper-type config — only visible when element_type='sweeper'.
+        # Replaces the song-only filter dropdowns above for the sweeper
+        # rotation type. Picker defaults to "Random (any)" → scheduler
+        # uses random_from_category. Selecting a specific sweeper pins
+        # the slot via clock_slots.item_id (selection_mode='specific').
+        # Position drives clock_slots.sweeper_position so SweeperEngine
+        # can compute the correct trigger offset on the deck song.
+        from typing import Optional as _Opt
+        self._dd_sweeper_pick = _SmallDropdown(
+            ["Random (any)"], 400, 32, parent=self)
+        self._dd_sweeper_pick.move(15, 183)
+        self._dd_sweeper_pick.selection_changed.connect(
+            lambda _: self.filter_changed.emit())
+        self._dd_sweeper_pick.setVisible(False)
+        # label → sweeper_id lookup; rebuilt by set_sweepers().
+        self._sweeper_id_by_label: dict[str, int] = {}
+
+        self._dd_sweeper_position = _SmallDropdown(
+            ["Bridge at End", "Start of Song", "Before Intro",
+             "Before End", "Independent", "Custom Position"],
+            400, 32, parent=self)
+        self._dd_sweeper_position.move(15, 223)
+        self._dd_sweeper_position.selection_changed.connect(
+            lambda _: self.filter_changed.emit())
+        self._dd_sweeper_position.setVisible(False)
+
+        # Final visibility pass after every widget exists.
+        self._apply_sweeper_visibility()
+
     # ── Public API ────────────────────────────────────────────────────────
 
     def element_type(self) -> str:
@@ -850,6 +879,7 @@ class _AvailableElementsCard(QWidget):
         self._element_type = t
         for k, tile in self._type_tiles.items():
             tile.set_active(k == t)
+        self._apply_sweeper_visibility()
 
     def set_subtab(self, key: str) -> None:
         if key not in ("filters", "tracks", "artists") or key == self._subtab:
@@ -858,21 +888,72 @@ class _AvailableElementsCard(QWidget):
         self._sub_filters.set_active(key == "filters")
         self._sub_tracks.set_active(key == "tracks")
         self._sub_artists.set_active(key == "artists")
-        # Hide / show filter widgets when leaving the Filters tab
-        on_filters = (key == "filters")
-        for w in (self._dd_sound_code, self._dd_popularity, self._dd_era,
-                  self._dd_properties, self._dd_vocal, self._dd_year_min,
-                  self._arrow_year, self._dd_year_max,
-                  self._dd_pri_min, self._arrow_pri, self._dd_pri_max,
-                  self._dd_bpm_min, self._arrow_bpm, self._dd_bpm_max,
-                  self._cat_dd):
-            w.setVisible(on_filters)
+        # Visibility for filter-tab widgets routes through the helper so
+        # the sweeper config (when active) is also factored in.
+        self._apply_sweeper_visibility()
         self.update(self.rect())
 
     def set_categories(self, categories: list[dict], total_song_count: int) -> None:
         self._categories = list(categories or [])
         self._total_songs = int(total_song_count or 0)
         self._cat_dd.set_categories(categories, total_song_count)
+
+    # ── Sweeper-type config ──────────────────────────────────────────────
+
+    def _apply_sweeper_visibility(self) -> None:
+        """Filters-tab visibility is per element type:
+          • song / jingle / spot / voice → song-filter dropdowns visible
+          • sweeper                      → sweeper picker + position visible
+        Both groups hide when the sub-tab leaves Filters."""
+        on_filters = self._subtab == "filters"
+        is_sweeper = self._element_type == "sweeper"
+        song_filter_widgets = (
+            self._dd_sound_code, self._dd_popularity, self._dd_era,
+            self._dd_properties, self._dd_vocal,
+            self._dd_year_min, self._arrow_year, self._dd_year_max,
+            self._dd_pri_min, self._arrow_pri, self._dd_pri_max,
+            self._dd_bpm_min, self._arrow_bpm, self._dd_bpm_max,
+            self._cat_dd,
+        )
+        for w in song_filter_widgets:
+            w.setVisible(on_filters and not is_sweeper)
+        self._dd_sweeper_pick.setVisible(on_filters and is_sweeper)
+        self._dd_sweeper_position.setVisible(on_filters and is_sweeper)
+
+    def set_sweepers(self, sweepers: list) -> None:
+        """Populate the specific-sweeper picker. Each entry is either a
+        sqlite3.Row or a dict — uses ``id`` and ``name`` columns. The
+        first label is always ``"Random (any)"`` so the operator can
+        keep the historic random_from_category behaviour."""
+        labels = ["Random (any)"]
+        self._sweeper_id_by_label = {}
+        for sw in sweepers or []:
+            try:
+                sid = int(sw["id"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            try:
+                name = str(sw["name"]) if sw["name"] else f"Sweeper #{sid}"
+            except Exception:
+                name = f"Sweeper #{sid}"
+            label = f"{name}  (#{sid})"
+            labels.append(label)
+            self._sweeper_id_by_label[label] = sid
+        # Reseat the dropdown's options + value (no public API for this
+        # on _SmallDropdown so we update the internal state directly).
+        self._dd_sweeper_pick._options = labels
+        if self._dd_sweeper_pick._value not in labels:
+            self._dd_sweeper_pick._value = labels[0]
+        self._dd_sweeper_pick.update()
+
+    def selected_sweeper_id(self):
+        """Return the sweeper_id for the current pick, or None when the
+        operator left the picker on 'Random (any)'."""
+        label = self._dd_sweeper_pick.value()
+        return self._sweeper_id_by_label.get(label)
+
+    def selected_sweeper_position(self) -> str:
+        return self._dd_sweeper_position.value()
 
     def filter_state(self) -> dict:
         """Snapshot the filter UI as a dict matching scheduler's
@@ -1635,6 +1716,14 @@ class ClockEditor(QWidget):
         except Exception:
             self._total_song_count = 0
         self._lib.set_categories(self._categories_cache, self._total_song_count)
+        # Refresh the sweeper picker — it appears when the operator
+        # picks element_type='sweeper'. Pulled fresh on every load so
+        # newly-added sweepers from the Sweepers Library show up
+        # without a screen reconstruct.
+        try:
+            self._lib.set_sweepers(list(self._db.get_sweepers_active()))
+        except Exception as exc:
+            log.warning(f"load sweepers failed: {exc}")
 
         # Populate fields per mode
         if mode == MODE_NEW or self._source_id is None:
@@ -1773,6 +1862,17 @@ class ClockEditor(QWidget):
             mp = e.get("minute_position") or 0
             ds = e.get("duration_seconds") or 0
             next_min = max(next_min, float(mp) + float(ds) / 60.0)
+        # Sweeper slots can be pinned to a specific sweeper or left as
+        # random_from_category. The picker + position dropdowns only
+        # show when element_type='sweeper' — they no-op otherwise.
+        sweeper_id = None
+        sweeper_position = None
+        selection_mode = "random_from_category"
+        if ui_type == "sweeper":
+            sweeper_id = self._lib.selected_sweeper_id()
+            sweeper_position = self._lib.selected_sweeper_position()
+            if sweeper_id is not None:
+                selection_mode = "specific"
         return {
             "element_type":     ui_type,
             "slot_type_db":     ELEMENT_TYPE_TO_DB[ui_type],
@@ -1782,7 +1882,9 @@ class ClockEditor(QWidget):
                                  if k != "category_id"},
             "minute_position":  int(min(59.0, next_min)),
             "duration_seconds": int(avg_s),
-            "selection_mode":   ("specific" if False else "random_from_category"),
+            "selection_mode":   selection_mode,
+            "item_id":          sweeper_id,
+            "sweeper_position": sweeper_position,
             "era":              fdict.get("era"),
         }
 
@@ -2003,6 +2105,13 @@ class ClockEditor(QWidget):
                                      or "random_from_category",
                 "is_break":          1 if stype_db == "break" else 0,
             }
+            # Sweeper-specific columns — only forwarded when the element
+            # actually carries them so non-sweeper rows get NULL columns
+            # (matches the existing schema default).
+            if el.get("item_id") is not None:
+                slot["item_id"] = int(el["item_id"])
+            if el.get("sweeper_position"):
+                slot["sweeper_position"] = el["sweeper_position"]
             out.append(slot)
         return out
 
