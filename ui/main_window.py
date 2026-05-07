@@ -52,6 +52,14 @@ class MainWindow(QMainWindow):
         self._instant_jingle_engine = InstantJingleEngine(
             engine=self._engine, parent=self)
 
+        # SweeperEngine — overlay player on its own BASS channel. Shared
+        # across MainWindow so manual sweeper plays from the Sweepers
+        # Library tile in Studio's Libraries panel and scheduler-dispatched
+        # sweeper slots both go through the same instance (latest cancels
+        # any previous overlay — only one sweeper at a time, by design).
+        from core.sweeper_engine import SweeperEngine
+        self._sweeper_engine = SweeperEngine()
+
         # Phase B5: aboutToQuit safety net. Fires on app force-quit, OS
         # shutdown, or any path that bypasses closeEvent. cleanup_all is
         # idempotent so the dual-hook is cheap.
@@ -204,7 +212,8 @@ class MainWindow(QMainWindow):
             self.studio = Studio(
                 self._db, parent=None,
                 engine=self._engine, scheduler=self._scheduler,
-                instant_jingle_engine=self._instant_jingle_engine)
+                instant_jingle_engine=self._instant_jingle_engine,
+                sweeper_engine=self._sweeper_engine)
             self.studio.breadcrumb_clicked.connect(self._on_breadcrumb)
             self._stack.addWidget(self.studio)
 

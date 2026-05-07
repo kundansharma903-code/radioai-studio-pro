@@ -3185,12 +3185,18 @@ class Studio(QWidget):
     FADE_OUT_MS = 3000
 
     def __init__(self, db, parent=None, engine=None, scheduler=None,
-                 instant_jingle_engine=None):
+                 instant_jingle_engine=None, sweeper_engine=None):
         super().__init__(parent)
         self._db = db
         self._engine = engine
         self._scheduler = scheduler
         self._instant_jingle_engine = instant_jingle_engine
+        # Sweeper overlay player — separate BASS channel that layers on
+        # top of the deck. Optional kwarg keeps the existing tests' shorter
+        # ctor signatures green; MainWindow injects the shared instance so
+        # manual sweeper plays from the Libraries panel and scheduler-
+        # dispatched sweeper slots both go through the same overlay path.
+        self._sweeper_engine = sweeper_engine
         # Jingle pad cache: list of dicts {id, label, file_path,
         # duration_ms, volume, behaviour} — populated from
         # db.get_jingle_pads_active() at construction, capped at 9 to
@@ -3783,16 +3789,35 @@ class Studio(QWidget):
         self._update_status_pills()
 
     def _compute_next_song(self, after_id: Optional[int]) -> Optional[dict]:
-        """PRESERVED verbatim from legacy."""
+        """Pull the next deck-bound item from the scheduler, falling back
+        to the static `_queue_songs` list when the scheduler is idle.
+
+        Sweeper handling: scheduler-picked sweeper items are NOT deck-
+        bound — they overlay the currently-playing song on a separate
+        BASS channel. When a sweeper item lands here, fire the overlay
+        immediately and re-call ``pick_next_item`` to find the actual
+        deck candidate. Bounded by ``_SWEEPER_SKIP_BUDGET`` so a malformed
+        clock that emits nothing but sweepers can't infinite-recurse —
+        we return None and let the caller idle out.
+        """
+        _SWEEPER_SKIP_BUDGET = 4    # max consecutive sweepers to absorb
         if self._scheduler is not None and self._scheduler.is_running():
-            try:
-                from datetime import datetime as _dt
-                item = self._scheduler.pick_next_item(_dt.now())
-            except Exception as exc:
-                log.warning(f"[studio] scheduler.pick_next_item: {exc}")
-                item = None
-            if item is not None:
-                item_type = item.get("item_type", "song") or "song"
+            from datetime import datetime as _dt
+            for _ in range(_SWEEPER_SKIP_BUDGET + 1):
+                try:
+                    item = self._scheduler.pick_next_item(_dt.now())
+                except Exception as exc:
+                    log.warning(f"[studio] scheduler.pick_next_item: {exc}")
+                    item = None
+                if item is None:
+                    break
+                item_type = (item.get("item_type") or "song").strip().lower()
+                if item_type == "sweeper":
+                    # Overlay on the currently-playing song without
+                    # touching the deck. Loop continues so the next
+                    # picker-cycle returns a deck candidate.
+                    self._dispatch_overlay_sweeper(item)
+                    continue
                 song = {
                     "id":          item.get("item_id"),
                     "title":       item.get("title"),
@@ -3808,6 +3833,9 @@ class Studio(QWidget):
                          f"{song['id']} clock_id={song['_clock_id']} "
                          f"slot_idx={song['_slot_idx']}")
                 return song
+            # Either no item or exhausted skip budget: fall through to
+            # static-queue fallback (matches the original idle-scheduler
+            # behaviour).
         if not self._queue_songs:
             return None
         if after_id is None:
@@ -3824,6 +3852,113 @@ class Studio(QWidget):
             return
         log.warning(f"[studio] engine error: {message}")
         self._on_engine_playback_ended(channel_id)
+
+    # ────────────────────────────────────────────────────────────────────
+    # Sweeper overlay dispatch (Phase 1 wiring — auto + manual share path)
+    # ────────────────────────────────────────────────────────────────────
+
+    def _dispatch_overlay_sweeper(self, item: dict) -> None:
+        """Layer a sweeper on top of the currently-playing deck song.
+
+        Called from two paths that share the same overlay semantics:
+          • _compute_next_song when scheduler returns item_type='sweeper'
+            (auto dispatch, slot-driven from a clock pattern)
+          • _on_play_sweeper_overlay (manual click from the Libraries panel)
+
+        No-ops gracefully when SweeperEngine is not wired (tests with the
+        shorter Studio ctor signature) or when nothing is on the deck —
+        a sweeper has nothing to overlay if the deck is silent. The slot
+        cursor still advances either way (caller already moved past).
+        """
+        if self._sweeper_engine is None:
+            log.warning("[studio] sweeper item arrived but no "
+                        "SweeperEngine wired — skipping overlay")
+            return
+        if self._playback_cid is None or not self._current_track:
+            log.info("[studio] sweeper skipped — deck idle "
+                     "(no song to overlay)")
+            return
+        try:
+            song_info = {
+                "duration_ms":  int(self._current_duration_ms or 0),
+                "intro_end_ms": int(
+                    self._current_track.get("intro_end_ms")
+                    or self._current_track.get("_intro_end_ms")
+                    or 0),
+            }
+            sweeper_info = {
+                "file_path":         item.get("file_path"),
+                "duration_ms":       int(item.get("duration_ms") or 0),
+                "position":          item.get("position")
+                                      or item.get("_position")
+                                      or "Bridge at End",
+                "sweeper_volume":    int(item.get("volume_sweeper_pct")
+                                          or item.get("sweeper_volume")
+                                          or 100),
+                "position_offset":   float(item.get("offset_seconds")
+                                            or item.get("position_offset")
+                                            or 0.0),
+            }
+            self._sweeper_engine.schedule_for_song(
+                song_info, sweeper_info, self._playback_cid)
+            log.info(
+                f"[studio] sweeper overlay scheduled: "
+                f"id={item.get('item_id')!r} "
+                f"file={(sweeper_info['file_path'] or '')[-32:]!r} "
+                f"position={sweeper_info['position']!r} "
+                f"vol={sweeper_info['sweeper_volume']}%")
+        except Exception as exc:
+            log.warning(f"[studio] sweeper overlay failed: {exc}",
+                        exc_info=True)
+            return
+        # Log to broadcast_log so History panel reflects the play.
+        # Manual sweepers carry no clock metadata; auto-dispatched ones
+        # have item['clock_id']/['slot_idx'] populated by the scheduler.
+        try:
+            self._db.log_play(
+                entry_type="sweeper",
+                song_id=None,                 # sweepers aren't songs
+                duration_ms=int(item.get("duration_ms") or 0),
+                deck="A",
+                was_manual=0 if item.get("clock_id") else 1,
+                clock_id=int(item["clock_id"]) if item.get("clock_id") else None,
+                slot_idx=int(item["slot_idx"]) if item.get("slot_idx")
+                                                   is not None else None,
+            )
+        except Exception as exc:
+            log.warning(f"[studio] sweeper log_play failed: {exc}")
+
+    def _on_play_sweeper_overlay(self, sweeper_id: int) -> None:
+        """Manual sweeper play hook — fired from the Libraries panel
+        when the operator clicks a sweeper while a song is on the deck.
+        Pulls the row from DB and routes through the same overlay path
+        the auto-dispatch uses."""
+        try:
+            row = self._db._conn().execute(
+                "SELECT * FROM sweepers WHERE id = ? AND is_enabled = 1",
+                [int(sweeper_id)]).fetchone()
+        except Exception as exc:
+            log.warning(f"[studio] manual sweeper lookup failed: {exc}")
+            return
+        if row is None:
+            log.warning(f"[studio] manual sweeper id={sweeper_id} "
+                        f"not found or disabled")
+            return
+        keys = row.keys()
+        item = {
+            "item_type":          "sweeper",
+            "item_id":            int(row["id"]),
+            "file_path":          row["file_path"]   if "file_path"   in keys else "",
+            "duration_ms":        row["duration_ms"] if "duration_ms" in keys else 0,
+            "position":           row["position"]    if "position"    in keys else None,
+            "volume_sweeper_pct": row["volume_sweeper_pct"]
+                                    if "volume_sweeper_pct" in keys else 100,
+            "offset_seconds":     row["offset_seconds"]
+                                    if "offset_seconds"     in keys else 0.0,
+            "clock_id":           None,   # manual play — no slot context
+            "slot_idx":           None,
+        }
+        self._dispatch_overlay_sweeper(item)
 
     # ────────────────────────────────────────────────────────────────────
     # PRESERVED: scheduler signal handlers (verbatim shape)
