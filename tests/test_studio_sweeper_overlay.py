@@ -241,9 +241,10 @@ def test_overlay_uses_current_track_duration_for_trigger(qapp, db):
 
 # ── Graceful no-ops ─────────────────────────────────────────────────────────
 
-def test_overlay_no_op_when_engine_missing(qapp, db):
+def test_sweeper_falls_through_to_deck_when_engine_missing(qapp, db):
     """Sweeper item arrives but sweeper_engine kwarg was None.
-    Should log + skip the sweeper, NOT raise."""
+    With the position-aware fallback, the sweeper loads to the deck
+    and plays sequentially (overlay can't fire without an engine)."""
     sched = _FakeScheduler()
     studio = _make_studio(db, scheduler=sched, sweeper_engine=None)
     sched.queue(_sweeper_item(11), _song_item(101))
@@ -251,14 +252,18 @@ def test_overlay_no_op_when_engine_missing(qapp, db):
     studio._current_track = {"id": 1, "duration_ms": 180000}
 
     nxt = studio._compute_next_song(after_id=None)
-    # Sweeper was absorbed without crashing; deck got the song.
-    assert nxt is not None and nxt["id"] == 101
+    # Sweeper falls through to deck-load — first picker output wins.
+    assert nxt is not None
+    assert nxt["id"] == 11 and nxt["_item_type"] == "sweeper"
     studio.deleteLater()
 
 
-def test_overlay_no_op_when_deck_idle(qapp, db):
-    """No deck song → nothing to overlay onto. Sweeper is absorbed
-    without invoking SweeperEngine."""
+def test_sweeper_falls_through_to_deck_when_deck_idle(qapp, db):
+    """No deck song → no overlay possible. Sweeper falls through to
+    deck-load and plays sequentially in queue order — this is the
+    bug RR_SW exposed: at song-end EOS the deck is idle, so the
+    sweeper's overlay can't fire and we MUST load it as a standalone
+    queue item or it'd be silently skipped."""
     sched = _FakeScheduler()
     swe = _FakeSweeperEngine()
     studio = _make_studio(db, scheduler=sched, sweeper_engine=swe)
@@ -268,7 +273,31 @@ def test_overlay_no_op_when_deck_idle(qapp, db):
     studio._current_duration_ms = 0
 
     nxt = studio._compute_next_song(after_id=None)
-    assert nxt is not None and nxt["id"] == 101
+    assert nxt is not None
+    assert nxt["id"] == 11 and nxt["_item_type"] == "sweeper"
+    # Overlay engine NOT invoked — sweeper loaded to deck instead.
+    assert len(swe.scheduled) == 0
+    studio.deleteLater()
+
+
+def test_independent_sweeper_always_falls_through_to_deck(qapp, db):
+    """position='Independent' is the explicit standalone marker —
+    always load to deck even if the deck has a song. Operator
+    explicitly told the scheduler this sweeper is its own queue
+    item, not an overlay."""
+    sched = _FakeScheduler()
+    swe = _FakeSweeperEngine()
+    studio = _make_studio(db, scheduler=sched, sweeper_engine=swe)
+    sched.queue(_sweeper_item(11, position="Independent"))
+    studio._playback_cid = 999
+    studio._current_track = {"id": 1, "duration_ms": 180000}
+    studio._current_duration_ms = 180000
+
+    nxt = studio._compute_next_song(after_id=None)
+    assert nxt is not None
+    assert nxt["_item_type"] == "sweeper"
+    assert nxt["id"] == 11
+    # Even with deck song available, Independent never overlays.
     assert len(swe.scheduled) == 0
     studio.deleteLater()
 

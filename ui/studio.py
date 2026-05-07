@@ -3817,13 +3817,27 @@ class Studio(QWidget):
         """Pull the next deck-bound item from the scheduler, falling back
         to the static `_queue_songs` list when the scheduler is idle.
 
-        Sweeper handling: scheduler-picked sweeper items are NOT deck-
-        bound — they overlay the currently-playing song on a separate
-        BASS channel. When a sweeper item lands here, fire the overlay
-        immediately and re-call ``pick_next_item`` to find the actual
-        deck candidate. Bounded by ``_SWEEPER_SKIP_BUDGET`` so a malformed
-        clock that emits nothing but sweepers can't infinite-recurse —
-        we return None and let the caller idle out.
+        Sweeper handling — position-aware with sequential fallback:
+          • Overlay-style positions (Start of Song / Before Intro /
+            Before End / Bridge at End / Custom) attempt to layer on
+            the currently-playing deck song. If the deck has a song,
+            fire the overlay and skip-past so the next picker cycle
+            returns a true deck candidate. Bounded by
+            ``_SWEEPER_SKIP_BUDGET`` so a malformed clock can't
+            infinite-recurse.
+          • If the deck is idle when the sweeper lands (the typical
+            case at song-end EOS), the sweeper falls through to the
+            deck-load path and plays sequentially in queue order —
+            exactly as the operator scheduled it. This is the case
+            that RR_SW was hitting before the fix.
+          • Position == "Independent" always falls through to deck-
+            load (it's an explicit "play standalone" marker).
+
+        Future enhancement: a scheduler peek-ahead at song-START would
+        let overlay-positioned sweepers fire DURING the previous song
+        (the original Jazler semantic). That's deferred — sequential
+        play is what matches the operator's mental model today and
+        what the scheduler API supports without a refactor.
         """
         _SWEEPER_SKIP_BUDGET = 4    # max consecutive sweepers to absorb
         if self._scheduler is not None and self._scheduler.is_running():
@@ -3838,11 +3852,30 @@ class Studio(QWidget):
                     break
                 item_type = (item.get("item_type") or "song").strip().lower()
                 if item_type == "sweeper":
-                    # Overlay on the currently-playing song without
-                    # touching the deck. Loop continues so the next
-                    # picker-cycle returns a deck candidate.
-                    self._dispatch_overlay_sweeper(item)
-                    continue
+                    position = (item.get("position") or "").strip()
+                    overlay_positions = ("Start of Song", "Before Intro",
+                                          "Before End", "Bridge at End",
+                                          "Custom Position", "Custom")
+                    can_overlay = (
+                        self._sweeper_engine is not None
+                        and self._playback_cid is not None
+                        and self._current_track
+                        and position in overlay_positions
+                    )
+                    if can_overlay:
+                        # Layer on currently-playing song. Loop continues
+                        # so the next picker cycle returns a deck item.
+                        self._dispatch_overlay_sweeper(item)
+                        continue
+                    # Sequential fallback — load this sweeper into the
+                    # deck just like a song so it plays in its assigned
+                    # slot order. Falls through to the song-dict build
+                    # below (item_type stays 'sweeper' so log_play +
+                    # tags route correctly).
+                    log.info(
+                        f"[studio] sweeper id={item.get('item_id')!r} "
+                        f"position={position!r} → deck-load "
+                        f"(deck idle / Independent / no engine)")
                 song = {
                     "id":          item.get("item_id"),
                     "title":       item.get("title"),
