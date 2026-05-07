@@ -3273,6 +3273,13 @@ class Studio(QWidget):
         # spaced replays.
         self._last_song_log_id: Optional[int] = None
         self._last_song_log_time = None  # datetime, populated on first log
+        # Active-clock indicator dedupe — Studio owns its own "what's
+        # currently displayed" state so the indicator can refresh from
+        # multiple paths (scheduler signal when AUTO is on, Studio's
+        # 1Hz tick always, showEvent on navigate-back, AUTO toggle)
+        # without flickering or double-rendering. -2 sentinel means
+        # "never set" so the first resolved state always emits.
+        self._displayed_active_clock_id: int = -2
         self._queue_songs: list[dict] = self._load_queue_from_db()
 
         # Build widgets — Steps 1+2 done; rest are placeholders
@@ -3933,18 +3940,10 @@ class Studio(QWidget):
 
     def _on_active_clock_changed(self, clock_id: int, name: str) -> None:
         """Scheduler resolved a different clock for the current cell —
-        push the new name to the header. clock_id == -1 means "no clock
-        assigned" → empty string makes the header render its location
-        fallback."""
-        if not hasattr(self, "_header") or self._header is None:
-            return
-        if clock_id < 0:
-            self._header.set_active_clock("")
-        else:
-            self._header.set_active_clock(name or "")
-        log.info(
-            f"[studio] active clock → "
-            f"{'(none)' if clock_id < 0 else f'{name!r} (id={clock_id})'}")
+        route through the same dedupe state Studio's own 1Hz tick
+        uses. The scheduler's signal-driven path still works when AUTO
+        is on; Studio's own tick covers the AUTO-off case."""
+        self._set_displayed_active_clock(int(clock_id), name or "")
 
     def _seed_active_clock_indicator(self) -> None:
         """Pull whatever active clock the scheduler has already cached
@@ -4171,6 +4170,12 @@ class Studio(QWidget):
         except Exception as exc:
             log.warning(f"[studio] AUTO pill toggle failed: {exc}")
         self._update_status_pills()
+        # Force immediate refresh so the operator sees the
+        # newly-assigned clock + queue without waiting for the next
+        # scheduler tick. Works in BOTH directions of the toggle —
+        # the operator's "I just assigned a clock, toggle AUTO to
+        # see it" workflow lands within one click.
+        self._force_studio_refresh()
 
     def _on_restart_clicked(self) -> None:
         if self._playback_cid is None or self._engine is None:
@@ -4625,6 +4630,78 @@ class Studio(QWidget):
         # set_signal/set_auto_mode/set_on_air are all change-gated so
         # repaint happens only when the state actually flips — cheap.
         self._update_status_pills()
+        # Active-clock indicator (independent of scheduler running):
+        # Studio's own 1Hz check ensures the header reflects
+        # whichever clock is currently assigned to the (weekday, hour)
+        # cell, even when AUTO is OFF. The scheduler-driven check
+        # (which fires `active_clock_changed` when running) still
+        # works in parallel — both paths converge through the same
+        # dedupe state so no double-render.
+        self._studio_check_active_clock()
+
+    def _studio_check_active_clock(self) -> None:
+        """Lightweight active-clock resolution from Studio's own tick.
+        Direct DB query (no scheduler dependency), deduped against the
+        last-displayed value so the header repaints only on transition.
+        Wrapped in try/except — DB blip on this path must never freeze
+        Studio's 1Hz tick (broadcast safety, same rule as the scheduler-
+        side check in core/scheduler/engine.py)."""
+        if self._db is None:
+            return
+        try:
+            now = datetime.now()
+            row = self._db.get_active_clock(int(now.weekday()),
+                                            int(now.hour))
+            if row is None:
+                new_id = -1
+                new_name = ""
+            else:
+                try:
+                    new_id = int(row["id"])
+                    new_name = str(row["name"] or "")
+                except (KeyError, IndexError, TypeError, ValueError):
+                    new_id = -1
+                    new_name = ""
+        except Exception as exc:
+            log.debug(f"[studio] active-clock check failed: {exc}")
+            return
+        self._set_displayed_active_clock(new_id, new_name)
+
+    def _set_displayed_active_clock(self, clock_id: int, name: str) -> None:
+        """Single source of truth for the header's active-clock text.
+        Called from both Studio's 1Hz tick and the scheduler's
+        `active_clock_changed` signal — dedupe state ensures the header
+        repaints only when the resolved clock actually changes."""
+        if clock_id == self._displayed_active_clock_id:
+            return
+        self._displayed_active_clock_id = int(clock_id)
+        if not hasattr(self, "_header") or self._header is None:
+            return
+        if clock_id < 0:
+            self._header.set_active_clock("")
+        else:
+            self._header.set_active_clock(name or "")
+        log.info(
+            f"[studio] header active clock → "
+            f"{'(none)' if clock_id < 0 else f'{name!r} (id={clock_id})'}")
+
+    def _force_studio_refresh(self) -> None:
+        """Heavy refresh used on navigate-back (showEvent) and AUTO
+        toggle clicks. Bumps the active-clock dedupe so the next check
+        re-emits, then re-runs the active-clock + Up Coming queue
+        resolutions immediately. Lighter than a full re-construction
+        — operator gets fresh data inside one tick of the click."""
+        # Force the next active-clock check to fire even if the cell
+        # didn't change — useful for "I just assigned a clock and
+        # navigated back" workflow where the operator expects an
+        # explicit refresh action.
+        self._displayed_active_clock_id = -2
+        self._studio_check_active_clock()
+        try:
+            self._load_upcoming_queue()
+        except Exception as exc:
+            log.debug(f"[studio] force refresh: upcoming reload failed: {exc}")
+        self._refresh_history()
 
     # ────────────────────────────────────────────────────────────────────
     # Visual polish — root paintEvent (atmospheric background)
@@ -4652,6 +4729,21 @@ class Studio(QWidget):
     # ────────────────────────────────────────────────────────────────────
     # Lifecycle
     # ────────────────────────────────────────────────────────────────────
+
+    def showEvent(self, event):
+        """Triggered every time Studio becomes the active screen in the
+        QStackedWidget (navigate-back from Auto Schedule, Hub, etc.).
+        Forces a fresh resolution of the active clock + Up Coming queue
+        so the operator sees up-to-date data without having to toggle
+        AUTO. Skips the very first show during construction — the
+        ctor already seeded everything."""
+        super().showEvent(event)
+        # `_displayed_active_clock_id` defaults to -2 ("never set"),
+        # so the first showEvent (during ctor) will run the seed
+        # logic, and subsequent showEvents will diff against the last
+        # displayed value and force-refresh if it changed.
+        if hasattr(self, "_db"):
+            self._force_studio_refresh()
 
     def hideEvent(self, event):
         super().hideEvent(event)
