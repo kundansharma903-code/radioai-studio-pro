@@ -1561,7 +1561,10 @@ _LIB_TYPE_ICONS = [
     ("Jingles",   "🔔", AMBER_LIGHT,  False),
     ("Spots",     "$",  GREEN,        False),
     ("Voice",     "🎤", PINK_LIGHT,   False),
-    ("Folders",   "📁", PURPLE_LIGHT, False),
+    # "Sweepers" replaces the placeholder "Folders" tile so the operator
+    # can browse + manually fire sweeper overlays on the deck. Glyph
+    # matches Clock Editor's sweeper symbol (★) for cross-screen recall.
+    ("Sweepers",  "★",  PURPLE_LIGHT, False),
     ("Favorites", "♥",  RED,          False),
 ]
 
@@ -1912,12 +1915,21 @@ class _LibrariesPanel(QWidget):
     """720 × 820 — full Libraries panel."""
 
     song_double_clicked = pyqtSignal(int)    # row index in self._rows
+    # Phase 2 of sweeper-ecosystem wiring: the type-tile click now also
+    # tells the Studio host to swap the table contents (songs ↔ sweepers
+    # ↔ jingles ↔ etc.). Studio listens, fetches the right list from
+    # DB, and calls set_songs / set_sweepers as appropriate.
+    library_type_changed = pyqtSignal(str)   # tile name (e.g. "Sweepers")
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedSize(720, 820)
         self._rows: list[_LibSongRow] = []
         self._total_song_count = 0
+        # Currently-active type tile. Used by the Studio host to know
+        # how to interpret a row double-click. Default matches the
+        # initial active=True entry in _LIB_TYPE_ICONS ("Songs").
+        self._active_type: str = "Songs"
 
         self._font_h        = inter(13, QFont.Weight.Black, letter_spacing=-0.1)
         self._font_ideas    = inter(9, QFont.Weight.Bold, letter_spacing=0.6)
@@ -2003,8 +2015,15 @@ class _LibrariesPanel(QWidget):
         self._cat_dropdown.set_data("All Songs", self._total_song_count)
 
     def _on_type_clicked(self, name: str) -> None:
+        if name == self._active_type:
+            return
         for k, tile in self._type_tiles.items():
             tile.set_active(k == name)
+        self._active_type = name
+        self.library_type_changed.emit(name)
+
+    def active_library_type(self) -> str:
+        return self._active_type
 
     def _on_row_selected(self, idx: int) -> None:
         # Enable INSERT/REPLACE/DELETE
@@ -3416,6 +3435,12 @@ class Studio(QWidget):
         self._libraries.move(412, BODY_Y)
         self._libraries.song_double_clicked.connect(
             self._on_library_song_double_clicked)
+        # Phase 2 sweeper wiring: type-tile click swaps the table source
+        # between songs / sweepers / etc. Studio caches the resolved row
+        # list so row-double-click can dispatch correctly.
+        self._library_sweepers: list[dict] = []
+        self._libraries.library_type_changed.connect(
+            self._on_library_type_changed)
 
         self._instant_jingles = _InstantJinglesPanel(self)
         self._instant_jingles.move(1148, BODY_Y)
@@ -4760,10 +4785,70 @@ class Studio(QWidget):
             self._jingle_demo_timer.stop()
 
     def _on_library_song_double_clicked(self, idx: int) -> None:
-        """Library row double-click → if the row maps to a real queue
-        song (same index), play it."""
+        """Library row double-click. Dispatch depends on the currently-
+        active type tile:
+          • "Songs" / "Tracks" / "Favorites" → load to deck (legacy path).
+          • "Sweepers" → fire the row as an overlay on the current
+                         deck song via the SweeperEngine.
+          • Other types (Jingles / Spots / Voice) — reserved for future
+                         wiring, no-op for now (table is empty so
+                         double-click can't reach this branch anyway).
+        """
+        active = self._libraries.active_library_type() \
+            if hasattr(self, "_libraries") else "Songs"
+        if active == "Sweepers":
+            if 0 <= idx < len(self._library_sweepers):
+                sw = self._library_sweepers[idx]
+                self._on_play_sweeper_overlay(int(sw.get("id") or 0))
+            return
+        # Songs (and the placeholder types) reuse the existing deck path.
         if 0 <= idx < len(self._queue_songs):
             self._on_queue_song_play(self._queue_songs[idx])
+
+    def _on_library_type_changed(self, name: str) -> None:
+        """A type tile in the Libraries panel was clicked. Swap the
+        table source to match. Songs use _queue_songs (same as before);
+        Sweepers query the live `sweepers` table; the remaining tiles
+        are placeholders for now and clear the table.
+        """
+        if name == "Songs":
+            self._library_sweepers = []
+            self._libraries.set_songs(
+                self._queue_songs, len(self._queue_songs))
+            return
+        if name == "Sweepers":
+            try:
+                rows = list(self._db.get_sweepers_active())
+            except Exception as exc:
+                log.warning(f"[studio] sweepers fetch failed: {exc}")
+                rows = []
+            cache: list[dict] = []
+            display: list[dict] = []
+            for r in rows:
+                keys = r.keys()
+                cache.append({
+                    "id":          int(r["id"]),
+                    "name":        r["name"]      if "name"      in keys else "",
+                    "category":    r["category"]  if "category"  in keys else "",
+                    "position":    r["position"]  if "position"  in keys else "",
+                    "duration_ms": int(r["duration_ms"] or 0)
+                                    if "duration_ms" in keys else 0,
+                })
+                # Render in the existing songs-table widget shape
+                # (it expects "artist" + "title"). Showing position
+                # as the artist-line keeps the table glanceable.
+                display.append({
+                    "title":  r["name"]     if "name"     in keys else "—",
+                    "artist": (r["position"] if "position" in keys else "—")
+                              or "—",
+                })
+            self._library_sweepers = cache
+            self._libraries.set_songs(display, len(display))
+            return
+        # Placeholder tiles: clear the table so the operator sees the
+        # empty list rather than stale song data.
+        self._library_sweepers = []
+        self._libraries.set_songs([], 0)
 
     # ────────────────────────────────────────────────────────────────────
     # 1Hz tick — header clock
