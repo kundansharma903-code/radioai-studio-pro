@@ -859,6 +859,127 @@ class Database:
             "SELECT * FROM sweepers WHERE is_enabled = 1"
         ).fetchall()
 
+    def _ensure_sweepers_columns(self) -> None:
+        """Add UI-specific sweeper columns if missing + backfill auto_code.
+        Idempotent — safe to call on every dialog construction.
+
+        Mirrors _ensure_campaigns_columns. Columns added here surface in the
+        Sweeper Editor dialog (Figma 108:2). The base columns (name, category,
+        file_path, duration_ms, position, properties, playlister_code,
+        is_enabled) live in database/schema.sql and are not touched."""
+        conn = self._conn()
+        cols = {r[1] for r in conn.execute(
+            "PRAGMA table_info(sweepers)").fetchall()}
+        adds = [
+            ("auto_code",          "TEXT"),
+            ("author",             "TEXT"),
+            ("entry_date",         "TEXT"),
+            ("comments",           "TEXT"),
+            ("bpm",                "TEXT"),
+            ("era_year",           "TEXT"),
+            ("volume_song_pct",    "INTEGER DEFAULT 60"),
+            ("volume_sweeper_pct", "INTEGER DEFAULT 100"),
+            ("offset_seconds",     "REAL DEFAULT 0.0"),
+            ("fade_seconds",       "REAL DEFAULT 0.5"),
+            ("clock_id",           "INTEGER"),
+            ("min_gap_minutes",    "INTEGER DEFAULT 15"),
+            ("max_per_hour",       "INTEGER DEFAULT 4"),
+        ]
+        for col, decl in adds:
+            if col not in cols:
+                conn.execute(f"ALTER TABLE sweepers ADD COLUMN {col} {decl}")
+        # Backfill auto_code for rows that don't have one yet. SWP-NNNN
+        # sequence starts at 0001 and counts upward by id-order so the legacy
+        # KISS Energy / Drop the Beat / Coming Up Next seeds get stable codes.
+        nulls = conn.execute(
+            "SELECT id FROM sweepers "
+            "WHERE auto_code IS NULL OR auto_code = '' "
+            "ORDER BY id"
+        ).fetchall()
+        if nulls:
+            mrow = conn.execute(
+                "SELECT MAX(CAST(SUBSTR(auto_code, 5) AS INTEGER)) AS m "
+                "FROM sweepers "
+                "WHERE auto_code IS NOT NULL AND auto_code LIKE 'SWP-%'"
+            ).fetchone()
+            start = (int(mrow["m"]) if mrow and mrow["m"] else 0) + 1
+            for i, r in enumerate(nulls):
+                conn.execute(
+                    "UPDATE sweepers SET auto_code = ? WHERE id = ?",
+                    [f"SWP-{start + i:04d}", r["id"]],
+                )
+        conn.commit()
+
+    def next_sweeper_auto_code(self) -> str:
+        """Compute the next SWP-NNNN code without inserting anything.
+        Used to prefill the AUTO CODE pill when the editor dialog opens
+        in NEW mode."""
+        self._ensure_sweepers_columns()
+        row = self._conn().execute(
+            "SELECT MAX(CAST(SUBSTR(auto_code, 5) AS INTEGER)) AS m "
+            "FROM sweepers "
+            "WHERE auto_code IS NOT NULL AND auto_code LIKE 'SWP-%'"
+        ).fetchone()
+        n = (int(row["m"]) if row and row["m"] else 0) + 1
+        return f"SWP-{n:04d}"
+
+    # Field set the editor dialog writes — kept here so tests, the dialog,
+    # and any future bulk-importer agree. `id` is excluded; `auto_code` is
+    # generated server-side on add.
+    SWEEPER_EDITABLE_FIELDS = (
+        "name", "category", "file_path", "duration_ms", "position",
+        "properties", "playlister_code", "is_enabled",
+        "author", "entry_date", "comments", "bpm", "era_year",
+        "volume_song_pct", "volume_sweeper_pct",
+        "offset_seconds", "fade_seconds",
+        "clock_id", "min_gap_minutes", "max_per_hour",
+    )
+
+    def add_sweeper(self, data: dict) -> int:
+        """Insert a new sweeper. Generates auto_code (SWP-NNNN) so callers
+        don't have to. Returns the new id.
+
+        `data` may include any of the editable fields (see
+        SWEEPER_EDITABLE_FIELDS). Missing keys take SQL defaults."""
+        self._ensure_sweepers_columns()
+        conn = self._conn()
+        cols: list[str] = ["auto_code"]
+        vals: list = [self.next_sweeper_auto_code()]
+        for k in self.SWEEPER_EDITABLE_FIELDS:
+            if k in data and data[k] is not None:
+                cols.append(k)
+                v = data[k]
+                if k == "is_enabled":
+                    v = 1 if v else 0
+                vals.append(v)
+        placeholders = ", ".join("?" for _ in vals)
+        cur = conn.execute(
+            f"INSERT INTO sweepers ({', '.join(cols)}) VALUES ({placeholders})",
+            vals)
+        conn.commit()
+        return int(cur.lastrowid)
+
+    def update_sweeper(self, sweeper_id: int, data: dict) -> None:
+        """Update a sweeper row. Only keys present in `data` are touched;
+        other columns (including auto_code) survive untouched."""
+        self._ensure_sweepers_columns()
+        sets: list[str] = []
+        vals: list = []
+        for k in self.SWEEPER_EDITABLE_FIELDS:
+            if k in data:
+                sets.append(f"{k} = ?")
+                v = data[k]
+                if k == "is_enabled":
+                    v = 1 if v else 0
+                vals.append(v)
+        if not sets:
+            return
+        vals.append(int(sweeper_id))
+        conn = self._conn()
+        conn.execute(
+            f"UPDATE sweepers SET {', '.join(sets)} WHERE id = ?", vals)
+        conn.commit()
+
     def get_station_ids_active(self) -> List[sqlite3.Row]:
         return self._conn().execute(
             "SELECT * FROM jingles "

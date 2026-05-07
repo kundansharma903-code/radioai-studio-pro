@@ -1279,10 +1279,8 @@ class SweepersLibrary(QWidget):
         self.sweeper_selected.emit(int(sweeper_id))
 
     def _on_row_double_clicked(self, sweeper_id: int):
-        # Edit-via-double-click will route to 108:2 dialog when it lands.
-        log.info(f"[sweepers] double-click on id={sweeper_id} "
-                 f"— editor dialog (Frame 108:2) not yet wired")
-        self._on_add_new()   # share the placeholder toast for now
+        # Open the editor dialog in EDIT mode for this row.
+        self._open_editor_dialog(sweeper_id=int(sweeper_id))
 
     def _refresh_details(self):
         cur = next((s for s in self._sweepers
@@ -1334,12 +1332,24 @@ class SweepersLibrary(QWidget):
         self._refresh_table()
 
     def _on_add_new(self):
-        log.info("[sweepers] + Add New (Frame 108:2 dialog deferred)")
+        log.info("[sweepers] + Add New (open editor dialog, Figma 108:2)")
         self.add_sweeper_clicked.emit()
-        QMessageBox.information(
-            self, "Coming soon",
-            "The Sweeper editor dialog is being built — track via Figma "
-            "Frame 108:2 in the next session.")
+        self._open_editor_dialog(sweeper_id=None)
+
+    def _open_editor_dialog(self, sweeper_id: Optional[int] = None):
+        """Open the SweeperEditorDialog. Lazy-imported so the screen
+        constructs without dragging the dialog widgets into memory until
+        the operator actually opens one."""
+        from ui.dialogs.sweeper_editor_dialog import SweeperEditorDialog
+        dlg = SweeperEditorDialog(self._db, sweeper_id=sweeper_id, parent=self)
+        dlg.sweeper_saved.connect(self._on_sweeper_saved)
+        dlg.exec()
+
+    def _on_sweeper_saved(self, sweeper_id: int):
+        """Refresh table + select the saved row."""
+        self._selected_id = int(sweeper_id)
+        self._load_sweepers()
+        self._on_row_clicked(int(sweeper_id))
 
     def _on_mass_import(self):
         log.info("[sweepers] Mass Import — TODO")
