@@ -1626,6 +1626,39 @@ class SpotsCommercials(QWidget):
             )
             de.setFixedHeight(36)
             de.setFont(inter(11, QFont.Weight.Bold))
+            # Style the popup calendar (QDateEdit's setCalendarPopup
+            # creates a QCalendarWidget under the global app stylesheet
+            # which renders the date numbers near-black on near-black —
+            # invisible on the operator's dark theme). Apply our own
+            # palette directly so dates read clearly against a panel-
+            # dark background.
+            cw = de.calendarWidget()
+            if cw is not None:
+                cw.setStyleSheet(
+                    f"QCalendarWidget QWidget {{ "
+                    f"  background: {BG_PANEL}; color: {TEXT_PRI}; }}"
+                    f"QCalendarWidget QToolButton {{ "
+                    f"  background: {BG_CARD}; color: {TEXT_PRI}; "
+                    f"  border: none; padding: 6px 10px; "
+                    f"  border-radius: 4px; }}"
+                    f"QCalendarWidget QToolButton:hover {{ "
+                    f"  background: {rgba(CYAN, 0.18)}; "
+                    f"  color: {CYAN_LIGHT}; }}"
+                    f"QCalendarWidget QMenu {{ "
+                    f"  background: {BG_CARD}; color: {TEXT_PRI}; "
+                    f"  border: 1px solid {rgba('#ffffff', 0.10)}; }}"
+                    f"QCalendarWidget QSpinBox {{ "
+                    f"  background: {BG_CARD}; color: {TEXT_PRI}; "
+                    f"  border: 1px solid {rgba('#ffffff', 0.10)}; "
+                    f"  padding: 2px 6px; }}"
+                    f"QCalendarWidget QAbstractItemView:enabled {{ "
+                    f"  background: {BG_PANEL}; color: {TEXT_PRI}; "
+                    f"  selection-background-color: {rgba(CYAN, 0.35)}; "
+                    f"  selection-color: {TEXT_PRI}; "
+                    f"  outline: none; }}"
+                    f"QCalendarWidget QAbstractItemView:disabled {{ "
+                    f"  color: {TEXT_DIM}; }}"
+                )
             fl.addWidget(de)
             return f, de
 
@@ -1716,7 +1749,22 @@ class SpotsCommercials(QWidget):
                 f"({mode_val})")
             path_lbl.setText(f"Saved to: {out}")
             log.info(f"[reports] opening {out}")
-            QDesktopServices.openUrl(QUrl.fromLocalFile(str(out)))
+            # Defensive open: file is already on disk + flushed by the
+            # generator, but Edge / Chrome occasionally racing
+            # file:// URLs return ERR_FILE_NOT_FOUND. os.startfile is
+            # the Windows-native shell-execute path — never races,
+            # delegates to whatever default app the operator has set
+            # for .pdf. Falls back to QDesktopServices on non-Windows.
+            import sys as _sys, os as _os
+            opened = False
+            try:
+                if _sys.platform == "win32" and hasattr(_os, "startfile"):
+                    _os.startfile(str(out))   # type: ignore[attr-defined]
+                    opened = True
+            except Exception as exc:
+                log.warning(f"[reports] os.startfile failed: {exc}")
+            if not opened:
+                QDesktopServices.openUrl(QUrl.fromLocalFile(str(out)))
         gen.clicked.connect(_on_generate)
         v.addWidget(gen)
 

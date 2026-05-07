@@ -632,6 +632,15 @@ def generate_spot_play_report(
                           station_display, generated_at)
     finally:
         p.end()
+    # Force the QPdfWriter to release the file handle BEFORE we
+    # return — otherwise Windows may report "file not found" when the
+    # default PDF viewer launches against the path we just wrote
+    # (the OS sees a write-locked handle still attached, the viewer
+    # gets ERR_FILE_NOT_FOUND or a half-flushed file). Explicit del +
+    # gc nudge is the cleanest cross-PyQt-version fix.
+    del writer
+    import gc
+    gc.collect()
 
     log.info(
         f"[spot_play_report] generated id={campaign_id} mode={mode} "
