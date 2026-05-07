@@ -3240,6 +3240,13 @@ class Studio(QWidget):
         # both this flag AND scheduler.start/stop together so the two
         # stay in lockstep.
         self._auto_advance_enabled: bool = True
+        # Auto-start scheduler on Studio showEvent when a clock is
+        # assigned to the current (weekday, hour) cell. Once the operator
+        # explicitly stops via the AUTO pill, this flag latches True and
+        # blocks subsequent showEvent auto-starts within the same app
+        # session — respecting their Live-Assist intent. App restart
+        # resets the flag (False) so the next session re-arms auto-start.
+        self._operator_stopped_auto: bool = False
         # Visual polish 1: cached background gradients drawn from
         # paintEvent. Linear base (top→bottom) + 3 large radial glow
         # ellipses (purple TR, cyan BL, green mid) that give the
@@ -4441,6 +4448,10 @@ class Studio(QWidget):
             if running:
                 self._scheduler.stop()
                 self._auto_advance_enabled = False
+                # Latch the auto-start off so showEvent won't fight the
+                # operator by re-arming on the next screen entry. Reset
+                # only by an explicit AUTO-on click (or app restart).
+                self._operator_stopped_auto = True
                 # Drop any pending spot — operator clicked AUTO off,
                 # they're taking control. A scheduled-but-deferred spot
                 # firing during Live-Assist would surprise the operator.
@@ -4453,6 +4464,9 @@ class Studio(QWidget):
             else:
                 self._scheduler.start()
                 self._auto_advance_enabled = True
+                # Operator re-armed AUTO explicitly — clear the latch so
+                # showEvent auto-start can engage again next session.
+                self._operator_stopped_auto = False
                 log.info("[studio] AUTO pill → scheduler.start() + auto-advance")
         except Exception as exc:
             log.warning(f"[studio] AUTO pill toggle failed: {exc}")
@@ -5097,7 +5111,13 @@ class Studio(QWidget):
         Forces a fresh resolution of the active clock + Up Coming queue
         so the operator sees up-to-date data without having to toggle
         AUTO. Skips the very first show during construction — the
-        ctor already seeded everything."""
+        ctor already seeded everything.
+
+        Also auto-starts the scheduler when a clock is assigned to the
+        current (weekday, hour) cell so Studio shows live queue data
+        without the operator having to click AUTO. Latched off if the
+        operator explicitly stops via the AUTO pill in the same app
+        session (Live-Assist intent)."""
         super().showEvent(event)
         # `_displayed_active_clock_id` defaults to -2 ("never set"),
         # so the first showEvent (during ctor) will run the seed
@@ -5105,6 +5125,57 @@ class Studio(QWidget):
         # displayed value and force-refresh if it changed.
         if hasattr(self, "_db"):
             self._force_studio_refresh()
+            self._maybe_auto_start_scheduler()
+
+    def _maybe_auto_start_scheduler(self) -> None:
+        """If a clock is assigned to the current (weekday, hour) cell
+        and the scheduler isn't already running and the operator hasn't
+        latched the auto-start off via an explicit AUTO-pill stop,
+        start the scheduler so Studio's queue + NEXT chip show real
+        data immediately on screen entry."""
+        if self._scheduler is None:
+            return
+        if self._operator_stopped_auto:
+            log.debug("[studio] auto-start skipped — operator latched off")
+            return
+        try:
+            if self._scheduler.is_running():
+                return
+        except Exception:
+            return
+        try:
+            now = datetime.now()
+            row = self._db.get_active_clock(int(now.weekday()),
+                                             int(now.hour))
+        except Exception as exc:
+            log.debug(f"[studio] auto-start active-clock lookup failed: "
+                      f"{exc}")
+            return
+        if row is None:
+            log.info("[studio] auto-start skipped — no clock assigned to "
+                     "the current hour")
+            return
+        try:
+            self._scheduler.start()
+        except Exception as exc:
+            log.warning(f"[studio] auto-start failed: {exc}")
+            return
+        self._auto_advance_enabled = True
+        try:
+            cid = int(row["id"]) if "id" in row.keys() else "?"
+            cname = row["name"] if "name" in row.keys() else ""
+        except Exception:
+            cid, cname = "?", ""
+        log.info(
+            f"[studio] auto-started scheduler on showEvent — "
+            f"clock id={cid} name={cname!r} (weekday={now.weekday()}, "
+            f"hour={now.hour})")
+        # Force pill + queue refresh so the operator sees the AUTO
+        # state flip immediately — same hooks the AUTO pill click
+        # uses below.
+        self._update_status_pills()
+        self._load_upcoming_queue()
+        self._refresh_upcoming_panel()
 
     def hideEvent(self, event):
         super().hideEvent(event)
