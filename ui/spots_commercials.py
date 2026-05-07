@@ -1748,23 +1748,36 @@ class SpotsCommercials(QWidget):
                 f"Last generated: {_dt.now().strftime('%d %b %Y %H:%M')}  "
                 f"({mode_val})")
             path_lbl.setText(f"Saved to: {out}")
-            log.info(f"[reports] opening {out}")
-            # Defensive open: file is already on disk + flushed by the
-            # generator, but Edge / Chrome occasionally racing
-            # file:// URLs return ERR_FILE_NOT_FOUND. os.startfile is
-            # the Windows-native shell-execute path — never races,
-            # delegates to whatever default app the operator has set
-            # for .pdf. Falls back to QDesktopServices on non-Windows.
+            # Verify the file is actually present + non-empty before
+            # asking the OS to open it. Belt-and-suspenders against
+            # any future writer-flush bug that lets us return early.
             import sys as _sys, os as _os
+            try:
+                size = out.stat().st_size
+            except OSError:
+                size = 0
+            log.info(f"[reports] generated {out} ({size} bytes)")
+            if size == 0:
+                QMessageBox.warning(
+                    self, "Report empty",
+                    f"PDF was created but is 0 bytes:\n\n{out}\n\n"
+                    f"Check the log for details.")
+                return
+            # Open with the OS default PDF handler. os.startfile is the
+            # Windows-native shell-execute path — never races freshly-
+            # written files. Falls back to QDesktopServices elsewhere.
             opened = False
             try:
                 if _sys.platform == "win32" and hasattr(_os, "startfile"):
                     _os.startfile(str(out))   # type: ignore[attr-defined]
                     opened = True
+                    log.info(f"[reports] opened via os.startfile")
             except Exception as exc:
                 log.warning(f"[reports] os.startfile failed: {exc}")
             if not opened:
-                QDesktopServices.openUrl(QUrl.fromLocalFile(str(out)))
+                ok = QDesktopServices.openUrl(QUrl.fromLocalFile(str(out)))
+                log.info(
+                    f"[reports] QDesktopServices.openUrl returned {ok}")
         gen.clicked.connect(_on_generate)
         v.addWidget(gen)
 

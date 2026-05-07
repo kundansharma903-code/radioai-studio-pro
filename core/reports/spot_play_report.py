@@ -100,10 +100,42 @@ def _ensure_fonts_loaded() -> None:
 REPORT_MODE_ACTUAL = "actual"
 REPORT_MODE_SCHEDULED = "scheduled"
 
-DEFAULT_REPORT_DIR = Path(
-    os.environ.get("LOCALAPPDATA",
-                   os.path.expanduser("~/AppData/Local"))
-) / "RadioAI" / "reports"
+
+def _resolve_default_dir() -> Path:
+    """Default landing folder for generated PDFs. Operator preference
+    (per the 2026-05-07 feedback): drop the report straight into the
+    OS's Downloads folder. Two upsides over the previous
+    %LOCALAPPDATA% location:
+      • Edge / Chrome can read files in Downloads without sandbox
+        complaints. AppData paths sometimes triggered ERR_FILE_NOT_FOUND
+        when launched via file:// URLs.
+      • Operators expect downloaded reports to be in Downloads — they
+        can drag-drop from File Explorer, attach to email, etc., the
+        way every other browser-saved PDF behaves.
+
+    Falls back to ~/Documents/RadioAI when the user-profile env var
+    is missing, and finally to %LOCALAPPDATA%/RadioAI/reports as a
+    last resort (matches the legacy save location)."""
+    # Windows: %USERPROFILE%\Downloads
+    user = os.environ.get("USERPROFILE") or os.path.expanduser("~")
+    candidates = [
+        Path(user) / "Downloads" / "RadioAI Reports",
+        Path(user) / "Downloads",
+        Path(user) / "Documents" / "RadioAI Reports",
+        Path(os.environ.get("LOCALAPPDATA",
+                            os.path.expanduser("~/AppData/Local"))
+             ) / "RadioAI" / "reports",
+    ]
+    for c in candidates:
+        try:
+            c.parent.mkdir(parents=True, exist_ok=True)
+            return c
+        except (OSError, PermissionError):
+            continue
+    return candidates[-1]
+
+
+DEFAULT_REPORT_DIR = _resolve_default_dir()
 
 
 class SpotPlayReportError(RuntimeError):
