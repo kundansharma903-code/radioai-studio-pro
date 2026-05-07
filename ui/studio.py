@@ -1124,6 +1124,15 @@ class _AnalogClock(QWidget):
         p.drawLine(QPointF(cx, cy),
                    QPointF(cx + 24 * math.cos(m_angle),
                            cy - 24 * math.sin(m_angle)))
+        # Second hand (red, thin, longest) — drawn on top of hour + minute
+        # so it remains visible during the brief moments when all three
+        # hands overlap. 1Hz tick gives a discrete classic-clock motion;
+        # raise the timer interval to ~33ms if a sweep is wanted later.
+        s_angle = math.radians(90 - s * 6)
+        p.setPen(QPen(QColor(RED_LIGHT), 1.2))
+        p.drawLine(QPointF(cx, cy),
+                   QPointF(cx + 28 * math.cos(s_angle),
+                           cy - 28 * math.sin(s_angle)))
         # Center cyan dot with glow
         p.setPen(Qt.PenStyle.NoPen); p.setBrush(_qcolor_a(CYAN, 0.4))
         p.drawEllipse(QPointF(cx, cy), 5, 5)
