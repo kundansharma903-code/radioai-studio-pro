@@ -3280,6 +3280,14 @@ class Studio(QWidget):
         # without flickering or double-rendering. -2 sentinel means
         # "never set" so the first resolved state always emits.
         self._displayed_active_clock_id: int = -2
+        # Played-songs tracking — tracks song ids that have been
+        # dispatched (play-started) since Studio launch. Used by the
+        # Up Coming panel's fallback path to filter out songs that
+        # have already aired so the panel only shows TRULY upcoming
+        # tracks, not the currently-playing or already-played ones.
+        # Scheduler-driven path is unaffected (peek_next already
+        # advances past dispatched slots).
+        self._played_song_ids: set = set()
         self._queue_songs: list[dict] = self._load_queue_from_db()
 
         # Build widgets — Steps 1+2 done; rest are placeholders
@@ -3579,6 +3587,15 @@ class Studio(QWidget):
         self._current_duration_ms = self._engine.get_duration_ms(cid) or \
             int(song.get("duration_ms", 0))
         self._stop_after_current = False
+        # Track this song as "played" so the Up Coming panel's
+        # fallback path filters it out — currently-playing should
+        # not appear in the upcoming list (it's audibly the now,
+        # not the next).
+        if song.get("id") is not None:
+            try:
+                self._played_song_ids.add(int(song["id"]))
+            except (TypeError, ValueError):
+                pass
         self._apply_playing_state(song)
         self._update_status_pills()
 
@@ -4024,26 +4041,15 @@ class Studio(QWidget):
                     str(nxt.get("artist") or ""))
             else:
                 self._next_chip.set_next("—", "")
-        # Up Coming: roll the queue starting from the currently-playing
-        # song so the playing song is visible at slot 0 and "next" is
-        # at slot 1 (NEXT pill).
-        #   Phase B: when scheduler is wired AND has a clock assigned,
-        #   peek_next drives the panel — the currently-playing track
-        #   has already been dispatched, so peek shows what's next.
-        #   Otherwise the legacy index-rolling fallback runs.
+        # Up Coming: STRICTLY upcoming view — currently-playing song
+        # is excluded (it lives in NowPlayer, not in the queue list).
+        # _refresh_upcoming_panel filters _played_song_ids, which
+        # includes this song's id (just added in _on_queue_song_play).
+        # Scheduler-driven peek_next path naturally already shows
+        # what's NEXT, not what's currently dispatched.
         if hasattr(self, "_upcoming"):
             self._load_upcoming_queue()
-            if not self._upcoming_preview:
-                cur_id = song.get("id")
-                try:
-                    idx = next(i for i, s in enumerate(self._queue_songs)
-                               if s.get("id") == cur_id)
-                except StopIteration:
-                    idx = 0
-                self._upcoming.set_queue(self._queue_songs[idx:idx + 5],
-                                         current_id=cur_id)
-            else:
-                self._refresh_upcoming_panel()
+            self._refresh_upcoming_panel()
         # RDS: now-playing artist + title
         if hasattr(self, "_rds"):
             self._rds.set_on_air(
@@ -4580,17 +4586,31 @@ class Studio(QWidget):
           - the 1Hz wall-clock tick (live AT timestamp refresh)
           - scheduler signals (song_auto_advance / started / stopped)
           - state-change paths (_apply_idle_state, _apply_playing_state)
+
+        Both paths now show STRICTLY upcoming items — the currently-
+        playing song and any already-played songs are excluded so the
+        operator sees only "what's about to air next." Already-played
+        items live in the History panel; the currently-playing item
+        lives in NowPlayer.
         """
         if not hasattr(self, "_upcoming"):
             return
         if self._upcoming_preview:
-            # Scheduler-driven path — index 0 is next-to-air, so it
-            # gets the NEXT rose glow.
+            # Scheduler-driven path — peek_next already excludes
+            # everything before the cursor, so the list is naturally
+            # "next 5 to dispatch." Index 0 → NEXT rose glow.
             self._upcoming.set_queue(self._upcoming_preview, next_index=0)
         else:
-            # Legacy fallback: in-memory queue with NEXT at index 1
-            # (because index 0 is currently playing in that mental model).
-            self._upcoming.set_queue(self._queue_songs[:5])
+            # Legacy fallback: filter _queue_songs to exclude already-
+            # played songs (which includes the currently-playing one,
+            # added to _played_song_ids when its play started). The
+            # remaining list is the operator's "next up" — index 0
+            # gets the NEXT rose glow.
+            unplayed = [
+                s for s in self._queue_songs
+                if int(s.get("id") or 0) not in self._played_song_ids
+            ]
+            self._upcoming.set_queue(unplayed[:5], next_index=0)
 
     def _on_jingle_demo_tick(self) -> None:
         """10Hz countdown — decrement remaining; stop at 0 (we still
