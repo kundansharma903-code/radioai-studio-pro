@@ -1416,29 +1416,337 @@ class SpotsCommercials(QWidget):
 
         self._tab_content.setWidget(c)
 
+    # ── Play Reports tab (Figma 412:2) ───────────────────────────────────
+
+    def _build_tab_play_reports(self) -> None:
+        """Replaces the stub Play Reports tab with the Figma 412:2 form:
+        campaign info card + mode toggle + date range + Generate button.
+        Lazy import on the report generator so the heavy QPdfWriter chain
+        doesn't load until the operator actually opens this tab."""
+        from PyQt6.QtWidgets import (
+            QButtonGroup, QDateEdit, QRadioButton, QFormLayout, QFileDialog,
+        )
+        from PyQt6.QtCore import QDate
+        from PyQt6.QtGui import QDesktopServices
+        from PyQt6.QtCore import QUrl
+        from datetime import date as _dt_date, datetime as _dt
+        from pathlib import Path as _Path
+        from core.reports import (
+            generate_spot_play_report, SpotPlayReportError,
+            REPORT_MODE_ACTUAL, REPORT_MODE_SCHEDULED, DEFAULT_REPORT_DIR,
+        )
+
+        c = QFrame()
+        c.setStyleSheet("background: transparent;")
+        v = QVBoxLayout(c)
+        v.setContentsMargins(16, 12, 16, 16)
+        v.setSpacing(14)
+
+        # Resolve current campaign + dates
+        campaign = next(
+            (cm for cm in self._campaigns if cm.get("id") == self._selected_id),
+            None) if self._selected_id else None
+        if not campaign:
+            empty = QLabel(
+                "Select a campaign in the list to generate a report.")
+            empty.setFont(inter(11, QFont.Weight.Medium))
+            empty.setStyleSheet(
+                f"color: {TEXT_MUTED}; background: transparent;")
+            empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            v.addWidget(empty); v.addStretch()
+            self._tab_content.setWidget(c)
+            return
+
+        # ── CAMPAIGN section ──
+        sect_lbl = QLabel("CAMPAIGN")
+        sect_lbl.setFont(inter(10, QFont.Weight.Bold, letter_spacing=1.4))
+        sect_lbl.setStyleSheet(
+            f"color: {PURPLE_LIGHT}; background: transparent; "
+            f"padding: 4px 12px;")
+        sect_lbl.setFixedHeight(24)
+        v.addWidget(sect_lbl)
+
+        info = QFrame()
+        info.setStyleSheet(
+            f"background: {BG_CARD}; "
+            f"border: 1px solid {rgba('#ffffff', 0.06)}; "
+            f"border-radius: 8px;")
+        info.setFixedHeight(76)
+        ih = QHBoxLayout(info)
+        ih.setContentsMargins(14, 10, 14, 10); ih.setSpacing(12)
+        # $ icon
+        icon = QLabel("$")
+        icon.setFixedSize(48, 48)
+        icon.setFont(inter(24, QFont.Weight.Bold))
+        icon.setStyleSheet(
+            f"QLabel {{ background: {rgba(AMBER, 0.18)}; color: {AMBER_LIGHT}; "
+            f"border: 1px solid {rgba(AMBER, 0.30)}; "
+            f"border-radius: 10px; }}")
+        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        ih.addWidget(icon)
+        # Right column
+        col = QVBoxLayout(); col.setContentsMargins(0, 0, 0, 0); col.setSpacing(2)
+        name_row = QHBoxLayout(); name_row.setContentsMargins(0, 0, 0, 0)
+        name_row.setSpacing(8)
+        name_lbl = QLabel(str(campaign.get("name") or "Untitled"))
+        name_lbl.setFont(inter(15, QFont.Weight.Bold))
+        name_lbl.setStyleSheet(
+            f"color: {TEXT_PRI}; background: transparent;")
+        name_row.addWidget(name_lbl)
+        # Auto code pill
+        auto_code = (campaign.get("auto_code") or "").strip()
+        if auto_code:
+            pill = QLabel(f"#{auto_code}")
+            pill.setFont(mono(10, bold=True))
+            pill.setStyleSheet(
+                f"QLabel {{ background: {rgba(GREEN, 0.16)}; "
+                f"color: {GREEN_LIGHT}; "
+                f"border: 1px solid {rgba(GREEN, 0.40)}; "
+                f"border-radius: 4px; padding: 1px 8px; }}")
+            name_row.addWidget(pill)
+        name_row.addStretch()
+        col.addLayout(name_row)
+        # Status / dates
+        active = bool(campaign.get("is_currently_active", 1))
+        status = "● Active" if active else "○ Expired"
+        sd = campaign.get("start_date") or "?"
+        ed = campaign.get("end_date") or "?"
+        meta_lbl = QLabel(f"{status}  ·  {_fmt_date(sd)} → {_fmt_date(ed)}")
+        meta_lbl.setFont(inter(10, QFont.Weight.Medium))
+        meta_lbl.setStyleSheet(
+            f"color: {GREEN_LIGHT if active else TEXT_MUTED}; "
+            f"background: transparent;")
+        col.addWidget(meta_lbl)
+        # Spot files line
+        try:
+            sfs = self._db.get_spot_files(int(campaign["id"]))
+        except Exception:
+            sfs = []
+        total_dur_ms = sum(int(s["duration_ms"] or 0) for s in sfs)
+        total_dur_s = total_dur_ms // 1000
+        files_lbl = QLabel(
+            f"{len(sfs)} spot file{'s' if len(sfs) != 1 else ''}  ·  "
+            f"{total_dur_s} sec total")
+        files_lbl.setFont(inter(9, QFont.Weight.Medium))
+        files_lbl.setStyleSheet(
+            f"color: {TEXT_MUTED}; background: transparent;")
+        col.addWidget(files_lbl)
+        ih.addLayout(col, 1)
+        v.addWidget(info)
+
+        # ── REPORT MODE section ──
+        sect2 = QLabel("REPORT MODE")
+        sect2.setFont(inter(10, QFont.Weight.Bold, letter_spacing=1.4))
+        sect2.setStyleSheet(
+            f"color: {CYAN_LIGHT}; background: transparent; "
+            f"padding: 4px 12px;")
+        sect2.setFixedHeight(24)
+        v.addWidget(sect2)
+
+        mode_row = QHBoxLayout(); mode_row.setSpacing(8)
+        self._report_mode_group = QButtonGroup(c)
+
+        def _mode_radio(label: str, sub: str, mode_val: str,
+                        accent_hex: str, default: bool):
+            b = QRadioButton(label)
+            b.setFont(inter(12, QFont.Weight.Bold))
+            b.setStyleSheet(
+                f"QRadioButton {{ color: {TEXT_PRI}; background: {BG_CARD}; "
+                f"border: 1px solid {rgba(accent_hex, 0.30 if default else 0.15)}; "
+                f"border-radius: 8px; padding: 12px 12px 28px 36px; }}"
+                f"QRadioButton:checked {{ "
+                f"  background: {rgba(accent_hex, 0.10)}; "
+                f"  border: 1.5px solid {rgba(accent_hex, 0.55)}; }}"
+                f"QRadioButton::indicator {{ width: 14px; height: 14px; "
+                f"  border: 1.5px solid {rgba(accent_hex, 0.40)}; "
+                f"  border-radius: 7px; "
+                f"  background: {BG_DARK}; }}"
+                f"QRadioButton::indicator:checked {{ "
+                f"  background: {accent_hex}; "
+                f"  border: 4px solid {BG_DARK}; }}"
+            )
+            b.setMinimumHeight(74)
+            b.setProperty("mode", mode_val)
+            b.setChecked(default)
+            b.setToolTip(sub)
+            self._report_mode_group.addButton(b)
+            return b
+
+        rb_actual = _mode_radio(
+            "Actual Broadcast",
+            "What actually played — pulled from broadcast_log",
+            REPORT_MODE_ACTUAL, CYAN, default=False)
+        rb_sched = _mode_radio(
+            "Scheduled Broadcast",
+            "What was planned — expanded from campaign_schedule",
+            REPORT_MODE_SCHEDULED, AMBER, default=True)
+        mode_row.addWidget(rb_actual)
+        mode_row.addWidget(rb_sched)
+        v.addLayout(mode_row)
+
+        # ── DATE RANGE section ──
+        sect3 = QLabel("DATE RANGE")
+        sect3.setFont(inter(10, QFont.Weight.Bold, letter_spacing=1.4))
+        sect3.setStyleSheet(
+            f"color: {GREEN}; background: transparent; padding: 4px 12px;")
+        sect3.setFixedHeight(24)
+        v.addWidget(sect3)
+
+        dt_row = QHBoxLayout(); dt_row.setSpacing(8)
+
+        def _date_input(label: str, iso_str: str) -> tuple[QFrame, QDateEdit]:
+            f = QFrame()
+            f.setStyleSheet("background: transparent;")
+            fl = QVBoxLayout(f)
+            fl.setContentsMargins(0, 0, 0, 0); fl.setSpacing(6)
+            l = QLabel(label.upper())
+            l.setFont(inter(9, QFont.Weight.Bold, letter_spacing=1.0))
+            l.setStyleSheet(
+                f"color: {TEXT_MUTED}; background: transparent;")
+            fl.addWidget(l)
+            de = QDateEdit()
+            de.setCalendarPopup(True)
+            de.setDisplayFormat("dd / MM / yyyy")
+            try:
+                yr, mo, da = map(int, str(iso_str).split("-"))
+                de.setDate(QDate(yr, mo, da))
+            except (ValueError, AttributeError):
+                de.setDate(QDate.currentDate())
+            de.setStyleSheet(
+                f"QDateEdit {{ background: {BG_CARD}; color: {TEXT_PRI}; "
+                f"border: 1px solid {rgba('#ffffff', 0.06)}; "
+                f"border-radius: 6px; padding: 6px 10px; }}"
+                f"QDateEdit:focus {{ border-color: {rgba(CYAN, 0.45)}; }}"
+                f"QDateEdit::drop-down {{ border: none; width: 22px; }}"
+                f"QDateEdit::down-arrow {{ image: none; width: 0; "
+                f"  border-left: 4px solid transparent; "
+                f"  border-right: 4px solid transparent; "
+                f"  border-top: 5px solid {TEXT_MUTED}; "
+                f"  margin-right: 6px; }}"
+            )
+            de.setFixedHeight(36)
+            de.setFont(inter(11, QFont.Weight.Bold))
+            fl.addWidget(de)
+            return f, de
+
+        sd_box, self._report_start_de = _date_input(
+            "Start Date", campaign.get("start_date") or "")
+        ed_box, self._report_end_de = _date_input(
+            "End Date", campaign.get("end_date") or "")
+        dt_row.addWidget(sd_box, 1)
+        dt_row.addWidget(ed_box, 1)
+        v.addLayout(dt_row)
+
+        # Reset link
+        reset = QPushButton("↺  Reset to campaign window")
+        reset.setFlat(True)
+        reset.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        reset.setFont(inter(10, QFont.Weight.Medium))
+        reset.setStyleSheet(
+            f"QPushButton {{ color: {PURPLE_LIGHT}; "
+            f"background: transparent; border: none; "
+            f"text-align: left; padding: 0; }}"
+            f"QPushButton:hover {{ color: {TEXT_PRI}; }}"
+        )
+        def _reset_dates():
+            cur = next((cm for cm in self._campaigns
+                        if cm.get("id") == self._selected_id), None)
+            if not cur:
+                return
+            for iso, de in ((cur.get("start_date"), self._report_start_de),
+                            (cur.get("end_date"),   self._report_end_de)):
+                try:
+                    yr, mo, da = map(int, str(iso).split("-"))
+                    de.setDate(QDate(yr, mo, da))
+                except (ValueError, AttributeError):
+                    pass
+        reset.clicked.connect(_reset_dates)
+        v.addWidget(reset, 0, Qt.AlignmentFlag.AlignLeft)
+
+        # ── GENERATE BUTTON ──
+        gen = QPushButton("✦  GENERATE PDF REPORT")
+        gen.setFixedHeight(48)
+        gen.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        gen.setFont(inter(13, QFont.Weight.Bold, letter_spacing=1.4))
+        gen.setStyleSheet(
+            f"QPushButton {{ "
+            f"  background: qlineargradient(x1:0,y1:0,x2:1,y2:0, "
+            f"  stop:0 {CYAN}, stop:1 {PURPLE_LIGHT}); "
+            f"  color: white; border: none; border-radius: 8px; }}"
+            f"QPushButton:hover {{ "
+            f"  background: qlineargradient(x1:0,y1:0,x2:1,y2:0, "
+            f"  stop:0 {CYAN_LIGHT}, stop:1 {PURPLE}); }}"
+        )
+        # Footer status labels (declared up here so the closure can update them)
+        last_lbl = QLabel("Last generated: (none)")
+        last_lbl.setFont(inter(9, QFont.Weight.Medium))
+        last_lbl.setStyleSheet(
+            f"color: {TEXT_MUTED}; background: transparent;")
+        path_lbl = QLabel(f"Saved to: {DEFAULT_REPORT_DIR}")
+        path_lbl.setFont(inter(9))
+        path_lbl.setStyleSheet(
+            f"color: {TEXT_DIM}; background: transparent;")
+
+        def _on_generate():
+            cur_id = self._selected_id
+            if not cur_id:
+                return
+            checked = self._report_mode_group.checkedButton()
+            mode_val = (checked.property("mode") if checked is not None
+                        else REPORT_MODE_SCHEDULED)
+            qd_s = self._report_start_de.date()
+            qd_e = self._report_end_de.date()
+            sd_py = _dt_date(qd_s.year(), qd_s.month(), qd_s.day())
+            ed_py = _dt_date(qd_e.year(), qd_e.month(), qd_e.day())
+            try:
+                out = generate_spot_play_report(
+                    int(cur_id), mode_val, sd_py, ed_py, db=self._db)
+            except SpotPlayReportError as exc:
+                QMessageBox.warning(
+                    self, "Report failed", str(exc))
+                return
+            except Exception as exc:
+                log.error(f"report generation failed: {exc}", exc_info=True)
+                QMessageBox.critical(
+                    self, "Report failed",
+                    f"Could not generate report:\n\n{exc}")
+                return
+            last_lbl.setText(
+                f"Last generated: {_dt.now().strftime('%d %b %Y %H:%M')}  "
+                f"({mode_val})")
+            path_lbl.setText(f"Saved to: {out}")
+            log.info(f"[reports] opening {out}")
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(out)))
+        gen.clicked.connect(_on_generate)
+        v.addWidget(gen)
+
+        # ── Footer ──
+        v.addWidget(last_lbl)
+        v.addWidget(path_lbl)
+        v.addStretch()
+
+        self._tab_content.setWidget(c)
+
     def _switch_tab(self, idx: int):
         for i, t in enumerate(self._tab_buttons):
             t.set_active(i == idx)
         if idx == 0:
             self._build_tab_details()
             self._refresh_detail_panel()
+        elif idx == 2:
+            self._build_tab_play_reports()
         else:
-            # Tabs 2 + 3 stubbed for now
+            # Tab 2 (Break Schedule editor) still stubbed
             stub = QFrame(); stub.setStyleSheet("background: transparent;")
             sv = QVBoxLayout(stub); sv.setContentsMargins(20, 60, 20, 20)
-            l = QLabel(["", "Break Schedule editor",
-                            "Play Reports"][idx])
+            l = QLabel("Break Schedule editor")
             l.setFont(inter(13, QFont.Weight.Bold))
             l.setStyleSheet(f"color: {TEXT_PRI}; background: transparent;")
             l.setAlignment(Qt.AlignmentFlag.AlignCenter)
             sv.addWidget(l)
             l2 = QLabel(
                 "Use ✎ Edit Breaks in the sidebar to open\n"
-                "the full Spot Programming dialog (next session)."
-                if idx == 1 else
-                "Per-day plays / contracted vs actual analytics\n"
-                "(coming in a later phase)."
-            )
+                "the full Spot Programming dialog (next session).")
             l2.setFont(inter(10))
             l2.setStyleSheet(f"color: {TEXT_MUTED}; background: transparent;")
             l2.setAlignment(Qt.AlignmentFlag.AlignCenter)
