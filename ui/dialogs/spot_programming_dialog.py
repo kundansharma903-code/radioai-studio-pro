@@ -339,12 +339,16 @@ class _BreakScheduleGrid(QWidget):
         self.setMouseTracking(True)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._on_context_menu)
+        # StrongFocus: required so keyPressEvent receives Esc for clear.
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
         self._breaks: dict[tuple[int, int], dict] = {}
         self._selected: set[tuple[int, int]] = set()
         self._hover: Optional[tuple[int, int]] = None
         self._drag_start: Optional[tuple[int, int]] = None
         self._drag_end:   Optional[tuple[int, int]] = None
+        self._dragging: bool = False
+        self._press_cell: Optional[tuple[int, int]] = None
         self._priority = "Medium"   # default priority for new breaks
 
     def _day_col_w(self) -> int:
@@ -479,7 +483,22 @@ class _BreakScheduleGrid(QWidget):
         y = HEADER_H + slot * CELL_H
         return QRect(x, y, col_w, CELL_H)
 
-    # ── Mouse handling — drag-select rectangle ───────────────────────────
+    # ── Mouse handling — toggle on click, additive drag rectangle ────────
+    #
+    # Selection model (changed 2026-05-07 per operator request):
+    #   • Plain click    → TOGGLE that single cell (add if empty, remove if
+    #                      already selected). Previous selection is preserved
+    #                      so the operator can build up a multi-cell pick
+    #                      cell-by-cell.
+    #   • Drag rectangle → ADD all cells in the swept rectangle to the
+    #                      existing selection (additive — no clear).
+    #   • Esc            → clear the entire selection (handled in
+    #                      keyPressEvent).
+    #   • Right-click    → context menu; auto-targets the right-clicked cell
+    #                      if it is not already selected.
+    #
+    # Press defers the toggle to release so a press-then-drag becomes a
+    # rectangle add instead of a stray toggle on the press cell.
 
     def mousePressEvent(self, e):
         if e.button() != Qt.MouseButton.LeftButton:
@@ -487,13 +506,13 @@ class _BreakScheduleGrid(QWidget):
         cell = self._cell_at(e.position())
         if cell is None:
             return
-        # Shift-click extends; plain click resets selection
-        if not (e.modifiers() & Qt.KeyboardModifier.ShiftModifier):
-            self._selected.clear()
+        # Pull keyboard focus so subsequent Esc reaches keyPressEvent.
+        self.setFocus(Qt.FocusReason.MouseFocusReason)
+        # Defer mutation until release/move classifies this as click vs drag.
+        self._press_cell = cell
         self._drag_start = cell
         self._drag_end = cell
-        self._refresh_drag_selection()
-        self.update()
+        self._dragging = False
 
     def mouseMoveEvent(self, e):
         cell = self._cell_at(e.position())
@@ -503,13 +522,19 @@ class _BreakScheduleGrid(QWidget):
         if self._drag_start is not None and \
                 (e.buttons() & Qt.MouseButton.LeftButton):
             if cell is not None:
-                # Drag-select — repaint just the rectangle covering the
-                # drag's prev + new bounds. Way cheaper than full repaint.
-                old_drag_rect = self._drag_bounds_rect()
-                self._drag_end = cell
-                self._refresh_drag_selection()
-                new_drag_rect = self._drag_bounds_rect()
-                self.update(old_drag_rect.united(new_drag_rect))
+                # Promote to drag mode the moment we cross into a different
+                # cell from the press anchor. Below that, treat as a click
+                # (toggle on release).
+                if not self._dragging and cell != self._drag_start:
+                    self._dragging = True
+                if self._dragging:
+                    old_drag_rect = self._drag_bounds_rect()
+                    self._drag_end = cell
+                    # Additive: _refresh_drag_selection only adds cells,
+                    # never removes — so existing selection survives.
+                    self._refresh_drag_selection()
+                    new_drag_rect = self._drag_bounds_rect()
+                    self.update(old_drag_rect.united(new_drag_rect))
         elif prev_hover != cell:
             # Hover transition — repaint only the two affected cell rects.
             # Replaces a full-widget update() that would otherwise repaint
@@ -538,11 +563,33 @@ class _BreakScheduleGrid(QWidget):
     def mouseReleaseEvent(self, e):
         if e.button() != Qt.MouseButton.LeftButton:
             return
-        # Selection already kept in _selected — just clear the live drag
+        if self._press_cell is not None and not self._dragging:
+            # Plain click → toggle that cell. Other selected cells survive.
+            cell = self._press_cell
+            if cell in self._selected:
+                self._selected.discard(cell)
+            else:
+                self._selected.add(cell)
+            self.update(self._cell_rect(*cell))
+        # else: drag already mutated _selected during mouseMoveEvent.
+        self._press_cell = None
         self._drag_start = None
         self._drag_end = None
+        self._dragging = False
         self.update()
         self.selection_changed.emit(len(self._selected))
+
+    def keyPressEvent(self, e):
+        # Esc clears the entire selection (the explicit "start over" hatch
+        # now that plain click no longer auto-clears).
+        if e.key() == Qt.Key.Key_Escape:
+            if self._selected:
+                self._selected.clear()
+                self.update()
+                self.selection_changed.emit(0)
+            e.accept()
+            return
+        super().keyPressEvent(e)
 
     def leaveEvent(self, _e):
         self._hover = None
@@ -987,7 +1034,9 @@ class SpotProgrammingDialog(BaseDialog):
         v.addWidget(self._grid, stretch=0)
 
         # Bottom hint
-        hint = QLabel("▼ Scroll — 144 slots total (00:00 → 23:50, every 10 min)")
+        hint = QLabel(
+            "▼ Scroll — 144 slots (00:00 → 23:50, every 10 min)  •  "
+            "Click cells to toggle, drag for a rectangle, Esc to clear")
         hint.setFont(inter(9))
         hint.setStyleSheet(f"color: {TEXT_MUTED}; background: transparent;")
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1076,7 +1125,8 @@ class SpotProgrammingDialog(BaseDialog):
         if self._grid.selected_count() == 0:
             QMessageBox.information(
                 self, "No selection",
-                "Drag-select cells in the grid first, then click + Add.")
+                "Click cells to select (or drag a rectangle), "
+                "then click + Add. Esc clears selection.")
             return
         self._grid.schedule_at_selection()
 
@@ -1086,7 +1136,8 @@ class SpotProgrammingDialog(BaseDialog):
         if self._grid.selected_count() == 0:
             QMessageBox.information(
                 self, "No selection",
-                "Drag-select cells in the grid first, then click − Remove.")
+                "Click cells to select (or drag a rectangle), "
+                "then click − Remove. Esc clears selection.")
             return
         self._grid.clear_at_selection()
 
