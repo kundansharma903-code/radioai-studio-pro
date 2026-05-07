@@ -90,6 +90,21 @@ class Settings:
         return self.get("station_frequency", "")
 
     @property
+    def station_display(self) -> str:
+        """Single-source-of-truth string used in every UI header banner
+        and on generated PDF reports. Combines the station name with
+        the frequency (e.g. "FCP 90.8 MHz"). Falls back to just the
+        name when no frequency is set, and to "My Radio Station" when
+        the settings table is empty (default seed). Operator changes
+        the values via the Settings screen → every header + every new
+        report instantly reflects the new branding."""
+        name = (self.station_name or "").strip()
+        freq = (self.station_frequency or "").strip()
+        if name and freq:
+            return f"{name} {freq}"
+        return name or "My Radio Station"
+
+    @property
     def master_volume(self) -> int:
         return self.get_int("master_volume", 85)
 

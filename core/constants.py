@@ -9,7 +9,11 @@ import os
 # ── App ───────────────────────────────────────────────────────────────────────
 APP_NAME    = "RadioAI Studio Pro"
 APP_VERSION = "2.0.0"
-STATION     = "KISS FM 91.5"
+# Fallback only — UI headers should pull from Settings().station_display
+# so the operator's branding (Settings screen → Station Name + Frequency)
+# flows everywhere without hardcoded changes. Kept here for code paths
+# that run before Settings is loaded (very early boot).
+STATION     = "RadioAI Studio"
 
 # ── Window ────────────────────────────────────────────────────────────────────
 # Raised to 1920×1080 to host the premium broadcast Studio (Figma 312:2).

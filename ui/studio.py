@@ -57,6 +57,7 @@ from PyQt6.QtWidgets import (
     QWidget, QFrame, QGraphicsDropShadowEffect, QMessageBox,
 )
 
+from core.settings import Settings
 from ui.widgets._tokens import (
     inter, mono,
     BG_BASE, BG_DARK, BG_PANEL, BG_CARD, BG_CARD_DK, BG_ELEVATED,
@@ -416,11 +417,13 @@ class _Header(QWidget):
         p.drawText(QRectF(card.x() + 12, card.y() + 6, 200, 12),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                    "ACTIVE STATION")
-        # Station name
+        # Station name — pulls from Settings.station_display so the
+        # operator's branding (Settings screen → Station Name +
+        # Frequency) flows here without code changes.
         p.setPen(QColor(TEXT_PRI)); p.setFont(self._font_station)
         p.drawText(QRectF(card.x() + 12, card.y() + 20, 160, 18),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                   "KISS FM 91.5")
+                   Settings().station_display)
         # Third line — active clock name when assigned, station
         # location otherwise. Prefix '● ' on the active-clock variant
         # so the operator distinguishes a live clock-driven hour from

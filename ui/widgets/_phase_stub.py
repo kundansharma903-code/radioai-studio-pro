@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
     QFrame, QLabel, QPushButton, QHBoxLayout,
 )
 
+from core.settings import Settings
 from ui.widgets._tokens import (
     inter, mono, rgba,
     BG_PANEL, BG_CARD_DK,
@@ -164,7 +165,7 @@ class StubHeader(QFrame):
         p.setFont(inter(9))
         p.drawText(QRectF(940, 38, 220, 16),
                    Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
-                   "KISS FM 91.5")
+                   Settings().station_display)
 
 
 class StubStatusBar(QFrame):

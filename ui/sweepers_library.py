@@ -42,6 +42,7 @@ from PyQt6.QtWidgets import (
     QScrollArea, QMessageBox,
 )
 
+from core.settings import Settings
 from ui.widgets._tokens import (
     inter, mono, rgba,
     BG_BASE, BG_PANEL, BG_CARD, BG_ELEVATED,
@@ -981,7 +982,7 @@ class SweepersLibrary(QWidget):
         self._clock_lbl.setFont(mono(20, bold=True))
         self._clock_lbl.setStyleSheet(
             f"color: {TEXT_PRI}; background: transparent;")
-        l = QLabel("KISS FM 91.5", self)
+        l = QLabel(Settings().station_display, self)
         l.setGeometry(1108, 40, 100, 14)
         l.setFont(inter(9, QFont.Weight.Medium))
         l.setStyleSheet(f"color: {GREEN}; background: transparent;")

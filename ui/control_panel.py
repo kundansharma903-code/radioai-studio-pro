@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
     QWidget, QFrame, QLabel, QPushButton, QGraphicsDropShadowEffect,
 )
 
+from core.settings import Settings
 from ui.widgets._tokens import (
     inter, mono, rgba,
     BG_BASE, TEXT_PRI, TEXT_SEC, TEXT_MUTED, TEXT_DIM,
@@ -420,7 +421,7 @@ class _StationCard(QWidget):
         p.setPen(QColor(TEXT_PRI))
         p.setFont(inter(14, QFont.Weight.Bold, letter_spacing=-0.2))
         p.drawText(13, 26, 200, 18, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                   "KISS FM 91.5")
+                   Settings().station_display)
         p.setPen(QColor(TEXT_SEC))
         p.setFont(inter(10, QFont.Weight.Medium))
         p.drawText(13, 41, 200, 14, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,

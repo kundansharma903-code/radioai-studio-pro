@@ -42,6 +42,7 @@ from PyQt6.QtWidgets import (
     QWidget, QGraphicsDropShadowEffect,
 )
 
+from core.settings import Settings
 from ui.widgets.tokens import (
     inter, mono,
     COL_TEXT_PRIMARY, COL_TEXT_SECONDARY, COL_TEXT_MUTED,
@@ -231,7 +232,7 @@ class _ActiveStationCard(QWidget):
         p.setPen(QColor(COL_TEXT_PRIMARY))
         p.setFont(self._font_name)
         p.drawText(QRectF(12, 21, 200, 18),
-                   Qt.AlignmentFlag.AlignLeft, "KISS FM 91.5")
+                   Qt.AlignmentFlag.AlignLeft, Settings().station_display)
         p.setPen(QColor(COL_TEXT_SECONDARY))
         p.setFont(self._font_city)
         p.drawText(QRectF(12, 40, 200, 14),

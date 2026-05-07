@@ -32,6 +32,7 @@ from PyQt6.QtWidgets import (
     QScrollArea, QVBoxLayout, QGraphicsDropShadowEffect, QMessageBox,
 )
 
+from core.settings import Settings
 from ui.widgets._tokens import (
     inter, mono, rgba,
     BG_BASE, BG_PANEL, BG_CARD, BG_ELEVATED,
@@ -895,7 +896,7 @@ class SongsLibrary(QWidget):
         self._clock_lbl.setGeometry(990, 8, 90, 22)
         self._clock_lbl.setFont(mono(18, bold=True))
         self._clock_lbl.setStyleSheet(f"color: {TEXT_PRI}; background: transparent;")
-        l = QLabel("KISS FM 91.5", self)
+        l = QLabel(Settings().station_display, self)
         l.setGeometry(990, 28, 100, 14)
         l.setFont(inter(9, QFont.Weight.Medium))
         l.setStyleSheet(f"color: {GREEN}; background: transparent;")
