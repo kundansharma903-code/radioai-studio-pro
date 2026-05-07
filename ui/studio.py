@@ -991,6 +991,17 @@ class _ControlCluster(QWidget):
         self._paused = bool(on)
         self._b_pause.set_active(self._paused)
 
+    def set_stop_armed(self, on: bool) -> None:
+        """Visual feedback for the StopNext button — when armed, the
+        button shows the same accent-glow treatment as Loop/Pause's
+        active state. Cleared when the EOS handler consumes the flag
+        (current song ended → player idled) or the operator clicks
+        StopNext again to disarm."""
+        self._b_stop.set_active(bool(on))
+
+    def is_stop_armed(self) -> bool:
+        return self._b_stop._active
+
     def set_idle(self, idle: bool) -> None:
         for b in (self._b_restart, self._b_pause, self._b_stop):
             b.set_enabled(not idle)
@@ -3635,6 +3646,11 @@ class Studio(QWidget):
         self._current_duration_ms = self._engine.get_duration_ms(cid) or \
             int(song.get("duration_ms", 0))
         self._stop_after_current = False
+        # Sync the StopNext armed-state visual with the flag — a fresh
+        # song load means the previous arm (if any) has already been
+        # honoured or cancelled, so the button reverts to idle look.
+        if hasattr(self, "_control_cluster") and self._control_cluster:
+            self._control_cluster.set_stop_armed(False)
         # Track this song as "played" so the Up Coming panel's
         # fallback path filters it out — currently-playing should
         # not appear in the upcoming list (it's audibly the now,
@@ -3767,6 +3783,10 @@ class Studio(QWidget):
                     f"[studio] stop-next dropped pending spot "
                     f"{self._pending_spot_campaign_id}")
                 self._pending_spot_campaign_id = None
+            # Visual armed-state revert — the button stops glowing red
+            # since the flag has been consumed.
+            if hasattr(self, "_control_cluster") and self._control_cluster:
+                self._control_cluster.set_stop_armed(False)
             log.info("[studio] stop-next consumed → idle")
             self._apply_idle_state()
             self._update_status_pills()
@@ -4523,8 +4543,21 @@ class Studio(QWidget):
         log.info("[studio] restart → 0ms")
 
     def _on_stop_next_clicked(self) -> None:
-        self._stop_after_current = True
-        log.info("[studio] stop-after-current flag set (consumed on EOS)")
+        # Toggle: first click ARMS (player will idle when current ends),
+        # second click DISARMS (current behaviour cancelled, auto-advance
+        # resumes). Visual armed-state on the button so the operator sees
+        # the click registered immediately, even though the actual effect
+        # only fires when the current song's EOS arrives.
+        new_state = not self._stop_after_current
+        self._stop_after_current = new_state
+        if hasattr(self, "_control_cluster") and self._control_cluster:
+            self._control_cluster.set_stop_armed(new_state)
+        if new_state:
+            log.info(
+                "[studio] StopNext ARMED — player will idle after current "
+                "track ends (click again to disarm)")
+        else:
+            log.info("[studio] StopNext DISARMED — auto-advance resumes")
 
     def _on_loop_toggled(self, on: bool) -> None:
         self._loop_enabled = on
