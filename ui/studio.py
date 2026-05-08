@@ -4939,10 +4939,26 @@ class Studio(QWidget):
         # Hotkeys are 1-indexed (1..5); tiles are 0-indexed.
         self._play_jingle_at_index(n - 1)
 
+    JINGLE_FADE_MS = 1500
+
     def _play_jingle_at_index(self, idx: int) -> None:
-        """Common dispatcher — used by tile clicks and hotkeys. Guards
-        on engine + index range. The proven volume/loop pattern is
-        copied from ui/instant_jingles.py:_on_pad_left_clicked."""
+        """Tile-click + hotkey dispatcher with toggle semantic.
+
+        Operator workflow (broadcast):
+          • First click on an idle tile → ``engine.play_pad(...)``.
+          • Re-click on the SAME tile while it's still playing →
+            ``engine.fade_stop_pad(pad_id, JINGLE_FADE_MS)`` so the
+            jingle fades out gracefully instead of needing the
+            global Esc / Stop All. Re-trigger during the fade
+            (operator clicks again before the slide finishes) starts
+            a fresh play — the two voices briefly overlap, which is
+            the natural radio crossfade feel.
+
+        Guards: silent no-op when no engine is wired (decorative
+        ctor), out-of-range index, or missing file_path. The
+        ``hasattr`` checks let test fakes that don't implement the
+        toggle methods stay backward-compat — they fall through to
+        the legacy unconditional ``play_pad`` path."""
         if self._instant_jingle_engine is None:
             return
         if not (0 <= idx < len(self._jingle_pads)):
@@ -4950,10 +4966,21 @@ class Studio(QWidget):
         pad = self._jingle_pads[idx]
         if not pad.get("file_path"):
             return
+        pad_id = int(pad["id"])
+        # Toggle: re-click on a playing pad fades it out.
+        if (hasattr(self._instant_jingle_engine, "is_playing")
+                and hasattr(self._instant_jingle_engine, "fade_stop_pad")):
+            try:
+                if self._instant_jingle_engine.is_playing(pad_id):
+                    self._instant_jingle_engine.fade_stop_pad(
+                        pad_id, fade_ms=self.JINGLE_FADE_MS)
+                    return
+            except Exception as exc:
+                log.warning(f"[studio] fade_stop_pad failed: {exc}")
         loop = (pad.get("behaviour") == "loop")
         try:
             self._instant_jingle_engine.play_pad(
-                int(pad["id"]),
+                pad_id,
                 pad["file_path"],
                 volume=int(pad.get("volume") or 100),
                 loop=loop,

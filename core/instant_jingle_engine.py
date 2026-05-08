@@ -34,7 +34,7 @@ import os
 import threading
 from typing import Optional
 
-from PyQt6.QtCore import QObject, pyqtSignal
+from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
 
 log = logging.getLogger("InstantJingleEngine")
@@ -142,6 +142,63 @@ class InstantJingleEngine(QObject):
         self._cleanup_silently(cid)
         log.info(f"[pad {pad_id}] stopped (ch={cid})")
         self.pad_stopped.emit(int(pad_id))
+        return True
+
+    def fade_stop_pad(self, pad_id: int, fade_ms: int = 1500) -> bool:
+        """Fade-out + scheduled cleanup. Returns True if the pad was
+        actively playing.
+
+        Operator semantic (broadcast workflow): clicking the same pad
+        tile twice fades the jingle out gracefully instead of a hard
+        cut. Implementation:
+
+          1. Pad is removed from the active map IMMEDIATELY so
+             ``is_playing(pad_id)`` returns False right away. A subsequent
+             click of the same tile starts a fresh ``play_pad`` — the
+             two voices briefly overlap (old fading out, new starting),
+             which gives the natural radio crossfade feel.
+          2. ``engine.fade_volume_to(cid, 0, fade_ms)`` rides on BASS's
+             native ``BASS_ChannelSlideAttribute`` — no Python timer
+             needed for the slide itself.
+          3. A QTimer.singleShot fires at fade_ms+50 to call cleanup
+             (free the BASS stream + emit ``pad_stopped``). The +50ms
+             head-room covers BASS's slide-completion jitter.
+
+        Edge cases:
+          - fade_ms <= 0 → behaves identically to ``stop_pad`` (instant).
+          - Engine missing → False (no-op, no crash).
+          - Pad not playing → False (no-op).
+          - Engine fade call fails → falls back to instant cleanup so
+            the pad still stops; caller-visible behavior unchanged.
+        """
+        if fade_ms <= 0:
+            return self.stop_pad(pad_id)
+        if self._engine is None:
+            return False
+        with self._lock:
+            cid = self._pads.pop(pad_id, None)
+        if cid is None:
+            return False
+        try:
+            self._engine.fade_volume_to(cid, 0, int(fade_ms))
+        except Exception as exc:
+            log.warning(
+                f"[pad {pad_id}] fade_volume_to failed: {exc}; instant stop"
+            )
+            self._cleanup_silently(cid)
+            self.pad_stopped.emit(int(pad_id))
+            return True
+        # Schedule the actual cleanup once BASS finishes the slide.
+        # Captured cid + pad_id are the snapshot at fade-start; safe
+        # against re-trigger races because we already popped from
+        # _pads — a subsequent play_pad spins up a new cid that's
+        # tracked independently.
+        def _finalize():
+            self._cleanup_silently(cid)
+            self.pad_stopped.emit(int(pad_id))
+            log.info(f"[pad {pad_id}] fade-stop complete (ch={cid})")
+        QTimer.singleShot(int(fade_ms) + 50, _finalize)
+        log.info(f"[pad {pad_id}] fading out over {fade_ms}ms (ch={cid})")
         return True
 
     def stop_all(self) -> int:
