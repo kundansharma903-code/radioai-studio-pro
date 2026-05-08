@@ -986,6 +986,161 @@ class Database:
             "WHERE category = 'Station ID' AND is_enabled = 1"
         ).fetchall()
 
+    # ── Jingle Editor (Figma 106:2) — schema + helpers ────────────────────
+
+    def _ensure_jingles_columns(self) -> None:
+        """Add UI-specific jingle columns if missing + backfill auto_code.
+        Idempotent — safe to call on every dialog construction.
+
+        Mirrors _ensure_sweepers_columns. The base columns (name,
+        category, file_path, duration_ms, properties, playlister_code,
+        is_enabled, display_order) live in database/schema.sql and
+        are not touched."""
+        conn = self._conn()
+        cols = {r[1] for r in conn.execute(
+            "PRAGMA table_info(jingles)").fetchall()}
+        adds = [
+            ("auto_code",       "TEXT"),
+            ("author",          "TEXT"),
+            ("entry_date",      "TEXT"),
+            ("comments",        "TEXT"),
+            ("bpm",             "TEXT"),
+            ("era_year",        "TEXT"),
+            ("clock_id",        "INTEGER"),
+            ("min_gap_minutes", "INTEGER DEFAULT 30"),
+            ("max_per_hour",    "INTEGER DEFAULT 2"),
+        ]
+        for col, decl in adds:
+            if col not in cols:
+                conn.execute(f"ALTER TABLE jingles ADD COLUMN {col} {decl}")
+        # Backfill auto_code for legacy rows. JNG-NNNN sequence starts
+        # at 0001, ordered by id so the existing dev-DB seed jingles
+        # (KISS Main Ident, KISS Shot 01, etc.) get stable codes.
+        nulls = conn.execute(
+            "SELECT id FROM jingles "
+            "WHERE auto_code IS NULL OR auto_code = '' "
+            "ORDER BY id"
+        ).fetchall()
+        if nulls:
+            mrow = conn.execute(
+                "SELECT MAX(CAST(SUBSTR(auto_code, 5) AS INTEGER)) AS m "
+                "FROM jingles "
+                "WHERE auto_code IS NOT NULL AND auto_code LIKE 'JNG-%'"
+            ).fetchone()
+            start = (int(mrow["m"]) if mrow and mrow["m"] else 0) + 1
+            for i, r in enumerate(nulls):
+                conn.execute(
+                    "UPDATE jingles SET auto_code = ? WHERE id = ?",
+                    [f"JNG-{start + i:04d}", r["id"]],
+                )
+        # jingle_linked_spots — many-to-many between jingles + campaigns.
+        # Lands here so the editor's LINKED SPOTS card can persist its
+        # picks. ON DELETE CASCADE on both sides keeps orphans out.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS jingle_linked_spots ("
+            "jingle_id   INTEGER NOT NULL "
+            "  REFERENCES jingles(id)   ON DELETE CASCADE, "
+            "campaign_id INTEGER NOT NULL "
+            "  REFERENCES campaigns(id) ON DELETE CASCADE, "
+            "PRIMARY KEY (jingle_id, campaign_id)"
+            ")"
+        )
+        conn.commit()
+
+    def next_jingle_auto_code(self) -> str:
+        """Compute the next JNG-NNNN code without inserting anything.
+        Used to prefill the AUTO CODE pill when the editor dialog opens
+        in NEW mode."""
+        self._ensure_jingles_columns()
+        row = self._conn().execute(
+            "SELECT MAX(CAST(SUBSTR(auto_code, 5) AS INTEGER)) AS m "
+            "FROM jingles "
+            "WHERE auto_code IS NOT NULL AND auto_code LIKE 'JNG-%'"
+        ).fetchone()
+        n = (int(row["m"]) if row and row["m"] else 0) + 1
+        return f"JNG-{n:04d}"
+
+    # Field set the editor dialog writes — kept here so tests, the
+    # dialog, and any future bulk-importer agree. `id` is excluded;
+    # `auto_code` is generated server-side on add.
+    JINGLE_EDITABLE_FIELDS = (
+        "name", "category", "file_path", "duration_ms",
+        "properties", "playlister_code", "is_enabled",
+        "author", "entry_date", "comments", "bpm", "era_year",
+        "clock_id", "min_gap_minutes", "max_per_hour",
+    )
+
+    def add_jingle(self, data: dict) -> int:
+        """Insert a new jingle. Generates auto_code (JNG-NNNN) so
+        callers don't have to. Returns the new id."""
+        self._ensure_jingles_columns()
+        conn = self._conn()
+        cols: list[str] = ["auto_code"]
+        vals: list = [self.next_jingle_auto_code()]
+        for k in self.JINGLE_EDITABLE_FIELDS:
+            if k in data and data[k] is not None:
+                cols.append(k)
+                v = data[k]
+                if k == "is_enabled":
+                    v = 1 if v else 0
+                vals.append(v)
+        placeholders = ", ".join("?" for _ in vals)
+        cur = conn.execute(
+            f"INSERT INTO jingles ({', '.join(cols)}) "
+            f"VALUES ({placeholders})", vals)
+        conn.commit()
+        return int(cur.lastrowid)
+
+    def update_jingle(self, jingle_id: int, data: dict) -> None:
+        """Partial update — only keys present in `data` are touched.
+        Other columns (including auto_code) survive untouched."""
+        self._ensure_jingles_columns()
+        sets: list[str] = []
+        vals: list = []
+        for k in self.JINGLE_EDITABLE_FIELDS:
+            if k in data:
+                sets.append(f"{k} = ?")
+                v = data[k]
+                if k == "is_enabled":
+                    v = 1 if v else 0
+                vals.append(v)
+        if not sets:
+            return
+        vals.append(int(jingle_id))
+        conn = self._conn()
+        conn.execute(
+            f"UPDATE jingles SET {', '.join(sets)} WHERE id = ?", vals)
+        conn.commit()
+
+    def get_jingle_linked_spots(self, jingle_id: int) -> List[sqlite3.Row]:
+        """Resolve the campaigns linked to a jingle. Returns rows shaped
+        for the LINKED SPOTS card: campaign id + name + auto_code."""
+        self._ensure_jingles_columns()
+        return self._conn().execute(
+            "SELECT c.id AS campaign_id, c.name, c.auto_code "
+            "FROM jingle_linked_spots jl "
+            "JOIN campaigns c ON c.id = jl.campaign_id "
+            "WHERE jl.jingle_id = ? "
+            "ORDER BY c.name COLLATE NOCASE",
+            [int(jingle_id)],
+        ).fetchall()
+
+    def set_jingle_linked_spots(self, jingle_id: int,
+                                campaign_ids: list[int]) -> None:
+        """Replace the linked-spots set for a jingle in one transaction.
+        Empty `campaign_ids` clears the row's linked spots."""
+        self._ensure_jingles_columns()
+        conn = self._conn()
+        conn.execute("DELETE FROM jingle_linked_spots WHERE jingle_id = ?",
+                     [int(jingle_id)])
+        for cid in campaign_ids:
+            conn.execute(
+                "INSERT OR IGNORE INTO jingle_linked_spots "
+                "(jingle_id, campaign_id) VALUES (?, ?)",
+                [int(jingle_id), int(cid)],
+            )
+        conn.commit()
+
     def get_jingle_pads_active(self,
                                pallet_id: Optional[int] = None
                                ) -> List[sqlite3.Row]:
