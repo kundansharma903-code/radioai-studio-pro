@@ -2152,15 +2152,22 @@ class _JingleTile(QWidget):
 
     def __init__(self, name: str, dur_str: str, accent: str, parent=None):
         super().__init__(parent)
-        self.setFixedSize(124, 70)
+        # Slight bump from the original 124×70 — gives the label more
+        # breathing room so the saturated fill reads like the
+        # standalone Instant Jingles screen (144×78) at the right
+        # scale. 130×76 with a 4px gap fits inside the 420-wide panel
+        # (14 + 3×130 + 2×4 + 8 right margin).
+        self.setFixedSize(130, 76)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self._name = name
         self._dur_str = dur_str
         self._color = accent          # current pad color (DB-driven on filled tiles)
         self._is_empty = False        # Studio.set_tiles flips this for trailing tiles
         self._hover = False
-        self._font_name = inter(13, QFont.Weight.Black, letter_spacing=-0.3)
-        self._font_dur  = mono(10, bold=True)
+        # Label sized to the standalone IJ ratio (20pt @ 144w → 17pt @ 130w).
+        # Black weight + tight letter-spacing = the broadcast-button feel.
+        self._font_name = inter(17, QFont.Weight.Black, letter_spacing=-0.5)
+        self._font_dur  = mono(9, bold=True)
         self._font_empty_hd = inter(10, QFont.Weight.Bold, letter_spacing=1.0)
         self._font_empty_sub = inter(8)
 
@@ -2237,21 +2244,36 @@ class _JingleTile(QWidget):
         p.setPen(QPen(bright, 1.4))
         p.drawRoundedRect(rect, radius, radius)
 
-        # Label (top-left, white)
-        p.setPen(QColor(255, 255, 255, 245))
+        # Label (top-left, big bold white) — geometry mirrors the
+        # standalone IJ pad (rect.x()+14 / rect.y()+8 / 32-tall area)
+        # at the slightly smaller tile scale. Drop .upper() so DB
+        # labels render as the operator typed them.
+        p.setPen(QColor(255, 255, 255, 240))
         p.setFont(self._font_name)
-        p.drawText(QRectF(rect.x() + 10, rect.y() + 6,
-                          rect.width() - 20, 22),
-                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                   (self._name or "—").upper())
+        p.drawText(QRectF(rect.x() + 12, rect.y() + 8,
+                          rect.width() - 24, 28),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
+                   self._name or "—")
 
-        # Duration (bottom-left, faint white)
+        # Duration (bottom-left, faint white) — same format the
+        # standalone uses: trim the leading zero on durations < 10s
+        # so "5.0s" not "05.0s", "—" when duration is unknown.
+        if self._dur_str:
+            try:
+                secs = float(self._dur_str)
+            except ValueError:
+                secs = 0.0
+            dur_text = (
+                f"{secs:04.1f}s".lstrip("0") or "0.0s"
+            ) if secs > 0 else "—"
+        else:
+            dur_text = "—"
         p.setPen(QColor(255, 255, 255, 180))
         p.setFont(self._font_dur)
-        p.drawText(QRectF(rect.x() + 10, rect.bottom() - 20,
-                          rect.width() - 20, 16),
+        p.drawText(QRectF(rect.x() + 12, rect.bottom() - 22,
+                          rect.width() - 24, 16),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                   f"{self._dur_str}s" if self._dur_str else "—")
+                   dur_text)
 
     def _paint_empty(self, p: QPainter, rect: QRectF, radius: int) -> None:
         # Dark cell with amber dashed border — matches the standalone
@@ -2349,13 +2371,16 @@ class _InstantJinglesPanel(QWidget):
 
         # 3×3 = 9 jingle tiles. Default labels from the placeholder table;
         # Studio overwrites these via set_tiles() with real DB pad data.
+        # Layout matches the new 130×76 tile size with a 4px gap; the
+        # 3×3 grid still anchors at (14, 110) and clears the hotkey
+        # row at y=360.
         self._tiles: list[_JingleTile] = []
         for i, (name, dur, accent) in enumerate(_JINGLE_TILES_DATA):
             tile = _JingleTile(name, dur, accent, self)
             row = i // 3
             col = i % 3
-            x = 14 + col * 132
-            y = 110 + row * 78
+            x = 14 + col * 134
+            y = 110 + row * 80
             tile.move(x, y)
             tile.clicked.connect(lambda idx=i: self.tile_clicked.emit(idx))
             self._tiles.append(tile)
