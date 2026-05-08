@@ -185,7 +185,8 @@ class MainWindow(QMainWindow):
             # Instant Jingles — live broadcast pads (Figma 44:688)
             from ui.instant_jingles import InstantJingles
             self.instant_jingles = InstantJingles(
-                self._db, engine=self._engine)
+                self._db, engine=self._engine,
+                instant_jingle_engine=self._instant_jingle_engine)
             self.instant_jingles.breadcrumb_clicked.connect(self._on_breadcrumb)
             self.instant_jingles.studio_clicked.connect(self._on_studio_clicked)
             self._stack.addWidget(self.instant_jingles)
@@ -215,6 +216,14 @@ class MainWindow(QMainWindow):
                 instant_jingle_engine=self._instant_jingle_engine,
                 sweeper_engine=self._sweeper_engine)
             self.studio.breadcrumb_clicked.connect(self._on_breadcrumb)
+            # Standalone IJ screen → Studio live refresh. When the
+            # operator assigns audio / renames a pad / tweaks a pallet
+            # in ui/instant_jingles.py, Studio's tile grid picks up the
+            # change immediately (no app restart, no navigate-back
+            # required). _force_studio_refresh on showEvent is the
+            # belt; this signal is the suspenders.
+            self.instant_jingles.pads_changed.connect(
+                self.studio._reload_instant_jingles)
             self._stack.addWidget(self.studio)
 
             # Scheduling Hub — premium dark theme rebuild (Figma 231:3).

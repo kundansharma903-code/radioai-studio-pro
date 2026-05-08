@@ -51,7 +51,7 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import (
     QPainter, QColor, QPen, QBrush, QLinearGradient, QRadialGradient,
-    QFont, QMouseEvent, QPaintEvent, QShortcut, QKeySequence,
+    QPainterPath, QFont, QMouseEvent, QPaintEvent, QShortcut, QKeySequence,
 )
 from PyQt6.QtWidgets import (
     QWidget, QFrame, QGraphicsDropShadowEffect, QMessageBox,
@@ -2141,7 +2141,12 @@ _JINGLE_TILES_DATA = [
 
 
 class _JingleTile(QWidget):
-    """One jingle tile — name + duration + play-arrow + colored accent."""
+    """One jingle tile — saturated colored cell with white label + duration.
+
+    Matches the visual treatment of ui/instant_jingles.py:_Pad so the
+    Studio panel reads as vibrant as the standalone Instant Jingles
+    screen instead of a flat-amber row. Filled and empty modes share
+    layout but flip fill semantics."""
 
     clicked = pyqtSignal()
 
@@ -2151,60 +2156,130 @@ class _JingleTile(QWidget):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self._name = name
         self._dur_str = dur_str
-        self._accent = accent
-        self._font_name = inter(10, QFont.Weight.Black, letter_spacing=0.4)
-        self._font_dur  = mono(11, bold=True, letter_spacing=-0.3)
-        self._font_unit = inter(7, QFont.Weight.Bold, letter_spacing=1.2)
-        self._font_play = inter(11, QFont.Weight.Black)
+        self._color = accent          # current pad color (DB-driven on filled tiles)
+        self._is_empty = False        # Studio.set_tiles flips this for trailing tiles
+        self._hover = False
+        self._font_name = inter(13, QFont.Weight.Black, letter_spacing=-0.3)
+        self._font_dur  = mono(10, bold=True)
+        self._font_empty_hd = inter(10, QFont.Weight.Bold, letter_spacing=1.0)
+        self._font_empty_sub = inter(8)
 
-    def set_label(self, name: str, dur_str: str) -> None:
-        """Phase A: refresh tile text from real DB pad data without
-        rebuilding the widget. Layout/colors/sizes untouched."""
-        if name == self._name and dur_str == self._dur_str:
-            return
+    def set_label(self, name: str, dur_str: str,
+                  color: str | None = None, is_empty: bool = False) -> None:
+        """Refresh tile from a fresh DB pad row. ``color`` is the pad's
+        DB color (vibrant fill on filled tiles); ``is_empty`` switches
+        to the dashed-amber 'NEW ENTRY' placeholder rendering."""
+        changed = (name != self._name or dur_str != self._dur_str
+                   or is_empty != self._is_empty
+                   or (color is not None and color != self._color))
         self._name = name
         self._dur_str = dur_str
-        self.update(self.rect())
+        if color is not None:
+            self._color = color
+        self._is_empty = is_empty
+        if changed:
+            self.update(self.rect())
 
     def mousePressEvent(self, e: QMouseEvent) -> None:
         if e.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit()
         super().mousePressEvent(e)
 
+    def enterEvent(self, e):
+        self._hover = True
+        self.update(self.rect())
+        super().enterEvent(e)
+
+    def leaveEvent(self, e):
+        self._hover = False
+        self.update(self.rect())
+        super().leaveEvent(e)
+
     def paintEvent(self, e: QPaintEvent) -> None:
         p = QPainter(self); p.setClipRect(e.rect())
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        r = QRectF(0, 0, self.width(), self.height())
-        # Background — accent-tinted gradient
-        bg = QLinearGradient(0, 0, 0, self.height())
-        bg.setColorAt(0.0, _qcolor_a(self._accent, 0.30))
-        bg.setColorAt(1.0, _qcolor_a(self._accent, 0.10))
-        p.fillRect(r, QBrush(bg))
-        # Border accent color
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        p.setPen(QPen(_qcolor_a(self._accent, 0.55)))
-        p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 8, 8)
-        # Name (top-left)
-        p.setPen(QColor(self._accent)); p.setFont(self._font_name)
-        p.drawText(QRectF(10, 6, self.width() - 30, 14),
-                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                   self._name.upper())
-        # Play arrow (top-right)
-        p.setPen(QColor(self._accent)); p.setFont(self._font_play)
-        p.drawText(QRectF(self.width() - 22, 4, 18, 18),
-                   Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
-                   "▶")
-        # Duration (big mono, center-bottom)
-        p.setPen(QColor(self._accent)); p.setFont(self._font_dur)
-        p.drawText(QRectF(10, 26, self.width() - 30, 24),
-                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                   self._dur_str)
-        # SEC unit
-        p.setPen(_qcolor_a(self._accent, 0.7)); p.setFont(self._font_unit)
-        p.drawText(QRectF(10, 50, 30, 12),
-                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                   "SEC")
+        rect = QRectF(1, 1, self.width() - 2, self.height() - 2)
+        radius = 8
+        color = QColor(self._color or "#f59e0b")
+
+        if self._is_empty:
+            self._paint_empty(p, rect, radius)
+        else:
+            self._paint_filled(p, rect, radius, color)
         p.end()
+
+    def _paint_filled(self, p: QPainter, rect: QRectF, radius: int,
+                      color: QColor) -> None:
+        # Saturated fill — top is the picked color, bottom is darkened
+        # for depth (mirrors ui/instant_jingles.py:_Pad._paint_filled).
+        bottom = QColor(color)
+        bottom.setHsl(color.hue(), color.saturation(),
+                      max(0, color.lightness() - 35), 255)
+        g = QLinearGradient(rect.topLeft(), rect.bottomLeft())
+        g.setColorAt(0.0, color)
+        g.setColorAt(1.0, bottom)
+        path = QPainterPath()
+        path.addRoundedRect(rect, radius, radius)
+        p.setClipPath(path)
+        p.fillRect(rect, QBrush(g))
+        # Hover top-stripe highlight
+        if self._hover:
+            p.fillRect(QRectF(rect.x(), rect.y(),
+                              rect.width(), rect.height() * 0.4),
+                       QColor(255, 255, 255, 30))
+        p.setClipping(False)
+
+        # Brighter top border accent — adds the "glow" feel
+        bright = QColor(color)
+        bright.setHsl(color.hue(), color.saturation(),
+                      min(255, color.lightness() + 30), 255)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(bright, 1.4))
+        p.drawRoundedRect(rect, radius, radius)
+
+        # Label (top-left, white)
+        p.setPen(QColor(255, 255, 255, 245))
+        p.setFont(self._font_name)
+        p.drawText(QRectF(rect.x() + 10, rect.y() + 6,
+                          rect.width() - 20, 22),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   (self._name or "—").upper())
+
+        # Duration (bottom-left, faint white)
+        p.setPen(QColor(255, 255, 255, 180))
+        p.setFont(self._font_dur)
+        p.drawText(QRectF(rect.x() + 10, rect.bottom() - 20,
+                          rect.width() - 20, 16),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   f"{self._dur_str}s" if self._dur_str else "—")
+
+    def _paint_empty(self, p: QPainter, rect: QRectF, radius: int) -> None:
+        # Dark cell with amber dashed border — matches the standalone
+        # Instant Jingles screen so the operator gets a consistent
+        # "Empty slot" cue across both surfaces.
+        path = QPainterPath()
+        path.addRoundedRect(rect, radius, radius)
+        p.setClipPath(path)
+        p.fillRect(rect, QColor("#0e1020"))
+        if self._hover:
+            tint = QColor(AMBER); tint.setAlphaF(0.06)
+            p.fillRect(rect, tint)
+        p.setClipping(False)
+
+        pen = QPen(QColor(AMBER), 1.2, Qt.PenStyle.DashLine)
+        pen.setDashPattern([4, 3])
+        p.setPen(pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawRoundedRect(rect, radius, radius)
+
+        p.setPen(QColor(AMBER))
+        p.setFont(self._font_empty_hd)
+        p.drawText(QRectF(rect.x(), rect.y() + 16, rect.width(), 14),
+                   Qt.AlignmentFlag.AlignCenter, "NEW ENTRY")
+        p.setPen(QColor(TEXT_MUTED))
+        p.setFont(self._font_empty_sub)
+        p.drawText(QRectF(rect.x(), rect.y() + 36, rect.width(), 12),
+                   Qt.AlignmentFlag.AlignCenter, "Empty slot")
 
 
 class _JingleHotkey(QWidget):
@@ -2296,16 +2371,19 @@ class _InstantJinglesPanel(QWidget):
     # ── Public API ───────────────────────────────────────────────────────
 
     def set_tiles(self, pads: list[dict]) -> None:
-        """Bind tile labels + durations to real DB pad rows. `pads` is a
-        list of dicts with keys 'label', 'duration_ms'. Trailing tiles
-        beyond len(pads) render as 'Empty' (no-op on click)."""
+        """Bind tile labels + durations + DB color to real pad rows.
+        Trailing tiles beyond len(pads) flip to the dashed-amber
+        empty-slot rendering (no-op on click)."""
         for i, tile in enumerate(self._tiles):
             if i < len(pads):
                 lbl = (pads[i].get("label") or "—").strip() or "—"
                 dur_s = (int(pads[i].get("duration_ms") or 0)) / 1000.0
-                tile.set_label(lbl, _fmt_jingle_dur(dur_s))
+                color = pads[i].get("color") or "#f59e0b"
+                tile.set_label(lbl, _fmt_jingle_dur(dur_s),
+                               color=color, is_empty=False)
             else:
-                tile.set_label("Empty", "—")
+                tile.set_label("Empty", "—",
+                               color="#f59e0b", is_empty=True)
 
     def set_demo_active(self, label: str, total_seconds: float) -> None:
         """A pad just started — show its label + remaining countdown."""
@@ -4830,6 +4908,13 @@ class Studio(QWidget):
             if not fp or not os.path.exists(fp):
                 continue
             try:
+                # Per-pad color drives the Studio tile fill so the panel
+                # looks as vibrant as the standalone Instant Jingles
+                # screen — operator picks colors there, Studio mirrors.
+                try:
+                    pad_color = r["color"]
+                except (KeyError, IndexError, TypeError):
+                    pad_color = None
                 pad = {
                     "id":          int(r["id"]),
                     "label":       (r["label"] or "—"),
@@ -4837,6 +4922,7 @@ class Studio(QWidget):
                     "duration_ms": int(r["duration_ms"] or 0),
                     "volume":      int(r["volume"] or 100),
                     "behaviour":   (r["behaviour"] or "play_once"),
+                    "color":       pad_color or "#f59e0b",
                 }
             except (KeyError, IndexError, TypeError, ValueError) as exc:
                 log.debug(f"[studio] skipping malformed pad row: {exc}")
@@ -5171,6 +5257,21 @@ class Studio(QWidget):
         except Exception as exc:
             log.debug(f"[studio] force refresh: upcoming reload failed: {exc}")
         self._refresh_history()
+        # Pick up any pad mutations made in the standalone IJ screen
+        # since the last show. Cheap — single SQL + 9 label sets.
+        try:
+            self._reload_instant_jingles()
+        except Exception as exc:
+            log.debug(f"[studio] force refresh: IJ reload failed: {exc}")
+
+    def _reload_instant_jingles(self) -> None:
+        """Re-pull jingle pads from DB and re-bind labels on the
+        Studio IJ panel. Safe to call before the panel is constructed
+        (during ctor seeding) and when MainWindow signals that the
+        standalone Instant Jingles screen wrote to the DB."""
+        self._jingle_pads = self._load_jingle_pads_from_db()
+        if hasattr(self, "_instant_jingles") and self._instant_jingles is not None:
+            self._instant_jingles.set_tiles(self._jingle_pads)
 
     # ────────────────────────────────────────────────────────────────────
     # Visual polish — root paintEvent (atmospheric background)

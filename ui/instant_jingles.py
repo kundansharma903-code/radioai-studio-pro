@@ -1160,11 +1160,18 @@ class InstantJingles(QWidget):
     pallet_changed     = pyqtSignal(int)
     pad_played         = pyqtSignal(int, str)   # pad_id, file_path
     pad_selected       = pyqtSignal(int)        # pad_id (right-click)
+    pads_changed       = pyqtSignal()           # any DB mutation that affects what Studio renders
 
-    def __init__(self, db, parent=None, engine=None):
+    def __init__(self, db, parent=None, engine=None,
+                 instant_jingle_engine=None):
         super().__init__(parent)
         self._db = db
         self._audio_engine = engine    # shared AudioEngine (Option C DI)
+        # Caller-provided shared InstantJingleEngine (set by MainWindow
+        # so Studio + standalone screen drive the same polyphony state).
+        # When None, fall through to creating an own instance below
+        # (legacy/test path; backward-compat with prior ctor shape).
+        self._shared_ije = instant_jingle_engine
 
         # State
         self._pallets: list[dict]   = []
@@ -1204,10 +1211,17 @@ class InstantJingles(QWidget):
 
         # Polyphonic playback engine — Phase B4 rebased on AudioEngine.
         # IJE is now a thin adapter; constructor takes the shared engine.
+        # When MainWindow injected a shared instance via the
+        # `instant_jingle_engine` kwarg, reuse it so both the standalone
+        # screen and Studio's IJ panel see the same playing-state and
+        # polyphony cap. Otherwise (legacy/test paths) build a new one.
         try:
-            from core.instant_jingle_engine import InstantJingleEngine
-            self._engine = InstantJingleEngine(
-                engine=self._audio_engine, parent=self)
+            if self._shared_ije is not None:
+                self._engine = self._shared_ije
+            else:
+                from core.instant_jingle_engine import InstantJingleEngine
+                self._engine = InstantJingleEngine(
+                    engine=self._audio_engine, parent=self)
             self._engine.pad_started.connect(self._on_engine_started)
             self._engine.pad_ended.connect(self._on_engine_ended)
             self._engine.pad_stopped.connect(self._on_engine_stopped)
@@ -1798,6 +1812,7 @@ class InstantJingles(QWidget):
                 })
             self._load_pallets()
             self._select_pallet(new_id)
+            self._emit_pads_changed()
         except Exception as exc:
             log.error(f"add pallet failed: {exc}")
             QMessageBox.critical(self, "Add failed", str(exc))
@@ -1819,6 +1834,7 @@ class InstantJingles(QWidget):
                                    {"name": new_name.strip()})
             self._load_pallets()
             self._select_pallet(self._selected_pallet_id)
+            self._emit_pads_changed()
         except Exception as exc:
             log.error(f"rename pallet failed: {exc}")
             QMessageBox.critical(self, "Rename failed", str(exc))
@@ -1858,6 +1874,7 @@ class InstantJingles(QWidget):
             self._db.delete_pallet(self._selected_pallet_id)
             self._selected_pallet_id = None
             self._load_pallets()
+            self._emit_pads_changed()
         except Exception as exc:
             log.error(f"delete pallet failed: {exc}")
             QMessageBox.critical(self, "Delete failed", str(exc))
@@ -1872,10 +1889,20 @@ class InstantJingles(QWidget):
                 f"pallet {self._selected_pallet_id} output → {idx + 1} "
                 f"({OUTPUT_LABELS[idx + 1]})"
             )
+            self._emit_pads_changed()
         except Exception as exc:
             log.error(f"update_pallet output failed: {exc}")
 
     # ── EDITOR change handlers (DB writes happen here) ───────────────────
+
+    def _emit_pads_changed(self) -> None:
+        """Notify external listeners (MainWindow → Studio) that something
+        in jingle_pads / jingle_pallets just changed. Defensive try/except
+        so a stale Studio listener can't take this screen down."""
+        try:
+            self.pads_changed.emit()
+        except Exception as exc:
+            log.debug(f"pads_changed emit failed: {exc}")
 
     def _refresh_editor(self):
         """Re-populate the editor with the currently-selected pad."""
@@ -1912,6 +1939,7 @@ class InstantJingles(QWidget):
             pad["label"] = new_label
         self._repaint_pad(pad_id)
         self._update_status_count()
+        self._emit_pads_changed()
 
     def _on_editor_color(self, pad_id: int, hex_color: str):
         try:
@@ -1924,6 +1952,7 @@ class InstantJingles(QWidget):
         if pad:
             pad["color"] = hex_color
         self._repaint_pad(pad_id)
+        self._emit_pads_changed()
 
     def _on_editor_output(self, pad_id: int, output: int):
         # Per-pad output not stored in jingle_pads (column doesn't exist);
@@ -1941,6 +1970,7 @@ class InstantJingles(QWidget):
         pad = self._find_pad(pad_id)
         if pad:
             pad["volume"] = volume
+        self._emit_pads_changed()
 
     def _on_editor_behaviour(self, pad_id: int, behaviour: str):
         try:
@@ -1952,6 +1982,7 @@ class InstantJingles(QWidget):
         pad = self._find_pad(pad_id)
         if pad:
             pad["behaviour"] = behaviour
+        self._emit_pads_changed()
 
     def _on_assign_audio(self, pad_id: int):
         """File picker → store path + auto-detected duration into the pad."""
@@ -1983,6 +2014,7 @@ class InstantJingles(QWidget):
         self._load_pads(self._selected_pallet_id)
         self._select_pad(pad_id)
         self._refresh_editor()
+        self._emit_pads_changed()
 
     def _on_clear_pad(self, pad_id: int):
         ans = QMessageBox.question(
@@ -2002,6 +2034,7 @@ class InstantJingles(QWidget):
         self._load_pads(self._selected_pallet_id)
         self._select_pad(pad_id)
         self._refresh_editor()
+        self._emit_pads_changed()
 
     def _on_test_pad(self, pad_id: int):
         """Plays through the pad's configured output. TODO: route to monitor
