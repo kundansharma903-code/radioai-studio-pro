@@ -1932,6 +1932,11 @@ class _LibrariesPanel(QWidget):
     # ↔ jingles ↔ etc.). Studio listens, fetches the right list from
     # DB, and calls set_songs / set_sweepers as appropriate.
     library_type_changed = pyqtSignal(str)   # tile name (e.g. "Sweepers")
+    add_clicked     = pyqtSignal()      # ADD     — append selected row to queue
+    insert_clicked  = pyqtSignal()      # INSERT  — insert at queue head
+    replace_clicked = pyqtSignal()      # REPLACE — overwrite queue head
+    delete_clicked  = pyqtSignal()      # DELETE  — remove selected row from queue
+    prepair_clicked = pyqtSignal()      # PREPAIR — load to deck paused, ready to play
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1963,15 +1968,23 @@ class _LibrariesPanel(QWidget):
         self._b_add = _LibActionButton("ADD", "+", GREEN, primary=True,
                                        parent=self)
         self._b_add.move(14, 110)
+        self._b_add.clicked.connect(self.add_clicked.emit)
         self._b_ins = _LibActionButton("INSERT", "↳", GREEN, parent=self)
         self._b_ins.move(14, 192); self._b_ins.set_enabled(False)
+        self._b_ins.clicked.connect(self.insert_clicked.emit)
         self._b_rep = _LibActionButton("REPLACE", "⇄", GREEN, parent=self)
         self._b_rep.move(14, 274); self._b_rep.set_enabled(False)
+        self._b_rep.clicked.connect(self.replace_clicked.emit)
         self._b_prep = _LibActionButton("PREPAIR", "🎙", PURPLE_LIGHT,
                                         parent=self)
         self._b_prep.move(14, 356)
+        self._b_prep.clicked.connect(self.prepair_clicked.emit)
         self._b_del = _LibActionButton("DELETE", "🗑", RED, parent=self)
         self._b_del.move(14, 438); self._b_del.set_enabled(False)
+        self._b_del.clicked.connect(self.delete_clicked.emit)
+        # Track the table's current selection so action handlers can
+        # resolve "which row did the operator click on?".
+        self._selected_idx: int = -1
 
         # Songs table
         self._table = _LibSongsTable(self)
@@ -2038,11 +2051,19 @@ class _LibrariesPanel(QWidget):
         return self._active_type
 
     def _on_row_selected(self, idx: int) -> None:
-        # Enable INSERT/REPLACE/DELETE
+        # Cache the idx so action handlers can resolve which library
+        # row the operator just clicked. Enable INSERT/REPLACE/DELETE
+        # — ADD + PREPAIR stay always-enabled (they fall back to
+        # last-selected, or no-op when nothing is selected).
+        self._selected_idx = int(idx)
         sel = idx >= 0
         self._b_ins.set_enabled(sel)
         self._b_rep.set_enabled(sel)
         self._b_del.set_enabled(sel)
+
+    def selected_row_index(self) -> int:
+        """Current library-table selection. -1 when nothing is picked."""
+        return self._selected_idx
 
     def _on_row_double_clicked(self, idx: int) -> None:
         self.song_double_clicked.emit(int(idx))
@@ -3318,6 +3339,13 @@ class Studio(QWidget):
     DEFAULT_VOLUME = 85
     FADE_OUT_MS = 3000
 
+    # Master-library jingles fired through the IJE share the broadcast
+    # device with `jingle_pads`-driven plays. The IJE keys plays by
+    # pad_id; library-jingle ids could collide with real pad ids in
+    # the same numeric range, so we offset library plays by a large
+    # constant. Reads remain library-id-based on Studio's side.
+    LIBRARY_JINGLE_PAD_OFFSET = 1_000_000
+
     def __init__(self, db, parent=None, engine=None, scheduler=None,
                  instant_jingle_engine=None, sweeper_engine=None):
         super().__init__(parent)
@@ -3569,8 +3597,30 @@ class Studio(QWidget):
         # between songs / sweepers / etc. Studio caches the resolved row
         # list so row-double-click can dispatch correctly.
         self._library_sweepers: list[dict] = []
+        # Master-library jingle cache — populated when the operator
+        # clicks the 🔔 Jingles tile. Row double-click fires the jingle
+        # through the InstantJingleEngine using a high-offset pad-id
+        # namespace so it can't collide with real jingle_pads ids.
+        self._library_jingles: list[dict] = []
+        # Active campaigns cache — populated when the $ Spots tile is
+        # clicked. Row double-click reuses the existing scheduler
+        # spot-due dispatch path (_do_scheduler_spot_due) so the
+        # broadcast-correct defer-vs-immediate logic is shared with
+        # scheduled spots.
+        self._library_spots: list[dict] = []
         self._libraries.library_type_changed.connect(
             self._on_library_type_changed)
+        # Action stack — ADD / INSERT / REPLACE / DELETE / PREPAIR.
+        # Each handler resolves the currently-selected library row
+        # (any type) into a queue-dict and applies the action to
+        # _queue_songs. Up Coming repaints from _queue_songs whenever
+        # the scheduler is idle, so manual mutations are visible
+        # immediately during Live-Assist.
+        self._libraries.add_clicked.connect(self._on_lib_add)
+        self._libraries.insert_clicked.connect(self._on_lib_insert)
+        self._libraries.replace_clicked.connect(self._on_lib_replace)
+        self._libraries.delete_clicked.connect(self._on_lib_delete)
+        self._libraries.prepair_clicked.connect(self._on_lib_prepair)
 
         self._instant_jingles = _InstantJinglesPanel(self)
         self._instant_jingles.move(1148, BODY_Y)
@@ -5157,9 +5207,13 @@ class Studio(QWidget):
           • "Songs" / "Tracks" / "Favorites" → load to deck (legacy path).
           • "Sweepers" → fire the row as an overlay on the current
                          deck song via the SweeperEngine.
-          • Other types (Jingles / Spots / Voice) — reserved for future
-                         wiring, no-op for now (table is empty so
-                         double-click can't reach this branch anyway).
+          • "Jingles" → fire the row through the InstantJingleEngine
+                         on the broadcast device (deck song keeps playing,
+                         jingle layers on top — same surface as a pad
+                         click). Esc clears via the existing IJE stop_all.
+          • Other types (Spots / Voice) — reserved for future wiring,
+                         no-op for now (table is empty so the double-
+                         click can't reach this branch anyway).
         """
         active = self._libraries.active_library_type() \
             if hasattr(self, "_libraries") else "Songs"
@@ -5168,18 +5222,77 @@ class Studio(QWidget):
                 sw = self._library_sweepers[idx]
                 self._on_play_sweeper_overlay(int(sw.get("id") or 0))
             return
+        if active == "Jingles":
+            if 0 <= idx < len(self._library_jingles):
+                self._on_play_library_jingle(self._library_jingles[idx])
+            return
+        if active == "Spots":
+            if 0 <= idx < len(self._library_spots):
+                campaign_id = int(self._library_spots[idx].get("id") or 0)
+                if campaign_id:
+                    log.info(
+                        f"[studio] manual spot play from Libraries panel "
+                        f"campaign={campaign_id}")
+                    # Reuse the scheduler spot-due path so the defer-
+                    # vs-immediate decision (don't interrupt mid-song)
+                    # mirrors what scheduled spots do. Operator clicks
+                    # → spot fires now if the deck is idle, or queues
+                    # for next song-end if a track is on air.
+                    self._do_scheduler_spot_due(campaign_id)
+            return
         # Songs (and the placeholder types) reuse the existing deck path.
         if 0 <= idx < len(self._queue_songs):
             self._on_queue_song_play(self._queue_songs[idx])
 
+    def _on_play_library_jingle(self, jingle: dict) -> None:
+        """Fire a master-library jingle through the IJE. The library
+        id is offset by ``LIBRARY_JINGLE_PAD_OFFSET`` before being used
+        as the IJE pad-key so it can't collide with a real
+        `jingle_pads.id`. Click again on the same row toggles the
+        fade-stop (existing JINGLE_FADE_MS path)."""
+        if self._instant_jingle_engine is None:
+            log.debug("[studio] library-jingle play skipped — no IJE")
+            return
+        path = (jingle.get("file_path") or "").strip()
+        if not path:
+            log.warning(
+                f"[studio] library-jingle id={jingle.get('id')} skipped "
+                f"— no file_path on row")
+            return
+        pad_key = self.LIBRARY_JINGLE_PAD_OFFSET + int(jingle.get("id") or 0)
+        # Toggle: if this exact library jingle is already playing, fade
+        # it out instead of re-triggering. Mirrors the tile-click toggle
+        # behaviour the operator already knows.
+        if (hasattr(self._instant_jingle_engine, "is_playing")
+                and hasattr(self._instant_jingle_engine, "fade_stop_pad")):
+            try:
+                if self._instant_jingle_engine.is_playing(pad_key):
+                    self._instant_jingle_engine.fade_stop_pad(
+                        pad_key, fade_ms=self.JINGLE_FADE_MS)
+                    return
+            except Exception as exc:
+                log.warning(
+                    f"[studio] library-jingle fade_stop failed: {exc}")
+        try:
+            self._instant_jingle_engine.play_pad(
+                pad_key, path,
+                volume=int(jingle.get("volume") or 85),
+                loop=False,
+            )
+        except Exception as exc:
+            log.warning(f"[studio] library-jingle play_pad failed: {exc}")
+
     def _on_library_type_changed(self, name: str) -> None:
         """A type tile in the Libraries panel was clicked. Swap the
         table source to match. Songs use _queue_songs (same as before);
-        Sweepers query the live `sweepers` table; the remaining tiles
-        are placeholders for now and clear the table.
+        Sweepers query the live `sweepers` table; Jingles query the
+        master `jingles` library; the remaining tiles are placeholders
+        for now and clear the table.
         """
         if name == "Songs":
             self._library_sweepers = []
+            self._library_jingles = []
+            self._library_spots = []
             self._libraries.set_songs(
                 self._queue_songs, len(self._queue_songs))
             return
@@ -5210,12 +5323,267 @@ class Studio(QWidget):
                               or "—",
                 })
             self._library_sweepers = cache
+            self._library_jingles = []
+            self._library_spots = []
+            self._libraries.set_songs(display, len(display))
+            return
+        if name == "Jingles":
+            try:
+                rows = list(self._db._conn().execute(
+                    "SELECT * FROM jingles WHERE is_enabled = 1 "
+                    "ORDER BY display_order, id"
+                ).fetchall())
+            except Exception as exc:
+                log.warning(f"[studio] jingles fetch failed: {exc}")
+                rows = []
+            cache: list[dict] = []
+            display: list[dict] = []
+            for r in rows:
+                keys = r.keys()
+                cache.append({
+                    "id":          int(r["id"]),
+                    "name":        r["name"]       if "name"       in keys else "",
+                    "category":    r["category"]   if "category"   in keys else "",
+                    "file_path":   r["file_path"]  if "file_path"  in keys else "",
+                    "duration_ms": int(r["duration_ms"] or 0)
+                                    if "duration_ms" in keys else 0,
+                    "volume":      85,
+                })
+                display.append({
+                    "title":  r["name"]     if "name"     in keys else "—",
+                    "artist": (r["category"] if "category" in keys else "—")
+                              or "—",
+                })
+            self._library_jingles = cache
+            self._library_sweepers = []
+            self._library_spots = []
+            self._libraries.set_songs(display, len(display))
+            return
+        if name == "Spots":
+            try:
+                rows = list(self._db.get_campaigns(active_only=True))
+            except Exception as exc:
+                log.warning(f"[studio] campaigns fetch failed: {exc}")
+                rows = []
+            cache: list[dict] = []
+            display: list[dict] = []
+            for r in rows:
+                keys = r.keys()
+                cache.append({
+                    "id":           int(r["id"]),
+                    "name":         r["name"]        if "name"        in keys else "",
+                    "auto_code":    r["auto_code"]   if "auto_code"   in keys else "",
+                    "file_count":   int(r["file_count"] or 0)
+                                     if "file_count" in keys else 0,
+                    "end_date":     r["end_date"]    if "end_date"    in keys else "",
+                })
+                # Render in the songs-table widget — title is the
+                # campaign name, artist-line shows file count + end
+                # date (or "Never") so the operator can spot expired
+                # / unscheduled rows at a glance.
+                end = (r["end_date"] if "end_date" in keys else "") or "Never"
+                fcount = int(r["file_count"] or 0) if "file_count" in keys else 0
+                display.append({
+                    "title":  r["name"] if "name" in keys else "—",
+                    "artist": f"{fcount} file{'s' if fcount != 1 else ''}  ·  ends {end}",
+                })
+            self._library_spots = cache
+            self._library_sweepers = []
+            self._library_jingles = []
             self._libraries.set_songs(display, len(display))
             return
         # Placeholder tiles: clear the table so the operator sees the
         # empty list rather than stale song data.
         self._library_sweepers = []
+        self._library_jingles = []
+        self._library_spots = []
         self._libraries.set_songs([], 0)
+
+    # ────────────────────────────────────────────────────────────────────
+    # Libraries panel — Action Stack (ADD / INSERT / REPLACE / DELETE / PREPAIR)
+    # ────────────────────────────────────────────────────────────────────
+
+    def _selected_library_row_as_queue_dict(self) -> Optional[dict]:
+        """Translate the currently-selected library row into the
+        queue-dict shape that ``_queue_songs`` + the Up Coming panel
+        expect. Returns None when nothing is selected (or the active
+        type doesn't translate to a queue item)."""
+        if not hasattr(self, "_libraries"):
+            return None
+        active = self._libraries.active_library_type()
+        idx = self._libraries.selected_row_index()
+        if idx < 0:
+            return None
+        if active in ("Songs", "Tracks", "Favorites"):
+            if 0 <= idx < len(self._queue_songs):
+                return dict(self._queue_songs[idx])
+            return None
+        if active == "Sweepers":
+            if 0 <= idx < len(self._library_sweepers):
+                sw = self._library_sweepers[idx]
+                return {
+                    "id":          int(sw.get("id") or 0),
+                    "artist":      "SWEEPER",
+                    "title":       sw.get("name") or "—",
+                    "duration_ms": int(sw.get("duration_ms") or 0),
+                    "_item_type":  "sweeper",
+                }
+            return None
+        if active == "Jingles":
+            if 0 <= idx < len(self._library_jingles):
+                j = self._library_jingles[idx]
+                return {
+                    "id":          int(j.get("id") or 0),
+                    "artist":      "JINGLE",
+                    "title":       j.get("name") or "—",
+                    "file_path":   j.get("file_path") or "",
+                    "duration_ms": int(j.get("duration_ms") or 0),
+                    "_item_type":  "jingle",
+                }
+            return None
+        if active == "Spots":
+            if 0 <= idx < len(self._library_spots):
+                sp = self._library_spots[idx]
+                return {
+                    "id":          int(sp.get("id") or 0),
+                    "artist":      "SPOT",
+                    "title":       sp.get("name") or "—",
+                    "duration_ms": 0,
+                    "_item_type":  "spot",
+                }
+            return None
+        return None
+
+    def _on_lib_add(self) -> None:
+        """ADD — append the selected library row to the manual queue
+        and refresh Up Coming. No-op when nothing is selected."""
+        row = self._selected_library_row_as_queue_dict()
+        if row is None:
+            log.debug("[studio] ADD — no row selected")
+            return
+        self._queue_songs.append(row)
+        self._refresh_upcoming_panel()
+        log.info(
+            f"[studio] ADD → queue (now {len(self._queue_songs)} items): "
+            f"{row.get('_item_type', 'song')} {row.get('title')!r}")
+
+    def _on_lib_insert(self) -> None:
+        """INSERT — push the selected library row to the head of the
+        manual queue (NEXT slot)."""
+        row = self._selected_library_row_as_queue_dict()
+        if row is None:
+            log.debug("[studio] INSERT — no row selected")
+            return
+        self._queue_songs.insert(0, row)
+        self._refresh_upcoming_panel()
+        log.info(
+            f"[studio] INSERT → queue head: "
+            f"{row.get('_item_type', 'song')} {row.get('title')!r}")
+
+    def _on_lib_replace(self) -> None:
+        """REPLACE — overwrite the queue head with the selected
+        library row. When the queue is empty this falls through to
+        an append (operator's intent is 'this is the next track')."""
+        row = self._selected_library_row_as_queue_dict()
+        if row is None:
+            log.debug("[studio] REPLACE — no row selected")
+            return
+        if self._queue_songs:
+            old = self._queue_songs[0]
+            self._queue_songs[0] = row
+            log.info(
+                f"[studio] REPLACE → queue head: "
+                f"{old.get('title')!r} → {row.get('title')!r}")
+        else:
+            self._queue_songs.append(row)
+            log.info(
+                f"[studio] REPLACE (empty queue, treated as ADD) "
+                f"→ {row.get('title')!r}")
+        self._refresh_upcoming_panel()
+
+    def _on_lib_delete(self) -> None:
+        """DELETE — remove the selected library row's entry from the
+        manual queue (matching id + item_type). Does NOT touch the DB
+        — the library catalog is intact; only the broadcast queue is
+        mutated."""
+        row = self._selected_library_row_as_queue_dict()
+        if row is None:
+            log.debug("[studio] DELETE — no row selected")
+            return
+        target_id   = int(row.get("id") or 0)
+        target_type = row.get("_item_type")
+        before = len(self._queue_songs)
+        self._queue_songs = [
+            s for s in self._queue_songs
+            if not (int(s.get("id") or 0) == target_id
+                    and s.get("_item_type") == target_type)
+        ]
+        removed = before - len(self._queue_songs)
+        if removed:
+            self._refresh_upcoming_panel()
+            log.info(
+                f"[studio] DELETE → removed {removed} from queue "
+                f"({row.get('title')!r})")
+        else:
+            log.info(
+                f"[studio] DELETE — {row.get('title')!r} not in queue")
+
+    def _on_lib_prepair(self) -> None:
+        """PREPAIR — load the selected library row's audio to the
+        deck in PAUSED state so the operator can hit Play / Cue at
+        the exact moment they want. Cleans up any prior deck channel
+        first so two prepared tracks can't collide.
+
+        Songs / Jingles / Sweepers all have file_path; Spots resolve
+        their first playable spot_file from the DB."""
+        row = self._selected_library_row_as_queue_dict()
+        if row is None:
+            log.debug("[studio] PREPAIR — no row selected")
+            return
+        if self._engine is None:
+            log.warning("[studio] PREPAIR — no AudioEngine wired")
+            return
+        # Resolve a file_path. Songs/Jingles/Sweepers carry it on the
+        # row; Spots need a DB lookup against spot_files.
+        path = row.get("file_path") or ""
+        if row.get("_item_type") == "spot" and not path:
+            try:
+                spot_files = self._db.get_spot_files(int(row["id"]))
+                for sf in spot_files:
+                    keys = sf.keys() if hasattr(sf, "keys") else []
+                    p = sf["file_path"] if "file_path" in keys else None
+                    if p and os.path.exists(p):
+                        path = p; break
+            except Exception as exc:
+                log.warning(f"[studio] PREPAIR spot file lookup: {exc}")
+        if not path or not os.path.exists(path):
+            log.warning(
+                f"[studio] PREPAIR — file missing for "
+                f"{row.get('title')!r}: {path!r}")
+            return
+        # Tear down any prior deck channel.
+        if self._playback_cid is not None:
+            try:
+                self._engine.cleanup(self._playback_cid)
+            except Exception as exc:
+                log.debug(f"[studio] PREPAIR cleanup error: {exc}")
+            self._playback_cid = None
+            self._playback_kind = None
+        try:
+            cid = self._engine.load_file(path)
+            self._engine.set_volume(cid, self._master_volume)
+            # Deliberately NO play() call — operator confirms with the
+            # transport ▶ when ready.
+            self._playback_cid = cid
+            self._playback_kind = "deck"
+            self._current_track = row
+        except Exception as exc:
+            log.warning(f"[studio] PREPAIR load_file failed: {exc}")
+            return
+        log.info(
+            f"[studio] PREPAIR — deck loaded paused: "
+            f"{row.get('_item_type', 'song')} {row.get('title')!r} "
+            f"(ch={cid})")
 
     # ────────────────────────────────────────────────────────────────────
     # 1Hz tick — header clock
