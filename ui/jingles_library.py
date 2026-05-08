@@ -418,6 +418,7 @@ class _JingleRow(QFrame):
         self._jingle = jingle
         self._selected = False
         self._hover = False
+        self._playing = False     # flips when this row's preview is on
         self.setFixedSize(TABLE_W, self.ROW_H)
         self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         # Inner widgets
@@ -438,6 +439,15 @@ class _JingleRow(QFrame):
 
     def set_selected(self, sel: bool) -> None:
         self._selected = sel; self.update()
+
+    def set_playing(self, playing: bool) -> None:
+        """Flip the right-gutter glyph between ▶ (idle) and ■ (preview
+        live). Only the row whose preview is currently airing has this
+        on; the screen handles the swap when previews start/stop."""
+        if self._playing == playing:
+            return
+        self._playing = bool(playing)
+        self.update()
 
     def enterEvent(self, e):
         self._hover = True; self.update(); super().enterEvent(e)
@@ -498,11 +508,13 @@ class _JingleRow(QFrame):
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                    self._jingle.get("last_used_label") or "—")
 
-        # Play arrow (right gutter)
-        p.setPen(QColor(AMBER_LIGHT))
+        # Play / Stop glyph (right gutter) — flips when previewing.
+        glyph_color = QColor(GREEN_LIGHT) if self._playing else QColor(AMBER_LIGHT)
+        p.setPen(glyph_color)
         p.setFont(inter(11, QFont.Weight.Black))
         p.drawText(QRectF(self.width() - 32, 0, 24, self.height()),
-                   Qt.AlignmentFlag.AlignCenter, "▶")
+                   Qt.AlignmentFlag.AlignCenter,
+                   "■" if self._playing else "▶")
         p.end()
 
 
@@ -733,10 +745,16 @@ class JinglesLibrary(QWidget):
     jingle_selected    = pyqtSignal(int)
     add_jingle_clicked = pyqtSignal()      # for future 106:2 dialog hook
 
+    # 15s preview cap matches the Songs Library convention. Long
+    # enough that the operator hears the hook of any reasonable jingle,
+    # short enough that an accidental click doesn't spew audio.
+    PREVIEW_DURATION_MS = 15000
+    PREVIEW_VOLUME = 80          # monitor-loudness, not on-air
+
     def __init__(self, db, parent=None, engine=None):
         super().__init__(parent)
         self._db = db
-        self._engine = engine          # not wired yet — preview deferred
+        self._engine = engine          # AudioEngine — wired for preview play
 
         # State
         self._jingles: list[dict] = []
@@ -747,6 +765,13 @@ class JinglesLibrary(QWidget):
         self._duration_filter: str = "All Durations"
         self._only_enabled: bool = False
         self._search_text: str = ""
+
+        # Preview-channel state — shared by row ▶ icon + right-panel
+        # scrubber ▶ button. Single channel; switching jingles cleans
+        # up the previous one.
+        self._preview_cid: Optional[int] = None
+        self._preview_jingle_id: Optional[int] = None
+        self._preview_timer: Optional[QTimer] = None
 
         # Refs
         self._table_layout: Optional[QVBoxLayout] = None
@@ -779,6 +804,15 @@ class JinglesLibrary(QWidget):
         self._build_status_bar()
 
         self._load_jingles()
+
+        # Engine EOS hookup so the row glyph + scrubber state reset
+        # when the preview ends naturally (15s cap typically beats it).
+        if self._engine is not None and hasattr(self._engine, "playback_ended"):
+            try:
+                self._engine.playback_ended.connect(
+                    self._on_engine_playback_ended)
+            except Exception as exc:
+                log.debug(f"engine signal hookup failed: {exc}")
 
         # Live clock
         self._tick()
@@ -1242,7 +1276,12 @@ class JinglesLibrary(QWidget):
         self._open_editor_dialog(jingle_id=int(jingle_id))
 
     def _on_row_play(self, jingle_id: int):
-        log.info(f"[jingles] row play ▶ — preview wiring deferred (id={jingle_id})")
+        """Toggle a 15-second on-screen preview for the row's jingle."""
+        if (self._preview_cid is not None
+                and self._preview_jingle_id == int(jingle_id)):
+            self._stop_preview()
+            return
+        self._start_preview(int(jingle_id))
 
     def _refresh_details(self):
         cur = next((j for j in self._jingles
@@ -1377,7 +1416,103 @@ class JinglesLibrary(QWidget):
             "template used when exporting.")
 
     def _on_scrubber_play(self):
-        log.info("[jingles] scrubber ▶ — preview wiring deferred")
+        """Right-panel scrubber ▶ button — same behaviour as the row
+        ▶ icon, scoped to whichever jingle is currently selected."""
+        if self._selected_id is None:
+            return
+        if (self._preview_cid is not None
+                and self._preview_jingle_id == int(self._selected_id)):
+            self._stop_preview()
+            return
+        self._start_preview(int(self._selected_id))
+
+    # ── PREVIEW ──────────────────────────────────────────────────────────
+
+    def _start_preview(self, jingle_id: int) -> None:
+        """Spin up a single-channel preview for the given jingle. Any
+        currently-playing preview is killed first so the operator never
+        gets two voices through monitor."""
+        if self._engine is None:
+            log.warning("[jingles] preview skipped — no AudioEngine wired")
+            return
+        jingle = next((j for j in self._jingles
+                       if int(j["id"]) == int(jingle_id)), None)
+        if jingle is None:
+            return
+        path = jingle.get("file_path") or ""
+        import os as _os
+        if not path or not _os.path.exists(path):
+            log.warning(
+                f"[jingles] preview skipped — file missing: {path!r}")
+            return
+
+        # Kill any prior preview (different jingle, or stale).
+        if self._preview_cid is not None:
+            self._stop_preview()
+
+        try:
+            cid = self._engine.load_file(path)
+        except Exception as exc:
+            log.warning(f"[jingles] preview load_file failed: {exc}")
+            return
+        try:
+            self._engine.set_volume(cid, self.PREVIEW_VOLUME)
+        except Exception as exc:
+            log.debug(f"[jingles] set_volume failed: {exc}")
+        try:
+            self._engine.play(cid)
+        except Exception as exc:
+            log.warning(f"[jingles] play failed: {exc}")
+            try:
+                self._engine.cleanup(cid)
+            except Exception:
+                pass
+            return
+
+        self._preview_cid = cid
+        self._preview_jingle_id = int(jingle_id)
+
+        # 15s auto-stop timer (matches Songs Library convention).
+        if self._preview_timer is None:
+            self._preview_timer = QTimer(self)
+            self._preview_timer.setSingleShot(True)
+            self._preview_timer.timeout.connect(self._stop_preview)
+        self._preview_timer.stop()
+        self._preview_timer.start(self.PREVIEW_DURATION_MS)
+
+        # Visual cue: the row that's playing flips ▶ → ■.
+        for r in self._row_widgets:
+            r.set_playing(r.jingle_id == int(jingle_id))
+
+        log.info(
+            f"[jingles] preview started ch={cid} id={jingle_id} "
+            f"({_fmt_duration(jingle.get('duration_ms') or 0)} cap "
+            f"{self.PREVIEW_DURATION_MS}ms)")
+
+    def _stop_preview(self) -> None:
+        """Tear down the preview channel + reset visual state.
+        Idempotent — safe when nothing is playing."""
+        if self._preview_cid is None:
+            return
+        cid = self._preview_cid
+        if self._preview_timer is not None:
+            self._preview_timer.stop()
+        try:
+            self._engine.cleanup(cid)
+        except Exception as exc:
+            log.debug(f"[jingles] preview cleanup error: {exc}")
+        self._preview_cid = None
+        self._preview_jingle_id = None
+        for r in self._row_widgets:
+            r.set_playing(False)
+        log.info(f"[jingles] preview stopped (ch={cid})")
+
+    def _on_engine_playback_ended(self, channel_id: int) -> None:
+        """Mirror the Songs Library teardown when the engine reports
+        natural EOS for our preview channel. Other channels are not
+        ours — defensive guard."""
+        if channel_id == self._preview_cid:
+            self._stop_preview()
 
     # ── CLOCK ────────────────────────────────────────────────────────────
 

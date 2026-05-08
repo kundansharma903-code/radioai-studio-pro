@@ -865,6 +865,19 @@ class _AvailableElementsCard(QWidget):
             lambda _: self.filter_changed.emit())
         self._dd_sweeper_position.setVisible(False)
 
+        # Jingle-type config — only visible when element_type='jingle'.
+        # Single dropdown (no position concept like sweepers — jingles
+        # are standalone). "Random (any)" pulls from the master library
+        # via random_from_category mode + no category constraint;
+        # picking a specific jingle pins the slot via item_id.
+        self._dd_jingle_pick = _SmallDropdown(
+            ["Random (any)"], 400, 32, parent=self)
+        self._dd_jingle_pick.move(15, 183)
+        self._dd_jingle_pick.selection_changed.connect(
+            lambda _: self.filter_changed.emit())
+        self._dd_jingle_pick.setVisible(False)
+        self._jingle_id_by_label: dict[str, int] = {}
+
         # Final visibility pass after every widget exists.
         self._apply_sweeper_visibility()
 
@@ -902,11 +915,14 @@ class _AvailableElementsCard(QWidget):
 
     def _apply_sweeper_visibility(self) -> None:
         """Filters-tab visibility is per element type:
-          • song / jingle / spot / voice → song-filter dropdowns visible
-          • sweeper                      → sweeper picker + position visible
-        Both groups hide when the sub-tab leaves Filters."""
+          • song / spot / voice → song-filter dropdowns visible
+          • sweeper             → sweeper picker + position visible
+          • jingle              → jingle picker visible (no position)
+        All groups hide when the sub-tab leaves Filters."""
         on_filters = self._subtab == "filters"
         is_sweeper = self._element_type == "sweeper"
+        is_jingle  = self._element_type == "jingle"
+        is_song_like = not (is_sweeper or is_jingle)
         song_filter_widgets = (
             self._dd_sound_code, self._dd_popularity, self._dd_era,
             self._dd_properties, self._dd_vocal,
@@ -916,9 +932,10 @@ class _AvailableElementsCard(QWidget):
             self._cat_dd,
         )
         for w in song_filter_widgets:
-            w.setVisible(on_filters and not is_sweeper)
+            w.setVisible(on_filters and is_song_like)
         self._dd_sweeper_pick.setVisible(on_filters and is_sweeper)
         self._dd_sweeper_position.setVisible(on_filters and is_sweeper)
+        self._dd_jingle_pick.setVisible(on_filters and is_jingle)
 
     def set_sweepers(self, sweepers: list) -> None:
         """Populate the specific-sweeper picker. Each entry is either a
@@ -954,6 +971,36 @@ class _AvailableElementsCard(QWidget):
 
     def selected_sweeper_position(self) -> str:
         return self._dd_sweeper_position.value()
+
+    def set_jingles(self, jingles: list) -> None:
+        """Populate the specific-jingle picker. Each entry is a
+        sqlite3.Row or dict — uses ``id`` and ``name``. The first
+        label is always ``"Random (any)"`` so the operator can keep
+        the historic random behaviour without picking a specific row."""
+        labels = ["Random (any)"]
+        self._jingle_id_by_label = {}
+        for j in jingles or []:
+            try:
+                jid = int(j["id"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            try:
+                name = str(j["name"]) if j["name"] else f"Jingle #{jid}"
+            except Exception:
+                name = f"Jingle #{jid}"
+            label = f"{name}  (#{jid})"
+            labels.append(label)
+            self._jingle_id_by_label[label] = jid
+        self._dd_jingle_pick._options = labels
+        if self._dd_jingle_pick._value not in labels:
+            self._dd_jingle_pick._value = labels[0]
+        self._dd_jingle_pick.update()
+
+    def selected_jingle_id(self):
+        """Return the jingle_id for the current pick, or None when the
+        operator left the picker on 'Random (any)'."""
+        label = self._dd_jingle_pick.value()
+        return self._jingle_id_by_label.get(label)
 
     def filter_state(self) -> dict:
         """Snapshot the filter UI as a dict matching scheduler's
@@ -1724,6 +1771,18 @@ class ClockEditor(QWidget):
             self._lib.set_sweepers(list(self._db.get_sweepers_active()))
         except Exception as exc:
             log.warning(f"load sweepers failed: {exc}")
+        # Same pattern for jingles — picker appears when element_type=
+        # 'jingle'. Pulls active rows from the master `jingles` library
+        # so anything added via the Jingles Library editor (Figma 106:2)
+        # shows up immediately.
+        try:
+            jingle_rows = self._db._conn().execute(
+                "SELECT * FROM jingles WHERE is_enabled = 1 "
+                "ORDER BY display_order, id"
+            ).fetchall()
+            self._lib.set_jingles(list(jingle_rows))
+        except Exception as exc:
+            log.warning(f"load jingles failed: {exc}")
 
         # Populate fields per mode
         if mode == MODE_NEW or self._source_id is None:
@@ -1862,16 +1921,25 @@ class ClockEditor(QWidget):
             mp = e.get("minute_position") or 0
             ds = e.get("duration_seconds") or 0
             next_min = max(next_min, float(mp) + float(ds) / 60.0)
-        # Sweeper slots can be pinned to a specific sweeper or left as
-        # random_from_category. The picker + position dropdowns only
-        # show when element_type='sweeper' — they no-op otherwise.
+        # Sweeper / Jingle slots can be pinned to a specific row from
+        # the corresponding library or left as random_from_category.
+        # The picker dropdowns only show for matching element_type;
+        # other types ignore them.
         sweeper_id = None
         sweeper_position = None
+        jingle_id = None
+        item_id = None
         selection_mode = "random_from_category"
         if ui_type == "sweeper":
             sweeper_id = self._lib.selected_sweeper_id()
             sweeper_position = self._lib.selected_sweeper_position()
             if sweeper_id is not None:
+                item_id = sweeper_id
+                selection_mode = "specific"
+        elif ui_type == "jingle":
+            jingle_id = self._lib.selected_jingle_id()
+            if jingle_id is not None:
+                item_id = jingle_id
                 selection_mode = "specific"
         return {
             "element_type":     ui_type,
@@ -1883,7 +1951,7 @@ class ClockEditor(QWidget):
             "minute_position":  int(min(59.0, next_min)),
             "duration_seconds": int(avg_s),
             "selection_mode":   selection_mode,
-            "item_id":          sweeper_id,
+            "item_id":          item_id,
             "sweeper_position": sweeper_position,
             "era":              fdict.get("era"),
         }

@@ -796,13 +796,38 @@ class SchedulerEngine(QObject):
         return True
 
     def _pick_jingle(self, slot) -> Optional[dict]:
-        """Jingle = a row from jingle_pads. selection_mode dispatches."""
+        """Jingle resolution: master library (`jingles`) is the canonical
+        source — Clock Editor writes ``item_id`` referencing a jingles
+        row when the operator pins one. The legacy `jingle_pads` path
+        is kept as a fallback so any clock authored before the master-
+        library migration still works.
+
+        Mode dispatch:
+          • specific + item_id   → master `jingles` row (preferred);
+                                   falls back to `jingle_pads.id` lookup
+                                   for pre-migration slots that referenced
+                                   the pad-grid table by id.
+          • random_from_category + cat_id → legacy pad-grid path
+                                   (cat_id interpreted as pallet_id).
+                                   The master library doesn't map to
+                                   pallets, so this path stays on pads.
+          • random_any (default)  → random pick from the master library;
+                                   falls back to active pads when the
+                                   library is empty (greenfield install)."""
         import random
         mode = self._slot_mode(slot)
         item_id = self._slot_item_id(slot)
-        cat_id  = self._slot_category_id(slot)   # interpreted as pallet_id
+        cat_id  = self._slot_category_id(slot)   # legacy: interpreted as pallet_id
 
         if mode == "specific" and item_id:
+            # Prefer the master library.
+            row = self._db._conn().execute(
+                "SELECT * FROM jingles WHERE id = ? AND is_enabled = 1 "
+                "AND file_path IS NOT NULL AND file_path != ''",
+                [item_id]).fetchone()
+            if row:
+                return self._jingle_to_item(row)
+            # Fallback: legacy pad-grid lookup (pre-migration clocks).
             row = self._db._conn().execute(
                 "SELECT * FROM jingle_pads WHERE id = ? "
                 "AND file_path IS NOT NULL AND file_path != ''",
@@ -814,7 +839,17 @@ class SchedulerEngine(QObject):
             if pads:
                 return self._jingle_pad_to_item(random.choice(pads))
 
-        # random_any (or fall-through from above)
+        # random_any — master library first.
+        try:
+            jingles = self._db._conn().execute(
+                "SELECT * FROM jingles WHERE is_enabled = 1 "
+                "AND file_path IS NOT NULL AND file_path != ''"
+            ).fetchall()
+        except Exception:
+            jingles = []
+        if jingles:
+            return self._jingle_to_item(random.choice(jingles))
+        # Greenfield fallback — nothing in `jingles`, take a pad.
         pads = list(self._db.get_jingle_pads_active())
         if not pads:
             return None
@@ -827,6 +862,21 @@ class SchedulerEngine(QObject):
             "item_id":     int(row["id"]) if row and "id" in row.keys() else None,
             "file_path":   row["file_path"] if row and "file_path" in row.keys() else None,
             "title":       row["label"]     if row and "label"     in row.keys() else "Jingle",
+            "artist":      "JINGLE",
+            "duration_ms": int(row["duration_ms"] or 0)
+                           if row and "duration_ms" in row.keys() else 0,
+        }
+
+    @staticmethod
+    def _jingle_to_item(row) -> dict:
+        """Translate a `jingles` library row into a scheduler item dict.
+        Same shape as _jingle_pad_to_item so the deck dispatch path
+        doesn't care which source the row came from."""
+        return {
+            "item_type":   "jingle",
+            "item_id":     int(row["id"]) if row and "id" in row.keys() else None,
+            "file_path":   row["file_path"] if row and "file_path" in row.keys() else None,
+            "title":       row["name"]     if row and "name"     in row.keys() else "Jingle",
             "artist":      "JINGLE",
             "duration_ms": int(row["duration_ms"] or 0)
                            if row and "duration_ms" in row.keys() else 0,
