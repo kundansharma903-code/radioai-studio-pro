@@ -2314,6 +2314,29 @@ class Database:
         s["jingle_pads"]       = cnt("SELECT COUNT(*) FROM jingle_pads WHERE file_path IS NOT NULL AND file_path != ''")
         s["sweepers_total"]    = cnt("SELECT COUNT(*) FROM sweepers WHERE is_enabled=1")
         s["playlists_total"]   = cnt("SELECT COUNT(*) FROM playlists")
+        # Stitcher: a single-row config table. "Active modules" =
+        # count of non-empty audio paths (opening / separator /
+        # closing / fallback) when module_enabled=1. 0 when the
+        # module is disabled or the row is missing — keeps the
+        # ControlPanel card honest about whether anything will
+        # actually fire.
+        try:
+            row = conn.execute(
+                "SELECT module_enabled, opening_audio, separator_audio, "
+                "closing_audio, fallback_audio FROM stitcher_config "
+                "WHERE id = 1"
+            ).fetchone()
+            if row and int(row[0] or 0):
+                s["stitcher_active"] = sum(
+                    1 for p in (row[1], row[2], row[3], row[4])
+                    if (p or "").strip())
+                s["stitcher_enabled"] = 1
+            else:
+                s["stitcher_active"] = 0
+                s["stitcher_enabled"] = 0
+        except Exception:
+            s["stitcher_active"] = 0
+            s["stitcher_enabled"] = 0
         s["force_clocks"]      = cnt("SELECT COUNT(*) FROM force_clocks WHERE is_active=1")
         s["final_logs"]        = cnt("SELECT COUNT(*) FROM final_logs")
         s["auto_schedule_set"] = cnt("SELECT COUNT(*) FROM auto_schedule")

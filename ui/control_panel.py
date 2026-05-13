@@ -834,13 +834,27 @@ class ControlPanel(QWidget):
             log.error(f"stats error: {exc}")
             return
 
+        # Stitcher line is module-state aware: counts non-empty audio
+        # slots when enabled, says "Disabled" when not. Single source
+        # of truth (stitcher_active + stitcher_enabled) lives on
+        # get_dashboard_stats so any other surface stays in lockstep.
+        if int(stats.get("stitcher_enabled", 0) or 0):
+            stitcher_line = f"{stats.get('stitcher_active', 0)} Active Modules"
+        else:
+            stitcher_line = "Module Disabled"
+
         live_stats = {
             "songs":           f"{stats.get('songs_total', 0):,} Songs Available",
-            "instant_jingles": f"{stats.get('jingles_total', 0)} Jingles • {stats.get('jingle_pallets', 0)} Pallets",
+            # Instant Jingles surfaces the live PADS count — pads with
+            # audio assigned can actually fire on the broadcast device.
+            # The master library jingle count lives on the separate
+            # 🔔 Jingles card; conflating them was the original bug.
+            "instant_jingles": f"{stats.get('jingle_pads', 0)} Pads · "
+                               f"{stats.get('jingle_pallets', 0)} Pallets",
             "spots":           f"{stats.get('campaigns_active', 0)} Active Spots",
             "jingles":         f"{stats.get('jingles_total', 0)} Jingles Available",
             "sweepers":        f"{stats.get('sweepers_total', 0)} Sweepers Available",
-            "stitcher":        "3 Active Modules",
+            "stitcher":        stitcher_line,
             "scheduling":      f"{stats.get('clocks_total', 0)} Clocks · "
                                f"{stats.get('auto_schedule_set', 0)} Hour Slots",
         }
