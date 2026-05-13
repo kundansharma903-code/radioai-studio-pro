@@ -77,6 +77,80 @@ class StitcherEngine:
     def is_running(self):
         return self._running
 
+    @staticmethod
+    def assemble_sequence(config: dict, songs: list) -> list:
+        """Build a play_block-ready sequence from a stitcher_config
+        dict + a list of song dicts. Returns ``[]`` when there aren't
+        enough valid hooks AND no fallback is configured — caller
+        decides whether to fire or skip.
+
+        Single source of truth shared by:
+          • The Stitcher screen's "▶ Preview Full" button
+          • Studio's break-approaching auto-fire path
+
+        ``songs`` is a list of dicts with: ``id`` (optional),
+        ``file_path`` (required for hook extraction), ``hook_in_ms`` /
+        ``hook_out_ms`` (required and must be valid).
+
+        Sequence shape:
+          [opening] + [hook1, sep, hook2, sep, ..., hookN] + [closing]
+
+        When fewer than min_hooks_required songs have valid hooks,
+        the sequence collapses to ``[fallback]`` if a fallback path
+        is set + on disk; else returns ``[]``."""
+        opening = (config.get("opening_audio") or "").strip()
+        sep = (config.get("separator_audio") or "").strip()
+        closing = (config.get("closing_audio") or "").strip()
+        fallback = (config.get("fallback_audio") or "").strip()
+        min_hooks = int(config.get("min_hooks_required") or 2)
+        max_hooks = int(config.get("max_hooks") or 4)
+
+        # Filter to songs with playable file + valid hook range.
+        hooked: list[dict] = []
+        for s in songs or []:
+            fp = (s.get("file_path") or "").strip()
+            if not fp or not os.path.exists(fp):
+                continue
+            hi = int(s.get("hook_in_ms") or 0)
+            ho = int(s.get("hook_out_ms") or 0)
+            if hi <= 0 or ho <= hi:
+                continue
+            hooked.append({
+                "id":         s.get("id"),
+                "file_path":  fp,
+                "hook_in_ms": hi,
+                "hook_out_ms": ho,
+                "title":      s.get("title") or "HOOK",
+            })
+            if len(hooked) >= max_hooks:
+                break
+
+        # Not enough hooks → fallback OR empty.
+        if len(hooked) < min_hooks:
+            if fallback and os.path.exists(fallback):
+                return [{"file_path": fallback, "play_full": True,
+                         "label": "FALLBACK"}]
+            return []
+
+        seq: list[dict] = []
+        if opening and os.path.exists(opening):
+            seq.append({"file_path": opening, "play_full": True,
+                        "label": "OPENING"})
+        for i, song in enumerate(hooked):
+            seq.append({
+                "file_path": song["file_path"],
+                "seek_sec":  song["hook_in_ms"] / 1000.0,
+                "label":     song["title"],
+            })
+            # Separator between hooks (not after the last).
+            if i < len(hooked) - 1 and sep and os.path.exists(sep):
+                seq.append({"file_path": sep, "play_full": True,
+                            "label": "SEP"})
+        if closing and os.path.exists(closing):
+            seq.append({"file_path": closing, "play_full": True,
+                        "label": "CLOSING"})
+        return seq
+
     # ── Internal ──────────────────────────────────────────────────────────────
 
     def _build_and_play(self, sequence, target_vol, on_step):

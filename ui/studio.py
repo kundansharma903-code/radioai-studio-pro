@@ -4456,8 +4456,177 @@ class Studio(QWidget):
     def _on_scheduler_song_advance(self) -> None:
         log.info("[studio] scheduler: song_auto_advance")
 
+    # ── Stitcher trigger state (idempotency) ─────────────────────────────
+    _STITCHER_REFIRE_GUARD_S = 120   # don't re-fire within 2 min of last fire
+    _STITCHER_DECK_DUCK_VOL = 20     # deck volume during stitcher block
+    _STITCHER_DUCK_FADE_MS = 600
+
     def _on_scheduler_break_warn(self, seconds_until: int) -> None:
         log.info(f"[studio] scheduler: break_approaching in {seconds_until}s")
+        # Pre-break trigger for the Stitcher block. Wired to the same
+        # break-approaching signal that drives the Next Break panel —
+        # the engine fires once per break (idempotency guard via
+        # _last_stitcher_fire_ts) when the operator has the module
+        # enabled + 'before every break' trigger active.
+        try:
+            self._maybe_fire_stitcher_block(int(seconds_until))
+        except Exception as exc:
+            log.warning(f"[studio] stitcher fire path failed: {exc}")
+
+    def _maybe_fire_stitcher_block(self, seconds_until: int) -> None:
+        """Pre-break Stitcher fire path. Decision tree:
+          1. Engine wired? (decorative ctor / tests get None)
+          2. Engine NOT already running? (don't stack blocks)
+          3. Refire guard cleared? (≥2 min since last fire)
+          4. stitcher_config.module_enabled + trigger_before_every_break?
+          5. Sequence assembles to a non-empty list (enough hooks +
+             audio paths configured)?
+        On every guard miss, log + return. On pass, duck the deck +
+        fire the engine + restore on done."""
+        if self._stitcher_engine is None:
+            return
+        try:
+            if self._stitcher_engine.is_running:
+                log.debug("[stitcher] already running — skip break-fire")
+                return
+        except Exception:
+            pass
+        # Refire dedupe — break_approaching may pulse multiple times.
+        import time as _time
+        now = _time.time()
+        last = getattr(self, "_last_stitcher_fire_ts", 0.0)
+        if (now - float(last or 0.0)) < self._STITCHER_REFIRE_GUARD_S:
+            return
+        # Config gate
+        try:
+            cfg = self._db.get_stitcher_config()
+        except Exception as exc:
+            log.warning(f"[stitcher] config load failed: {exc}")
+            return
+        if not int(cfg.get("module_enabled") or 0):
+            return
+        if not int(cfg.get("trigger_before_every_break") or 0):
+            return
+        # Resolve next-N upcoming songs from scheduler peek; each must
+        # carry file_path + hook_in_ms + hook_out_ms for the assembler
+        # to honor it as a valid hook.
+        max_hooks = int(cfg.get("max_hooks") or 4)
+        songs_with_hooks = self._collect_upcoming_songs_for_stitcher(
+            count=max_hooks)
+        if not songs_with_hooks:
+            return
+        from core.stitcher_engine import StitcherEngine
+        sequence = StitcherEngine.assemble_sequence(cfg, songs_with_hooks)
+        if not sequence:
+            log.info(
+                "[stitcher] break-fire skipped — no valid sequence "
+                "(check audio paths + hook cue points)")
+            return
+        # Duck the deck so the stitcher block is hearable above the song.
+        self._duck_deck_for_stitcher()
+        try:
+            self._stitcher_engine.play_block(
+                sequence, target_vol=85,
+                on_done=self._on_stitcher_block_done,
+            )
+            self._last_stitcher_fire_ts = now
+            log.info(
+                f"[stitcher] break-fire — {len(sequence)} parts "
+                f"({seconds_until}s before break)")
+        except Exception as exc:
+            log.error(f"[stitcher] play_block failed: {exc}",
+                      exc_info=True)
+            # On failure restore the deck immediately so the operator
+            # isn't left with a permanently-ducked broadcast.
+            self._restore_deck_after_stitcher()
+
+    def _collect_upcoming_songs_for_stitcher(
+            self, count: int) -> list[dict]:
+        """Pull up to *count* upcoming songs (scheduler peek when
+        wired, recent-songs fallback otherwise) and resolve each row's
+        full file_path + hook cue points for the assembler."""
+        ids: list[int] = []
+        if (self._scheduler is not None
+                and hasattr(self._scheduler, "peek_next")):
+            try:
+                items = self._scheduler.peek_next(count) or []
+            except Exception:
+                items = []
+            for it in items:
+                if (it or {}).get("item_type") != "song":
+                    continue
+                rid = it.get("item_id") or it.get("song_id")
+                if rid is None:
+                    continue
+                ids.append(int(rid))
+        if not ids:
+            # Fallback — last N enabled songs (so a greenfield AUTO
+            # mode with no scheduler still has SOMETHING to assemble).
+            try:
+                rows = self._db._conn().execute(
+                    "SELECT id FROM songs WHERE is_enabled = 1 "
+                    "ORDER BY id DESC LIMIT ?", [int(count)]
+                ).fetchall()
+                ids = [int(r[0]) for r in rows]
+            except Exception:
+                ids = []
+        if not ids:
+            return []
+        out: list[dict] = []
+        try:
+            qmarks = ",".join("?" * len(ids))
+            rows = self._db._conn().execute(
+                f"SELECT id, title, artist, file_path, hook_in_ms, "
+                f"hook_out_ms FROM songs WHERE id IN ({qmarks})", ids
+            ).fetchall()
+            by_id = {int(r["id"]): dict(r) for r in rows}
+            for sid in ids:
+                if sid in by_id:
+                    out.append(by_id[sid])
+        except Exception as exc:
+            log.debug(f"[stitcher] song hydrate failed: {exc}")
+        return out
+
+    def _duck_deck_for_stitcher(self) -> None:
+        """Fade the deck volume down so the stitcher block isn't
+        drowned by the song. Stash the pre-duck volume so we can
+        restore exactly. No-op when the deck is idle."""
+        if self._engine is None or self._playback_cid is None:
+            return
+        try:
+            self._pre_stitcher_volume = int(getattr(
+                self, "_master_volume", self.DEFAULT_VOLUME))
+            self._engine.fade_volume_to(
+                self._playback_cid,
+                self._STITCHER_DECK_DUCK_VOL,
+                self._STITCHER_DUCK_FADE_MS,
+            )
+        except Exception as exc:
+            log.debug(f"[stitcher] duck failed: {exc}")
+
+    def _restore_deck_after_stitcher(self) -> None:
+        """Inverse of _duck_deck_for_stitcher. Always called on
+        on_done so the deck never stays ducked even when the engine
+        errors mid-block."""
+        if self._engine is None or self._playback_cid is None:
+            return
+        target = int(getattr(self, "_pre_stitcher_volume",
+                             self.DEFAULT_VOLUME) or self.DEFAULT_VOLUME)
+        try:
+            self._engine.fade_volume_to(
+                self._playback_cid, target,
+                self._STITCHER_DUCK_FADE_MS,
+            )
+        except Exception as exc:
+            log.debug(f"[stitcher] restore failed: {exc}")
+
+    def _on_stitcher_block_done(self) -> None:
+        """Stitcher engine finished playback — restore the deck.
+        Runs from the stitcher's worker thread; the fade call goes
+        through the AudioEngine's BASS slide which is thread-safe at
+        the BASS layer."""
+        log.info("[stitcher] block done → restoring deck volume")
+        self._restore_deck_after_stitcher()
 
     def _on_scheduler_next_break_in(self, seconds: int) -> None:
         if hasattr(self, "_next_break") and self._next_break is not None:
