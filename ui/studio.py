@@ -564,6 +564,19 @@ class _NowPlayer(QWidget):
             bars.append(max(0.18, min(1.0, envelope + harmonic + jitter)))
         self._wf_bars = bars
 
+        # Studio Settings overlays (Figma 69:2 — CROSSFADE PREVIEW card).
+        # Driven by Studio._update_waveform_overlays on every position
+        # tick. Defaults to off; toggles surface via _on_engine_position.
+        self._show_overlay = False
+        self._overlay_start_frac = 0.85
+        self._show_flash = False
+        self._flash_point_frac = 0.85
+        self._flash_active = False
+        self._flash_on = False
+        self._flash_timer = QTimer(self)
+        self._flash_timer.setInterval(500)
+        self._flash_timer.timeout.connect(self._on_flash_tick)
+
     # ── LIVE dot pulse property ──────────────────────────────────────────
 
     def _get_live_halo_alpha(self) -> float:
@@ -604,6 +617,41 @@ class _NowPlayer(QWidget):
         # dot + halo (visual polish 2/Area 5) which sits at y≈53..65.
         self.update(QRect(530, 14, 280, 30))    # elapsed/total/rem block
         self.update(QRect(102, 50, 720, 38))    # waveform + playhead halo
+
+    # ── Studio Settings overlays (CROSSFADE PREVIEW card) ────────────
+
+    def set_crossfade_overlay(self, enabled: bool,
+                                start_frac: float) -> None:
+        """Toggle the translucent purple zone painted over the
+        right-most portion of the waveform (from start_frac to 1.0).
+        Driven by Studio Settings 'Show crossfade overlap on
+        waveform?' toggle."""
+        self._show_overlay = bool(enabled)
+        self._overlay_start_frac = max(0.0, min(1.0, float(start_frac)))
+        self.update(QRect(102, 50, 720, 38))
+
+    def set_mix_point_flash(self, enabled: bool, point_frac: float,
+                              active: bool) -> None:
+        """Toggle the flashing green vertical line at the mix-point
+        position. `active` controls whether the flash animation runs
+        right now (when the playhead enters the 10-second window
+        before the mix point)."""
+        self._show_flash = bool(enabled)
+        self._flash_point_frac = max(0.0, min(1.0, float(point_frac)))
+        want_anim = bool(enabled) and bool(active)
+        if want_anim and not self._flash_active:
+            self._flash_active = True
+            self._flash_on = True
+            self._flash_timer.start()
+        elif not want_anim and self._flash_active:
+            self._flash_active = False
+            self._flash_on = False
+            self._flash_timer.stop()
+        self.update(QRect(102, 50, 720, 38))
+
+    def _on_flash_tick(self) -> None:
+        self._flash_on = not self._flash_on
+        self.update(QRect(102, 50, 720, 38))
 
     def paintEvent(self, e: QPaintEvent) -> None:
         p = QPainter(self); p.setClipRect(e.rect())
@@ -740,6 +788,32 @@ class _NowPlayer(QWidget):
                 # Remaining: dim green
                 color = _qcolor_a(GREEN, 0.20)
             p.fillRect(QRectF(x, y, bar_w, h), color)
+
+        # Studio Settings CROSSFADE PREVIEW — purple translucent zone
+        # over the right-most portion of the waveform showing where
+        # the upcoming crossfade will fire. Driven by
+        # Studio._update_waveform_overlays.
+        if self._show_overlay and self._overlay_start_frac < 1.0:
+            ox = wf_x + wf_w * self._overlay_start_frac
+            ow = wf_w - wf_w * self._overlay_start_frac
+            # Subtle box, slightly taller than the bars so it reads
+            # as a "zone of activity" without obscuring the bars.
+            p.fillRect(QRectF(ox, wf_y - 4, ow, wf_h + 8),
+                       _qcolor_a(PURPLE, 0.25))
+            p.setPen(QPen(_qcolor_a(PURPLE_LIGHT, 0.55), 1))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawRect(QRectF(ox, wf_y - 4, ow, wf_h + 8))
+
+        # Flash mix point — animated vertical green line at the
+        # mix-point position. Visibility flips on/off via the timer
+        # in _NowPlayer._on_flash_tick. Renders BEFORE the playhead so
+        # the white playhead always wins overlap.
+        if self._show_flash and self._flash_active and self._flash_on:
+            fx = wf_x + wf_w * self._flash_point_frac
+            p.setPen(QPen(_qcolor_a(GREEN_LIGHT, 0.95), 2))
+            p.drawLine(QPointF(fx, wf_y - 6),
+                        QPointF(fx, wf_y + wf_h + 6))
+
         # Playhead — vertical white line with green glow + top dot.
         # Visual polish 2/Area 5: stronger glow (radial halo around the
         # line, not just the fade-out at top/bottom), plus a 4×4 white
@@ -3430,6 +3504,33 @@ class Studio(QWidget):
         self._stop_after_current: bool = False
         self._master_volume: int = self.DEFAULT_VOLUME
         self._fade_out_timer: Optional[QTimer] = None
+        # Per-track guard so the fade-out (driven by Studio Settings
+        # crossfade_duration + fade_out_start) fires exactly once per
+        # playback. Reset on EOS and on every new dispatch.
+        self._fade_triggered_for_cid: Optional[int] = None
+        # During a true song-to-song crossfade, the outgoing track keeps
+        # playing on its original channel (fading to 0) while the new
+        # track starts on a fresh channel. _fading_cid points at the
+        # outgoing channel until its EOS fires; _playback_cid is the
+        # new active deck. Both channels exist simultaneously for the
+        # crossfade window.
+        self._fading_cid: Optional[int] = None
+        # Studio Settings (Figma 69:2) snapshot. _apply_studio_settings
+        # reloads these from the settings table at __init__ end and on
+        # every SettingsStudio.settings_saved broadcast — keeps the
+        # broadcast loop honest without an app restart.
+        self._cfg_missing_file_alert: bool = False
+        self._cfg_fallback_action: str = ""
+        self._cfg_crossfade_dur_s: int = 3
+        self._cfg_fade_out_start_s: int = 6
+        self._cfg_fade_curve: str = "Logarithmic"
+        self._cfg_load_next: str = ""
+        self._cfg_preload_buffer: str = ""
+        self._cfg_automix_trigger: str = ""
+        # CROSSFADE PREVIEW card toggles (Figma 69:2 right column) —
+        # drive _NowPlayer overlay rendering.
+        self._cfg_show_crossfade_preview: bool = False
+        self._cfg_flash_mix_point: bool = False
         self._playback_kind: Optional[str] = None
         self._playback_campaign_id: Optional[int] = None
         self._pre_spot_song_id: Optional[int] = None
@@ -3534,6 +3635,14 @@ class Studio(QWidget):
         # header just shows the location fallback until the first
         # active_clock_changed signal arrives.
         self._seed_active_clock_indicator()
+
+        # Pull Studio Settings into instance attrs so the playback
+        # lifecycle (fade-out trigger, file-missing fallback, master
+        # volume) reads operator-configured values from frame one.
+        try:
+            self._apply_studio_settings()
+        except Exception as exc:
+            log.debug(f"[studio] initial settings apply: {exc}")
 
         log.info("Studio ready (Figma 312:2 — Premium Jazler Style)")
 
@@ -3759,6 +3868,329 @@ class Studio(QWidget):
         }.get(item_type, [])
 
     # ────────────────────────────────────────────────────────────────────
+    # Studio Settings consumers (Figma 69:2) — live-applied
+    # ────────────────────────────────────────────────────────────────────
+
+    def _apply_studio_settings(self) -> None:
+        """Re-read Studio Settings keys + apply them live. Called from
+        __init__ and broadcast from MainWindow on
+        SettingsStudio.settings_saved so the operator never has to
+        restart the app to feel a transition / fallback / volume
+        change. Honours:
+          - master_volume (live volume on the currently-playing cid)
+          - crossfade_duration / fade_out_start / fade_curve_type
+            (drive _maybe_trigger_fade_out)
+          - missing_file_alert / fallback_action (drive
+            _handle_missing_file)
+          - load_next_song / preload_buffer / automix_trigger (logged;
+            full dispatch-timing wiring lands when v1.1 refactors the
+            queue advance path)."""
+        from core.settings import Settings
+        s = Settings()
+        self._cfg_missing_file_alert = s.get_bool(
+            "missing_file_alert", False)
+        self._cfg_fallback_action = (
+            s.get("fallback_action",
+                  "Skip and play next available song") or "")
+        self._cfg_crossfade_dur_s  = s.get_int("crossfade_duration", 3)
+        self._cfg_fade_out_start_s = s.get_int("fade_out_start", 6)
+        self._cfg_fade_curve = (
+            s.get("fade_curve_type", "Logarithmic") or "Logarithmic")
+        self._cfg_load_next = (
+            s.get("load_next_song", "At mix point of current") or "")
+        self._cfg_preload_buffer = (
+            s.get("preload_buffer", "10 seconds ahead") or "")
+        self._cfg_automix_trigger = (
+            s.get("automix_trigger", "At song MIX POINT marker") or "")
+        self._cfg_show_crossfade_preview = s.get_bool(
+            "show_crossfade_preview", False)
+        self._cfg_flash_mix_point = s.get_bool("flash_mix_point", False)
+
+        # Live master-volume on the currently playing deck channel.
+        new_master = s.get_int("master_volume", self.DEFAULT_VOLUME)
+        if new_master != self._master_volume:
+            self._master_volume = new_master
+            if (self._engine is not None
+                    and self._playback_cid is not None
+                    and self._playback_kind == "deck"):
+                try:
+                    self._engine.set_volume(self._playback_cid,
+                                              new_master)
+                except Exception as exc:
+                    log.debug(
+                        f"[studio] live master volume failed: {exc}")
+        log.info(
+            f"[studio] settings applied — master_vol={self._master_volume} "
+            f"fade_out_start={self._cfg_fade_out_start_s}s "
+            f"crossfade={self._cfg_crossfade_dur_s}s "
+            f"curve={self._cfg_fade_curve!r} "
+            f"missing_alert={self._cfg_missing_file_alert} "
+            f"fallback={self._cfg_fallback_action!r}")
+
+    def _update_waveform_overlays(self, cid: int,
+                                    position_ms: int) -> None:
+        """Drive _NowPlayer's CROSSFADE PREVIEW overlays from the
+        Studio Settings toggles. Two overlays:
+          - Translucent purple zone from (duration - fade_out_start) to
+            end — shows where the upcoming crossfade will fire.
+          - Flashing green vertical line at the mix-point position,
+            animated while the playhead is within 10s of the mix point.
+        Both off when their respective toggles are off."""
+        if (not hasattr(self, "_now_player")
+                or self._now_player is None):
+            return
+        if self._playback_kind != "deck":
+            # Hide overlays on non-deck audio (spots, jingles).
+            self._now_player.set_crossfade_overlay(False, 0.0)
+            self._now_player.set_mix_point_flash(False, 0.0, False)
+            return
+        if self._current_duration_ms <= 0:
+            return
+        fade_start_s = max(0, int(self._cfg_fade_out_start_s))
+        if fade_start_s <= 0:
+            # No mix point configured — keep overlays off.
+            self._now_player.set_crossfade_overlay(False, 0.0)
+            self._now_player.set_mix_point_flash(False, 0.0, False)
+            return
+        fade_start_ms = self._current_duration_ms - (fade_start_s * 1000)
+        fade_start_frac = (fade_start_ms /
+                            max(1, self._current_duration_ms))
+
+        # Purple overlap zone — always visible when the toggle is on.
+        self._now_player.set_crossfade_overlay(
+            bool(self._cfg_show_crossfade_preview),
+            float(fade_start_frac))
+
+        # Flash animates only while playhead is within the 10s window
+        # before the mix point.
+        flash_window_ms = 10_000
+        in_window = (position_ms >= max(0, fade_start_ms - flash_window_ms)
+                     and position_ms < fade_start_ms)
+        self._now_player.set_mix_point_flash(
+            bool(self._cfg_flash_mix_point),
+            float(fade_start_frac),
+            bool(in_window))
+
+    def _maybe_trigger_fade_out(self, cid: int, position_ms: int) -> None:
+        """Fade the current deck channel down to 0 when we hit the
+        mix point — prefers the per-song songs.mix_point_ms (set via
+        the Audio Cue Editor) and falls back to (duration -
+        fade_out_start). Crossfade duration drives the ramp length.
+        Once-per-track via _fade_triggered_for_cid.
+
+        After firing the fade, attempts a true song-to-song crossfade:
+        pulls the next deck-bound song from the scheduler and starts
+        it on a fresh channel so the two tracks overlap audibly during
+        the fade-out window. Falls through to the legacy EOS-dispatch
+        path when no next song is available or the file is missing —
+        the broadcast loop is never broken by a crossfade hiccup.
+
+        Curve type is logged today — AudioEngine.fade_volume_to is
+        linear in the underlying BASS call. Non-linear curves
+        (Logarithmic / Exponential / S-Curve) are an AudioEngine
+        extension flagged for v1.1."""
+        if self._playback_kind != "deck":
+            return
+        # Defensive: only the currently active deck channel triggers
+        # fade-out. Position events on stale channels (e.g. the
+        # outgoing fade tail during a crossfade) must not re-fire the
+        # fade logic. _on_engine_position already gates by
+        # _playback_cid in real usage; this guard makes the method
+        # safe to call directly from tests / future call sites too.
+        if cid != self._playback_cid:
+            return
+        if self._current_duration_ms <= 0:
+            return
+        if self._fade_triggered_for_cid == cid:
+            return
+        # Threshold: per-song mix_point_ms wins; else fade_out_start
+        # seconds before end. 0 + no mix point disables the fade.
+        mp_ms = 0
+        try:
+            mp_ms = int((self._current_track or {}).get("mix_point_ms")
+                         or 0)
+        except (TypeError, ValueError):
+            mp_ms = 0
+        if 0 < mp_ms < self._current_duration_ms:
+            threshold_ms = mp_ms
+            trigger_source = f"mix_point_ms={mp_ms}"
+        else:
+            fade_start_s = max(0, int(self._cfg_fade_out_start_s))
+            if fade_start_s <= 0:
+                return
+            threshold_ms = self._current_duration_ms - (fade_start_s * 1000)
+            trigger_source = f"fade_out_start={fade_start_s}s"
+        if position_ms < threshold_ms:
+            return
+        crossfade_ms = max(
+            100, int(self._cfg_crossfade_dur_s) * 1000)
+        try:
+            self._engine.fade_volume_to(cid, 0, crossfade_ms)
+        except Exception as exc:
+            log.debug(f"[studio] fade-out call failed: {exc}")
+            return
+        self._fade_triggered_for_cid = cid
+        log.info(
+            f"[studio] fade-out triggered ch={cid} "
+            f"trigger={trigger_source} ramp={crossfade_ms}ms "
+            f"curve={self._cfg_fade_curve!r}")
+
+        # True crossfade — start the next song on a fresh channel so
+        # the operator hears the two tracks overlap during the fade
+        # window. Best-effort: if anything fails (no scheduler, no
+        # next song, file missing, load error) the broadcast loop
+        # falls back to the legacy EOS dispatch unchanged.
+        self._dispatch_crossfade_overlap()
+
+    def _dispatch_crossfade_overlap(self) -> bool:
+        """Pull the next deck-bound song from the scheduler and start
+        it on a new channel while the current channel keeps fading.
+        Returns True if the crossfade actually started."""
+        if self._engine is None:
+            return False
+        try:
+            cur_id = (self._current_track or {}).get("id")
+        except Exception:
+            cur_id = None
+        try:
+            nxt = self._compute_next_song(after_id=cur_id)
+        except Exception as exc:
+            log.warning(f"[studio] crossfade pick-next: {exc}")
+            return False
+        if not nxt:
+            return False
+        item_type = (nxt.get("item_type") or "song").strip().lower()
+        if item_type != "song":
+            # Sweepers / spots have their own dispatch semantics —
+            # don't crossfade them. EOS path handles them sequentially.
+            return False
+        path = nxt.get("file_path")
+        if not path or not os.path.exists(path):
+            return False
+        try:
+            new_cid = self._engine.load_file(path)
+        except Exception as exc:
+            log.warning(f"[studio] crossfade load_file: {exc}")
+            return False
+        try:
+            self._engine.set_volume(new_cid, self._master_volume)
+            self._engine.play(new_cid)
+        except Exception as exc:
+            log.warning(f"[studio] crossfade play: {exc}")
+            try:
+                self._engine.cleanup(new_cid)
+            except Exception:
+                pass
+            return False
+
+        old_cid = self._playback_cid
+        self._fading_cid = old_cid
+        self._playback_cid = new_cid
+        self._playback_kind = "deck"
+        self._playback_campaign_id = None
+        self._current_track = nxt
+        self._current_duration_ms = (
+            self._engine.get_duration_ms(new_cid)
+            or int(nxt.get("duration_ms", 0) or 0))
+        self._stop_after_current = False
+        # New track gets a fresh fade-trigger evaluation
+        self._fade_triggered_for_cid = None
+
+        if nxt.get("id") is not None:
+            try:
+                self._played_song_ids.add(int(nxt["id"]))
+            except (TypeError, ValueError):
+                pass
+
+        # Best-effort UI sync — the Now Playing tile + queue refresh
+        # mirrors the legacy _on_queue_song_play side-effects. Wrapped
+        # because tests fake _now_player.
+        try:
+            self._apply_playing_state(nxt)
+        except Exception as exc:
+            log.debug(f"[studio] crossfade UI sync: {exc}")
+
+        log.info(
+            f"[studio] crossfade started — old_ch={old_cid} "
+            f"new_ch={new_cid} song={nxt.get('title')!r}")
+        return True
+
+    def _handle_missing_file(self, song: dict,
+                              path: Optional[str]) -> None:
+        """Routes a missing-file event through the operator-configured
+        fallback action. Always logs; toast visibility is gated by
+        Settings.missing_file_alert (Stop-and-Alert always toasts)."""
+        title = (song or {}).get("title") or "Unknown"
+        log.warning(
+            f"[studio] file missing: title={title!r} path={path!r}")
+
+        action = (self._cfg_fallback_action
+                  or "Skip and play next available song").lower()
+        alert = bool(self._cfg_missing_file_alert)
+        must_alert = action.startswith("stop")
+        if alert or must_alert:
+            try:
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.warning(
+                    self, "Track file missing",
+                    f"'{title}' — file not found:\n"
+                    f"{path or '(blank path)'}")
+            except Exception:
+                pass
+
+        if action.startswith("stop"):
+            # Stop scheduler + idle
+            if self._scheduler is not None:
+                try:
+                    self._scheduler.stop()
+                except Exception:
+                    pass
+            self._current_track = None
+            self._apply_idle_state()
+            self._update_status_pills()
+            return
+
+        if action.startswith("re-queue"):
+            # Push the same song back to the head of the queue. The
+            # scheduler tick that follows will re-attempt — buys the
+            # operator a moment to fix the file path on disk.
+            qsong = getattr(self, "_queue_songs", None)
+            if song and isinstance(qsong, list):
+                try:
+                    qsong.insert(0, song)
+                except Exception:
+                    pass
+            self._current_track = None
+            self._apply_idle_state()
+            self._update_status_pills()
+            return
+
+        if action.startswith("play default"):
+            from core.settings import Settings
+            fb_path = (
+                Settings().get("default_fallback_path", "") or "")
+            if fb_path and os.path.exists(fb_path):
+                try:
+                    cid = self._engine.load_file(fb_path)
+                    self._engine.set_volume(cid, self._master_volume)
+                    self._engine.play(cid)
+                    self._playback_cid = cid
+                    self._playback_kind = "deck"
+                    self._current_track = {"title": "(Fallback track)",
+                                             "file_path": fb_path}
+                    self._update_status_pills()
+                    return
+                except Exception as exc:
+                    log.warning(
+                        f"[studio] fallback track load failed: {exc}")
+            # No fallback path configured / file missing → fall through
+
+        # Default: "Skip and play next available song"
+        self._current_track = None
+        self._apply_idle_state()
+        self._update_status_pills()
+
+    # ────────────────────────────────────────────────────────────────────
     # PRESERVED: queue → deck (verbatim from legacy)
     # ────────────────────────────────────────────────────────────────────
 
@@ -3773,17 +4205,17 @@ class Studio(QWidget):
         if not path or not os.path.exists(path):
             # Defensive: _compute_next_song already filters bad files
             # but a stale path on a manually-loaded queue song could
-            # still land here. Idle the UI rather than leaving the
-            # operator with a phantom "now playing" tile.
-            log.warning(f"[studio] file missing: {path!r}")
-            self._current_track = None
-            self._apply_idle_state()
-            self._update_status_pills()
+            # still land here. Delegate to _handle_missing_file which
+            # honours the operator's Studio-Settings fallback choice.
+            self._handle_missing_file(song, path)
             return
 
         if self._fade_out_timer is not None:
             self._fade_out_timer.stop()
             self._fade_out_timer = None
+        # Reset the once-per-track fade-out guard so the new track
+        # gets its fade-out trigger evaluated from scratch.
+        self._fade_triggered_for_cid = None
 
         if self._playback_cid is not None:
             try:
@@ -3895,9 +4327,26 @@ class Studio(QWidget):
             frac = (position_ms / dur) if dur > 0 else 0.0
             self._bottom.set_progress(
                 frac, position_ms // 1000, dur // 1000)
+        # Studio Settings fade-out trigger — kicks in N seconds before
+        # the current track ends, ramps volume to 0 over the configured
+        # crossfade duration. Once-per-track via _fade_triggered_for_cid.
+        self._maybe_trigger_fade_out(channel_id, position_ms)
+        # CROSSFADE PREVIEW + Flash Mix Point overlays on _NowPlayer.
+        self._update_waveform_overlays(channel_id, position_ms)
 
     def _on_engine_playback_ended(self, channel_id: int) -> None:
         """PRESERVED verbatim from legacy — the four EOS paths."""
+        # Crossfade tail — outgoing track just finished its fade-out.
+        # Clean it up silently; the new active deck is already running.
+        if (self._fading_cid is not None
+                and channel_id == self._fading_cid):
+            try:
+                self._engine.cleanup(channel_id)
+            except Exception as exc:
+                log.debug(f"[studio] crossfade-tail cleanup: {exc}")
+            log.info(f"[studio] crossfade tail done ch={channel_id}")
+            self._fading_cid = None
+            return
         if channel_id != self._playback_cid:
             return
         kind = self._playback_kind
@@ -3911,6 +4360,9 @@ class Studio(QWidget):
         self._playback_cid = None
         self._playback_kind = None
         self._playback_campaign_id = None
+        # Clear the fade-out guard — the next track gets a fresh
+        # evaluation on its own _on_engine_position ticks.
+        self._fade_triggered_for_cid = None
 
         # (a) spot resume
         if kind == "spot":

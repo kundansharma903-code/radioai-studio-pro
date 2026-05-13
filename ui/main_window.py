@@ -289,6 +289,23 @@ class MainWindow(QMainWindow):
                 self._on_studio_clicked)
             self._stack.addWidget(self.settings_soundcard)
 
+            # Studio Settings (Figma 69:2) — crossfade, fade curves,
+            # AutoCue, levels, VU meters, cue split, audio engine info.
+            # Third (and final) Settings sub-page.
+            from ui.settings_studio import SettingsStudio
+            self.settings_studio = SettingsStudio(self._db)
+            self.settings_studio.breadcrumb_clicked.connect(
+                self._on_hub_screen_requested)
+            self.settings_studio.studio_clicked.connect(
+                self._on_studio_clicked)
+            # Live-broadcast: every successful Save inside Studio
+            # Settings re-pushes the persisted values into the running
+            # Studio screen so fade/volume/fallback changes feel
+            # immediate (no restart required).
+            self.settings_studio.settings_saved.connect(
+                self._on_studio_settings_saved)
+            self._stack.addWidget(self.settings_studio)
+
             # Studio Single Deck — broadcast operator workstation (Figma 182:2)
             # Phase D1: skeleton; D2 wires manual audio; D3 passes scheduler.
             from ui.studio import Studio
@@ -509,13 +526,13 @@ class MainWindow(QMainWindow):
                 log.warning(f"soundcard reload failed: {exc}")
             self._stack.setCurrentWidget(self.settings_soundcard)
             return
-        if screen == "settings_studio":
-            # v1.1 sub-screen — Studio Settings still deferred.
-            from PyQt6.QtWidgets import QMessageBox
-            QMessageBox.information(
-                self, "Studio Settings",
-                "Studio Settings — coming in v1.1.\n\n"
-                "Configuration UI is part of the next session's roadmap.")
+        if (screen == "settings_studio"
+                and hasattr(self, "settings_studio")):
+            try:
+                self.settings_studio.reload()
+            except Exception as exc:
+                log.warning(f"studio settings reload failed: {exc}")
+            self._stack.setCurrentWidget(self.settings_studio)
             return
         # Everything else is a future scheduling sub-screen.
         from PyQt6.QtWidgets import QMessageBox
@@ -569,6 +586,19 @@ class MainWindow(QMainWindow):
         if hasattr(self, "settings_hub"):
             self._stack.setCurrentWidget(self.settings_hub)
 
+    def _on_studio_settings_saved(self) -> None:
+        """SettingsStudio.settings_saved broadcaster. Pushes the
+        operator's freshly-saved values into the live Studio screen
+        via Studio._apply_studio_settings, so fade-out / fallback /
+        master-volume changes take effect without an app restart."""
+        if hasattr(self, "studio") and hasattr(
+                self.studio, "_apply_studio_settings"):
+            try:
+                self.studio._apply_studio_settings()
+            except Exception as exc:
+                log.warning(
+                    f"studio settings live-apply failed: {exc}")
+
     def _refresh_station_branding(self) -> None:
         """Re-read Settings().station_display + push it to every header
         station label across every mounted screen. Two cohorts:
@@ -589,7 +619,7 @@ class MainWindow(QMainWindow):
         qlabel_screens = (
             "songs_library", "instant_jingles", "spots_commercials",
             "sweepers_library", "jingles_library", "stitcher",
-            "settings_hub", "settings_soundcard",
+            "settings_hub", "settings_soundcard", "settings_studio",
         )
         for attr in qlabel_screens:
             screen = getattr(self, attr, None)
