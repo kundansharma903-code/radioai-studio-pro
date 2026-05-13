@@ -235,6 +235,16 @@ class MainWindow(QMainWindow):
             self.stitcher.studio_clicked.connect(self._on_studio_clicked)
             self._stack.addWidget(self.stitcher)
 
+            # Final Log Creator (Figma 14:2) — broadcast history viewer.
+            # Reads broadcast_log per hour/date. SchedulingHub tile
+            # "final_log_creator" routes here (removed from labels
+            # coming-soon dict in the same commit).
+            from ui.final_log import FinalLog
+            self.final_log = FinalLog(self._db, scheduler=self._scheduler)
+            self.final_log.breadcrumb_clicked.connect(self._on_breadcrumb)
+            self.final_log.studio_clicked.connect(self._on_studio_clicked)
+            self._stack.addWidget(self.final_log)
+
             # Studio Single Deck — broadcast operator workstation (Figma 182:2)
             # Phase D1: skeleton; D2 wires manual audio; D3 passes scheduler.
             from ui.studio import Studio
@@ -418,13 +428,25 @@ class MainWindow(QMainWindow):
                 self, "Auto Program Settings",
                 "Auto Program Settings — coming soon.")
             return
+        if screen == "final_log_creator" and hasattr(self, "final_log"):
+            # Refresh counts + selected hour every time the screen is
+            # shown so Studio playback that happened while elsewhere is
+            # visible immediately.
+            try:
+                self.final_log.reload()
+            except Exception as exc:
+                log.warning(f"final_log reload failed: {exc}")
+            if hasattr(self, "studio") and hasattr(
+                    self.final_log, "set_studio"):
+                self.final_log.set_studio(self.studio)
+            self._stack.setCurrentWidget(self.final_log)
+            return
         # Everything else is a future scheduling sub-screen.
         from PyQt6.QtWidgets import QMessageBox
         labels = {
             "force_clocks":       "Force Clocks Schedule",
             "rebroadcast":        "Rebroadcast Schedule",
             "rds":                "RDS",
-            "final_log_creator":  "Final Log Creator",
             "log_viewer":         "Log Viewer",
             "settings":           "Settings",
             "ai_magic":           "AI Magic",

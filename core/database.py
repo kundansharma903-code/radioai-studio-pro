@@ -312,6 +312,65 @@ class Database:
             [*entry_types, limit],
         ).fetchall()
 
+    # ── Broadcast log — date/hour queries for Final Log Creator (Figma 14:2) ──
+
+    def get_broadcast_log_for_hour(
+        self, year: int, month: int, day: int, hour: int
+    ) -> List[sqlite3.Row]:
+        """All broadcast_log rows played during a specific clock-hour
+        on a specific date, oldest-first. Joins songs/categories/campaigns/
+        jingles so the Final Log Creator can render TITLE / ARTIST /
+        CATEGORY without per-row lookups.
+
+        `hour` is 0..23 (the start hour of the slot; rows are filtered
+        with strftime('%H') == hour so a 10:00–11:00 slot includes
+        any row whose played_at hour is exactly 10)."""
+        date_s = f"{year:04d}-{month:02d}-{day:02d}"
+        hr_s   = f"{hour:02d}"
+        return self._conn().execute(
+            """
+            SELECT bl.*,
+                   s.title          AS song_title,
+                   s.artist         AS song_artist,
+                   s.duration_ms    AS song_duration_ms,
+                   c.name           AS cat_name,
+                   c.color          AS cat_color,
+                   cmp.name         AS campaign_name,
+                   j.name           AS jingle_name
+            FROM   broadcast_log bl
+            LEFT JOIN songs      s   ON bl.song_id     = s.id
+            LEFT JOIN categories c   ON s.category_id  = c.id
+            LEFT JOIN campaigns  cmp ON bl.campaign_id = cmp.id
+            LEFT JOIN jingles    j   ON bl.jingle_id   = j.id
+            WHERE  date(bl.played_at) = ?
+              AND  strftime('%H', bl.played_at) = ?
+            ORDER  BY bl.played_at ASC
+            """,
+            [date_s, hr_s],
+        ).fetchall()
+
+    def get_broadcast_hour_counts_for_date(
+        self, year: int, month: int, day: int
+    ) -> dict:
+        """Returns {hour: count} for hours 0..23 on the given date.
+        Hours with zero entries are included (count=0) so the Final
+        Log Creator sidebar can render all 24 slots uniformly."""
+        date_s = f"{year:04d}-{month:02d}-{day:02d}"
+        rows = self._conn().execute(
+            """
+            SELECT CAST(strftime('%H', played_at) AS INTEGER) AS hr,
+                   COUNT(*)                                   AS n
+            FROM   broadcast_log
+            WHERE  date(played_at) = ?
+            GROUP  BY hr
+            """,
+            [date_s],
+        ).fetchall()
+        out = {h: 0 for h in range(24)}
+        for r in rows:
+            out[int(r["hr"])] = int(r["n"])
+        return out
+
     # ── Clocks ────────────────────────────────────────────────────────────────
 
     def get_active_clock(
