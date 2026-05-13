@@ -267,6 +267,28 @@ class MainWindow(QMainWindow):
                 self._refresh_station_branding)
             self._stack.addWidget(self.settings_general)
 
+            # Settings Hub (Figma 426:3) — landing page for the three
+            # Settings sub-sections. Routed via "settings"; General +
+            # Soundcard cards route to real screens, Studio card still
+            # toasts "coming v1.1".
+            from ui.settings_hub import SettingsHub
+            self.settings_hub = SettingsHub(self._db)
+            self.settings_hub.screen_requested.connect(
+                self._on_hub_screen_requested)
+            self.settings_hub.studio_clicked.connect(
+                self._on_studio_clicked)
+            self._stack.addWidget(self.settings_hub)
+
+            # Soundcard Settings (Figma 68:394) — 4 outputs + 1 input
+            # channel cards, BASS device enumeration, save → settings DB.
+            from ui.settings_soundcard import SettingsSoundcard
+            self.settings_soundcard = SettingsSoundcard(self._db)
+            self.settings_soundcard.breadcrumb_clicked.connect(
+                self._on_hub_screen_requested)
+            self.settings_soundcard.studio_clicked.connect(
+                self._on_studio_clicked)
+            self._stack.addWidget(self.settings_soundcard)
+
             # Studio Single Deck — broadcast operator workstation (Figma 182:2)
             # Phase D1: skeleton; D2 wires manual audio; D3 passes scheduler.
             from ui.studio import Studio
@@ -465,13 +487,35 @@ class MainWindow(QMainWindow):
                 self.final_log.set_studio(self.studio)
             self._stack.setCurrentWidget(self.final_log)
             return
-        if screen == "settings" and hasattr(self, "settings_general"):
-            # Refresh from DB so any external edits surface.
+        if screen == "settings" and hasattr(self, "settings_hub"):
+            # "Settings" entry-points (top nav, footer link, scheduling
+            # hub, FinalLog Settings tab, etc.) land on the hub. From
+            # there, each option card emits its own screen key.
+            self._stack.setCurrentWidget(self.settings_hub)
+            return
+        if (screen == "settings_general"
+                and hasattr(self, "settings_general")):
             try:
                 self.settings_general.reload()
             except Exception as exc:
                 log.warning(f"settings reload failed: {exc}")
             self._stack.setCurrentWidget(self.settings_general)
+            return
+        if (screen == "settings_soundcard"
+                and hasattr(self, "settings_soundcard")):
+            try:
+                self.settings_soundcard.reload()
+            except Exception as exc:
+                log.warning(f"soundcard reload failed: {exc}")
+            self._stack.setCurrentWidget(self.settings_soundcard)
+            return
+        if screen == "settings_studio":
+            # v1.1 sub-screen — Studio Settings still deferred.
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.information(
+                self, "Studio Settings",
+                "Studio Settings — coming in v1.1.\n\n"
+                "Configuration UI is part of the next session's roadmap.")
             return
         # Everything else is a future scheduling sub-screen.
         from PyQt6.QtWidgets import QMessageBox
@@ -501,13 +545,10 @@ class MainWindow(QMainWindow):
         log.info(f"Nav → {tab}")
         # Top-nav routing — keep keys aligned with the labels rendered
         # in ControlPanel._build_top_nav (Control Panel / Scheduling /
-        # Settings / Studio).
-        if tab == "Settings" and hasattr(self, "settings_general"):
-            try:
-                self.settings_general.reload()
-            except Exception as exc:
-                log.warning(f"settings reload failed: {exc}")
-            self._stack.setCurrentWidget(self.settings_general)
+        # Settings / Studio). Settings lands on the hub (Figma 426:3),
+        # which routes onward to General / Soundcard / Studio sub-pages.
+        if tab == "Settings" and hasattr(self, "settings_hub"):
+            self._stack.setCurrentWidget(self.settings_hub)
         elif tab == "Scheduling" and hasattr(self, "scheduling_hub"):
             if hasattr(self, "studio") and hasattr(self.scheduling_hub,
                                                     "set_studio"):
@@ -525,12 +566,8 @@ class MainWindow(QMainWindow):
 
     def _on_settings_clicked(self) -> None:
         log.info("Settings →")
-        if hasattr(self, "settings_general"):
-            try:
-                self.settings_general.reload()
-            except Exception as exc:
-                log.warning(f"settings reload failed: {exc}")
-            self._stack.setCurrentWidget(self.settings_general)
+        if hasattr(self, "settings_hub"):
+            self._stack.setCurrentWidget(self.settings_hub)
 
     def _refresh_station_branding(self) -> None:
         """Re-read Settings().station_display + push it to every header
@@ -552,6 +589,7 @@ class MainWindow(QMainWindow):
         qlabel_screens = (
             "songs_library", "instant_jingles", "spots_commercials",
             "sweepers_library", "jingles_library", "stitcher",
+            "settings_hub", "settings_soundcard",
         )
         for attr in qlabel_screens:
             screen = getattr(self, attr, None)
