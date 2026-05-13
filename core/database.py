@@ -1187,7 +1187,7 @@ class Database:
                 "time_window_minutes": 25,
                 "strict_mode": 0,
             }
-        return dict(row)
+        return {k: row[k] for k in row.keys()}
 
     def update_stitcher_config(self, data: dict) -> None:
         """Partial update — only keys present in ``data`` (and in
@@ -1844,7 +1844,7 @@ class Database:
         ).fetchone()
         if not row:
             return None
-        d = dict(row)
+        d = {k: row[k] for k in row.keys()}
         d["spot_files"] = [dict(r) for r in self.get_spot_files(campaign_id)]
         d["schedule"]   = [dict(r) for r in self.get_break_schedule(campaign_id)]
         return d
