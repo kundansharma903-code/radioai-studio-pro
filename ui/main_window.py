@@ -60,6 +60,14 @@ class MainWindow(QMainWindow):
         from core.sweeper_engine import SweeperEngine
         self._sweeper_engine = SweeperEngine()
 
+        # StitcherEngine — pre-mixes a "Coming Up Next" hook montage
+        # (opening + N song hooks + closing) and plays the result as
+        # one seamless WAV through BASS. Shared instance so The
+        # Stitcher screen + Studio's pre-break trigger (when wired)
+        # both drive the same engine.
+        from core.stitcher_engine import StitcherEngine
+        self._stitcher_engine = StitcherEngine()
+
         # Phase B5: aboutToQuit safety net. Fires on app force-quit, OS
         # shutdown, or any path that bypasses closeEvent. cleanup_all is
         # idempotent so the dual-hook is cheap.
@@ -216,6 +224,17 @@ class MainWindow(QMainWindow):
             self.jingles_library.studio_clicked.connect(self._on_studio_clicked)
             self._stack.addWidget(self.jingles_library)
 
+            # The Stitcher (Figma 46:481) — pre-mix "Coming Up Next"
+            # hook montage. ControlPanel "stitcher" card routes here.
+            from ui.stitcher import Stitcher
+            self.stitcher = Stitcher(
+                self._db, engine=self._engine, scheduler=self._scheduler,
+                stitcher_engine=self._stitcher_engine
+                if hasattr(self, "_stitcher_engine") else None)
+            self.stitcher.breadcrumb_clicked.connect(self._on_breadcrumb)
+            self.stitcher.studio_clicked.connect(self._on_studio_clicked)
+            self._stack.addWidget(self.stitcher)
+
             # Studio Single Deck — broadcast operator workstation (Figma 182:2)
             # Phase D1: skeleton; D2 wires manual audio; D3 passes scheduler.
             from ui.studio import Studio
@@ -311,6 +330,8 @@ class MainWindow(QMainWindow):
             self._stack.setCurrentWidget(self.sweepers_library)
         elif screen == "jingles" and hasattr(self, "jingles_library"):
             self._stack.setCurrentWidget(self.jingles_library)
+        elif screen == "stitcher" and hasattr(self, "stitcher"):
+            self._stack.setCurrentWidget(self.stitcher)
         elif screen == "scheduling" and hasattr(self, "scheduling_hub"):
             # Hub becomes the visible screen; it injects studio reference
             # lazily so the now-playing poll picks up Studio if mounted.

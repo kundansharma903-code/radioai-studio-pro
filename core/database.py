@@ -1141,6 +1141,100 @@ class Database:
             )
         conn.commit()
 
+    # ── Stitcher config (Figma 46:481) ────────────────────────────────────
+
+    # Single-row config table. Editable fields kept as a tuple so the
+    # screen + tests + future bulk migration agree on shape. `id` and
+    # `updated_at` are excluded — the row is always id=1, updated_at
+    # is bumped server-side.
+    STITCHER_EDITABLE_FIELDS = (
+        "opening_audio", "separator_audio",
+        "closing_audio", "fallback_audio",
+        "hook_duration_seconds", "min_hooks_required", "max_hooks",
+        "module_enabled",
+        "trigger_before_every_break", "trigger_every_n_songs",
+        "trigger_every_n_songs_count", "trigger_top_of_hour",
+        "trigger_mode",
+        "time_window_minutes", "strict_mode",
+    )
+
+    def get_stitcher_config(self) -> dict:
+        """Return the single-row stitcher_config as a dict. Falls back
+        to a defaults dict if the row is missing (greenfield install
+        where the table exists but no row was seeded — defensive)."""
+        try:
+            row = self._conn().execute(
+                "SELECT * FROM stitcher_config WHERE id = 1"
+            ).fetchone()
+        except Exception:
+            row = None
+        if row is None:
+            # Defensive defaults — same shape as the schema column
+            # defaults so the editor screen always has something to
+            # render even before the first save.
+            return {
+                "id": 1,
+                "opening_audio": "", "separator_audio": "",
+                "closing_audio": "", "fallback_audio": "",
+                "hook_duration_seconds": 8,
+                "min_hooks_required": 2, "max_hooks": 4,
+                "module_enabled": 1,
+                "trigger_before_every_break": 1,
+                "trigger_every_n_songs": 0,
+                "trigger_every_n_songs_count": 4,
+                "trigger_top_of_hour": 0,
+                "trigger_mode": "break_reference",
+                "time_window_minutes": 25,
+                "strict_mode": 0,
+            }
+        return dict(row)
+
+    def update_stitcher_config(self, data: dict) -> None:
+        """Partial update — only keys present in ``data`` (and in
+        STITCHER_EDITABLE_FIELDS) are written. Boolean-ish fields are
+        coerced to 0/1 so the schema's INTEGER columns stay clean."""
+        sets: list[str] = []
+        vals: list = []
+        bool_fields = {
+            "module_enabled",
+            "trigger_before_every_break",
+            "trigger_every_n_songs",
+            "trigger_top_of_hour",
+            "strict_mode",
+        }
+        for k in self.STITCHER_EDITABLE_FIELDS:
+            if k in data:
+                sets.append(f"{k} = ?")
+                v = data[k]
+                if k in bool_fields:
+                    v = 1 if v else 0
+                vals.append(v)
+        if not sets:
+            return
+        sets.append("updated_at = CURRENT_TIMESTAMP")
+        conn = self._conn()
+        conn.execute(
+            f"UPDATE stitcher_config SET {', '.join(sets)} WHERE id = 1",
+            vals)
+        # If the UPDATE matched zero rows, the row was missing —
+        # insert it so the editor's first save sticks.
+        if conn.total_changes == 0:
+            cols = list(data.keys()) + ["id"]
+            placeholders = ", ".join("?" for _ in cols)
+            row_vals = []
+            for k in cols:
+                if k == "id":
+                    row_vals.append(1)
+                else:
+                    v = data[k]
+                    if k in bool_fields:
+                        v = 1 if v else 0
+                    row_vals.append(v)
+            conn.execute(
+                f"INSERT OR REPLACE INTO stitcher_config "
+                f"({', '.join(cols)}) VALUES ({placeholders})", row_vals)
+        conn.commit()
+
     def get_jingle_pads_active(self,
                                pallet_id: Optional[int] = None
                                ) -> List[sqlite3.Row]:
