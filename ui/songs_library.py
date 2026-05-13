@@ -475,8 +475,15 @@ class _PlayButton(QPushButton):
 class _SongRow(QFrame):
     """One table row (700×28)."""
 
-    clicked      = pyqtSignal(int)   # song_id
-    play_clicked = pyqtSignal(int)   # song_id
+    clicked      = pyqtSignal(int, object)  # song_id, modifiers
+    play_clicked = pyqtSignal(int)          # song_id
+    # Drag selection — emitted on mouseMove while LMB held; carries
+    # the current global mouse position so the parent SongsLibrary
+    # can map it to whichever row sits under the cursor (Qt grabs
+    # mouse to this widget while the button is down, so subsequent
+    # move events come here even as the cursor moves over OTHER rows).
+    dragged       = pyqtSignal(object)      # QPoint global
+    released      = pyqtSignal()
 
     def __init__(self, song: dict, row_index: int, parent=None):
         super().__init__(parent)
@@ -582,8 +589,27 @@ class _SongRow(QFrame):
     def leaveEvent(self, e): self._hover = False; self.update(); super().leaveEvent(e)
     def mousePressEvent(self, e):
         if e.button() == Qt.MouseButton.LeftButton:
-            self.clicked.emit(self._song.get("id", 0))
+            self.clicked.emit(self._song.get("id", 0), e.modifiers())
         super().mousePressEvent(e)
+
+    def mouseMoveEvent(self, e):
+        # Qt grabs the mouse to the row that received the press, so we
+        # see every move event during the drag — even when the cursor
+        # has long since left this row's geometry. The global pos is
+        # what the parent needs to figure out which row is currently
+        # underneath.
+        if e.buttons() & Qt.MouseButton.LeftButton:
+            try:
+                gp = e.globalPosition().toPoint()
+            except Exception:
+                gp = e.globalPos()  # Qt5 fallback
+            self.dragged.emit(gp)
+        super().mouseMoveEvent(e)
+
+    def mouseReleaseEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            self.released.emit()
+        super().mouseReleaseEvent(e)
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -785,6 +811,14 @@ class SongsLibrary(QWidget):
         self._all_songs: list = []      # cache of fetched rows
         self._row_widgets: list = []    # _SongRow widgets for each song
         self._selected_id: Optional[int] = None
+        # Multi-selection model (drag-select, Ctrl-toggle, Shift-range).
+        # _selected_id stays the "focus" — last clicked / drives detail
+        # panel. _selected_ids is the full set used for batch ops
+        # (future: multi-delete, multi-tag).
+        self._selected_ids: set = set()
+        self._anchor_idx: Optional[int] = None      # Shift-range anchor
+        self._drag_origin_idx: Optional[int] = None # drag start row index
+        self._drag_active: bool = False
         self._table_body: Optional[QWidget] = None
         self._table_layout: Optional[QVBoxLayout] = None
         self._search_input: Optional[_SidebarSearchInput] = None
@@ -1429,6 +1463,8 @@ class SongsLibrary(QWidget):
         for i, song in enumerate(self._all_songs):
             row = _SongRow(song, i)
             row.clicked.connect(self._select_song)
+            row.dragged.connect(self._on_row_dragged_to_global)
+            row.released.connect(self._on_row_released)
             # Phase B2: route through our preview handler. We still emit
             # play_song_clicked so any external listener (future Studio
             # screen) sees the click; preview is a side-effect handled
@@ -1437,16 +1473,117 @@ class SongsLibrary(QWidget):
             self._table_layout.insertWidget(self._table_layout.count() - 1, row)
             self._row_widgets.append(row)
 
-    def _select_song(self, song_id: int):
+    def _select_song(self, song_id: int, modifiers=None):
+        """Click handler. Modifiers drive multi-selection:
+          • Plain click:  replace selection with just this row + arm
+                          drag-origin so a left-button-held drag
+                          extends the selection range.
+          • Ctrl+click:   toggle this row in the set.
+          • Shift+click:  range from the last anchor to this row.
+        The "focus" song (drives the detail panel + song_selected
+        emit) is always the most recently clicked row."""
+        from PyQt6.QtCore import Qt as _Qt
+        if modifiers is None:
+            ctrl = False
+            shift = False
+        else:
+            ctrl = bool(
+                modifiers & _Qt.KeyboardModifier.ControlModifier)
+            shift = bool(
+                modifiers & _Qt.KeyboardModifier.ShiftModifier)
+
+        # Find the row index for this song_id
+        row_idx = next((i for i, r in enumerate(self._row_widgets)
+                         if r._song.get("id") == song_id), None)
+
+        if shift and self._anchor_idx is not None and row_idx is not None:
+            lo, hi = sorted([self._anchor_idx, row_idx])
+            self._selected_ids = {
+                self._row_widgets[i]._song.get("id")
+                for i in range(lo, hi + 1)
+                if self._row_widgets[i]._song.get("id") is not None
+            }
+        elif ctrl:
+            if song_id in self._selected_ids:
+                self._selected_ids.discard(song_id)
+            else:
+                self._selected_ids.add(song_id)
+            self._anchor_idx = row_idx
+        else:
+            # Plain click — replace selection + arm drag-origin so
+            # mouse-held drag extends from this row.
+            self._selected_ids = {song_id}
+            self._anchor_idx = row_idx
+            self._drag_origin_idx = row_idx
+            self._drag_active = True
+
         self._selected_id = song_id
-        # Update row selection state
-        for row in self._row_widgets:
-            row.set_selected(row._song.get("id") == song_id)
-        # Update detail panel
-        song = next((s for s in self._all_songs if s["id"] == song_id), None)
+        self._apply_selection_visuals()
+        # Update detail panel using the focus song
+        song = next((s for s in self._all_songs if s["id"] == song_id),
+                     None)
         if song:
             self._update_detail_panel(song)
         self.song_selected.emit(song_id)
+
+    def _apply_selection_visuals(self) -> None:
+        """Repaint every row's selected state from _selected_ids."""
+        for r in self._row_widgets:
+            r.set_selected(r._song.get("id") in self._selected_ids)
+
+    def _on_row_dragged_to_global(self, global_pos) -> None:
+        """Mouse-move while LMB held on the drag-origin row. Find
+        which row is currently under the cursor and extend the
+        selection from drag_origin_idx to that index."""
+        if not self._drag_active or self._drag_origin_idx is None:
+            return
+        if self._table_body is None or not self._row_widgets:
+            return
+        try:
+            local = self._table_body.mapFromGlobal(global_pos)
+        except Exception:
+            return
+        y = local.y()
+        # Find the row whose vertical range contains y. Rows are
+        # stacked in the layout in row_index order; walk linearly
+        # (a few hundred rows is fine — micro-optimization not
+        # warranted).
+        current_idx = None
+        for i, r in enumerate(self._row_widgets):
+            g = r.geometry()
+            if y < g.y():
+                current_idx = max(0, i - 1)
+                break
+            if g.y() <= y < g.y() + g.height():
+                current_idx = i
+                break
+        if current_idx is None:
+            # Past the last row — clamp to last
+            current_idx = len(self._row_widgets) - 1
+        if current_idx < 0:
+            current_idx = 0
+
+        lo, hi = sorted([self._drag_origin_idx, current_idx])
+        new_set = {
+            self._row_widgets[i]._song.get("id")
+            for i in range(lo, hi + 1)
+            if self._row_widgets[i]._song.get("id") is not None
+        }
+        if new_set == self._selected_ids:
+            return
+        self._selected_ids = new_set
+        self._apply_selection_visuals()
+
+    def _on_row_released(self) -> None:
+        """LMB released — end the active drag selection. _selected_ids
+        stays intact so a downstream action (Delete / Edit Categories /
+        future batch ops) can read the multi-selection."""
+        self._drag_active = False
+        self._drag_origin_idx = None
+
+    def selected_song_ids(self) -> list:
+        """Public — current multi-selection as a list of song ids."""
+        return list(self._selected_ids)
 
     def _update_detail_panel(self, song: dict):
         if self._song_header:
@@ -1504,69 +1641,118 @@ class SongsLibrary(QWidget):
         dlg.exec()
 
     def _on_delete_clicked(self):
-        """Sidebar ✕ Delete handler — opens the Confirm Delete dialog for the
-        currently-selected song. Emits delete_song_clicked upward as well so
-        external listeners can react if they want to."""
-        sid = self._selected_id or 0
-        if not sid:
+        """Sidebar ✕ Delete handler — opens the Confirm Delete dialog.
+        Works on the full multi-selection set (_selected_ids); falls
+        back to the legacy single-song path when only the focus song
+        is selected.
+
+        delete_song_clicked is emitted per song in the batch so
+        external listeners that previously received one int per delete
+        keep working unchanged."""
+        # Build the effective ID list — multi-selection wins, falls
+        # through to _selected_id when the set is empty (shouldn't
+        # happen now that _select_song always populates _selected_ids,
+        # but guard defensively).
+        if self._selected_ids:
+            ids = list(self._selected_ids)
+        elif self._selected_id:
+            ids = [int(self._selected_id)]
+        else:
+            ids = []
+
+        if not ids:
             QMessageBox.information(
                 self,
                 "No song selected",
-                "Click a song in the list first, then press ✕ Delete.",
+                "Click a song in the list first (or drag-select "
+                "multiple), then press ✕ Delete.",
             )
             return
 
-        # Pull the row from cache; fall back to DB if the cache is stale.
-        cached = next((s for s in self._all_songs if s["id"] == sid), None)
-        song_data = dict(cached) if cached else {}
-        if not song_data:
-            try:
-                row = self._db.get_song(sid)
-                if row:
-                    song_data = {
-                        "id":          row["id"],
-                        "title":       row["title"],
-                        "artist":      row["artist"],
-                        "duration_ms": row["duration_ms"],
-                        "category":    row["cat_name"] if "cat_name" in row.keys() else "",
-                    }
-            except Exception as exc:
-                log.error(f"get_song failed for delete dialog: {exc}")
+        # Assemble per-song dicts the dialog needs to render. For
+        # multi-selection the rich airtime stats are skipped (single-
+        # selection still pulls them so the rich card stays useful).
+        songs_data: list = []
+        for sid in ids:
+            cached = next(
+                (s for s in self._all_songs if s["id"] == sid), None)
+            song_data = dict(cached) if cached else {}
+            if not song_data:
+                try:
+                    row = self._db.get_song(sid)
+                    if row:
+                        song_data = {
+                            "id":          row["id"],
+                            "title":       row["title"],
+                            "artist":      row["artist"],
+                            "duration_ms": row["duration_ms"],
+                            "category":    row["cat_name"]
+                                if "cat_name" in row.keys() else "",
+                        }
+                except Exception as exc:
+                    log.error(
+                        f"get_song failed for delete dialog: {exc}")
+            if not song_data:
+                continue
+            if len(ids) == 1:
+                # Single-song mode keeps the rich airtime stats so the
+                # legacy dialog visual is unchanged.
+                try:
+                    stats = self._db.get_song_play_stats(sid)
+                    song_data["play_count"] = stats.get("play_count", 0)
+                    song_data["last_played_human"] = _human_ago(
+                        stats.get("last_played"))
+                except Exception as exc:
+                    log.error(f"get_song_play_stats failed: {exc}")
+            songs_data.append(song_data)
 
-        if not song_data:
+        if not songs_data:
             QMessageBox.warning(
-                self, "Song not found",
-                "Could not load the selected song. Please refresh and try again.",
+                self, "Songs not found",
+                "Could not load the selected song(s). Please refresh "
+                "and try again.",
             )
             return
 
-        # Augment with airtime stats so the dialog can show "Last played" + plays.
-        try:
-            stats = self._db.get_song_play_stats(sid)
-            song_data["play_count"] = stats.get("play_count", 0)
-            song_data["last_played_human"] = _human_ago(stats.get("last_played"))
-        except Exception as exc:
-            log.error(f"get_song_play_stats failed: {exc}")
-
-        # Forward upward (preserve existing public signal contract)
-        self.delete_song_clicked.emit(sid)
+        # Forward upward — emit one signal per song to preserve the
+        # historical (int) signature for any external listener.
+        for sd in songs_data:
+            try:
+                self.delete_song_clicked.emit(int(sd["id"]))
+            except Exception:
+                pass
 
         from ui.dialogs.confirm_delete_dialog import ConfirmDeleteDialog
-        dlg = ConfirmDeleteDialog(song_data=song_data, parent=self.window())
-        dlg.delete_confirmed.connect(self._delete_song_confirmed)
+        if len(songs_data) == 1:
+            dlg = ConfirmDeleteDialog(song_data=songs_data[0],
+                                       parent=self.window())
+        else:
+            dlg = ConfirmDeleteDialog(song_data_list=songs_data,
+                                       parent=self.window())
+        dlg.delete_confirmed.connect(self._delete_songs_confirmed)
         dlg.exec()
 
-    def _delete_song_confirmed(self, song_id: int):
-        try:
-            self._db.delete_song(int(song_id))
-        except Exception as exc:
-            log.error(f"delete_song({song_id}) failed: {exc}", exc_info=True)
-            QMessageBox.critical(
-                self, "Delete failed",
-                f"Could not delete song:\n\n{exc}",
-            )
-            return
+    def _delete_songs_confirmed(self, song_ids: list):
+        """ConfirmDeleteDialog now emits a list of ids — iterate and
+        delete each. Errors on individual rows are logged but don't
+        abort the batch; failed ids are reported in a summary toast."""
+        failed: list = []
+        for sid in song_ids:
+            try:
+                self._db.delete_song(int(sid))
+            except Exception as exc:
+                log.error(
+                    f"delete_song({sid}) failed: {exc}", exc_info=True)
+                failed.append(int(sid))
+        if failed:
+            QMessageBox.warning(
+                self, "Delete partial",
+                f"Could not delete {len(failed)} of {len(song_ids)} "
+                f"selected song(s). See log for details.")
         self._selected_id = None
+        self._selected_ids = set()
+        self._anchor_idx = None
+        self._drag_origin_idx = None
         self._load_songs()
 
     def _on_categories_changed(self):

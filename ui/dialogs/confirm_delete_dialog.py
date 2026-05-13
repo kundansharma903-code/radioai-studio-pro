@@ -154,14 +154,37 @@ class _SongInfoCard(QFrame):
 # ════════════════════════════════════════════════════════════════════════════
 
 class ConfirmDeleteDialog(BaseDialog):
+    """Confirm-delete dialog. Single-song mode renders the rich
+    _SongInfoCard with airtime stats; multi-song mode renders a
+    compact scrollable list of titles + artist with a count badge.
 
-    delete_confirmed = pyqtSignal(int)
+    Construct with EITHER:
+      - song_data=dict     → single-song mode (legacy entry point)
+      - song_data_list=list → multi-song mode (N titles)
+    Both feed the same _on_confirm path which emits
+    delete_confirmed(list[int]). The signal payload is ALWAYS a list,
+    even for single-song deletions — consumer iterates either way."""
+
+    delete_confirmed = pyqtSignal(list)   # list[int] of song ids
 
     HEADER_H = 64
     FOOTER_H = 60
 
-    def __init__(self, song_data: dict, parent=None):
-        self._song = song_data or {}
+    def __init__(self, song_data: dict = None,
+                 song_data_list: list = None,
+                 parent=None):
+        # Normalize: always work off a list internally. Single-song
+        # callers still pass song_data=dict; the dialog detects and
+        # renders the rich card for that case.
+        if song_data_list:
+            self._songs: list = list(song_data_list)
+        elif song_data:
+            self._songs = [song_data]
+        else:
+            self._songs = []
+        # First entry is treated as the "focus" song for the legacy
+        # single-song render.
+        self._song = self._songs[0] if self._songs else {}
         # BaseDialog enforces a 640×480 minimum — use that as the target.
         super().__init__(target_size=(640, 480), parent=parent)
 
@@ -182,7 +205,10 @@ class ConfirmDeleteDialog(BaseDialog):
         title_box = QWidget(); title_box.setStyleSheet("background: transparent;")
         tv = QVBoxLayout(title_box)
         tv.setContentsMargins(0, 0, 0, 0); tv.setSpacing(2)
-        title = QLabel("DELETE SONG?")
+        n = len(self._songs)
+        title_text = (
+            "DELETE SONG?" if n <= 1 else f"DELETE {n} SONGS?")
+        title = QLabel(title_text)
         title.setFont(inter(16, QFont.Weight.Black, letter_spacing=0.5))
         title.setStyleSheet(f"color: {TEXT_PRI}; background: transparent;")
         sub = QLabel("This action cannot be undone")
@@ -214,16 +240,22 @@ class ConfirmDeleteDialog(BaseDialog):
         v.setContentsMargins(24, 24, 24, 16)
         v.setSpacing(18)
 
-        # Section label
-        sl = QLabel("SELECTED SONG")
+        n = len(self._songs)
+        section_text = (
+            "SELECTED SONG" if n <= 1 else f"SELECTED SONGS  ·  {n}")
+        sl = QLabel(section_text)
         sl.setFont(inter(9, QFont.Weight.Bold, letter_spacing=1.4))
         sl.setStyleSheet(f"color: {TEXT_MUTED}; background: transparent;")
         v.addWidget(sl)
 
-        # Song info card
-        v.addWidget(_SongInfoCard(self._song))
+        if n <= 1:
+            # Single-song mode — rich info card
+            v.addWidget(_SongInfoCard(self._song))
+        else:
+            # Multi-song mode — scrollable list of titles
+            v.addWidget(self._build_multi_list())
 
-        # Warning panel
+        # Warning panel — copy adapts to count
         warn = QFrame()
         warn.setStyleSheet(
             f"QFrame {{ background: {rgba(RED, 0.06)}; "
@@ -239,10 +271,12 @@ class ConfirmDeleteDialog(BaseDialog):
         bullet.setFixedWidth(20)
         warn_l.addWidget(bullet, alignment=Qt.AlignmentFlag.AlignTop)
 
+        subj = "song" if n <= 1 else f"{n} songs"
         warn_text = QLabel(
-            "This will permanently remove the song from your library. "
-            "References in playlists and the daily log will also be removed. "
-            "Past airtime history will be kept (with the song link cleared)."
+            f"This will permanently remove the {subj} from your library. "
+            f"References in playlists and the daily log will also be removed. "
+            f"Past airtime history will be kept (with the song links "
+            f"cleared)."
         )
         warn_text.setWordWrap(True)
         warn_text.setFont(inter(11))
@@ -252,6 +286,72 @@ class ConfirmDeleteDialog(BaseDialog):
 
         v.addStretch()
         return c
+
+    def _build_multi_list(self) -> QWidget:
+        """Compact scrollable list — one row per song with title +
+        artist. Caps at the dialog content's available height; long
+        selections scroll. Each row 28h, list capped 180h."""
+        from PyQt6.QtWidgets import QScrollArea
+        wrap = QFrame()
+        wrap.setFixedHeight(180)
+        wrap.setStyleSheet(
+            f"QFrame {{ background: #0c0e1c; "
+            f"border: 1px solid {rgba('#ffffff', 0.06)}; "
+            f"border-radius: 10px; }}"
+        )
+        wv = QVBoxLayout(wrap)
+        wv.setContentsMargins(0, 0, 0, 0); wv.setSpacing(0)
+
+        scroll = QScrollArea(wrap)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet(
+            "QScrollArea { background: transparent; border: none; }"
+            "QScrollBar:vertical { background: transparent; width: 6px; }"
+            f"QScrollBar::handle:vertical {{ background: "
+            f"{rgba('#ffffff', 0.18)}; border-radius: 3px; }}"
+        )
+        content = QFrame()
+        content.setStyleSheet("background: transparent;")
+        cv = QVBoxLayout(content)
+        cv.setContentsMargins(12, 8, 12, 8); cv.setSpacing(2)
+
+        for sng in self._songs:
+            row = QFrame()
+            row.setFixedHeight(28)
+            row.setStyleSheet("background: transparent;")
+            rh = QHBoxLayout(row)
+            rh.setContentsMargins(8, 0, 8, 0); rh.setSpacing(8)
+            # Red bullet
+            b = QLabel("•")
+            b.setFont(inter(12, QFont.Weight.Bold))
+            b.setStyleSheet(
+                f"color: {RED_LIGHT}; background: transparent;")
+            b.setFixedWidth(14)
+            rh.addWidget(b)
+            # Title (white) + Artist (muted)
+            title = QLabel(sng.get("title") or "—")
+            title.setFont(inter(11, QFont.Weight.Bold))
+            title.setStyleSheet(
+                f"color: {TEXT_PRI}; background: transparent;")
+            rh.addWidget(title)
+            sep = QLabel(" · ")
+            sep.setStyleSheet(
+                f"color: {TEXT_MUTED}; background: transparent;")
+            rh.addWidget(sep)
+            artist = QLabel(sng.get("artist") or "—")
+            artist.setFont(inter(11))
+            artist.setStyleSheet(
+                f"color: {TEXT_SEC}; background: transparent;")
+            rh.addWidget(artist)
+            rh.addStretch()
+            cv.addWidget(row)
+        cv.addStretch()
+        scroll.setWidget(content)
+        wv.addWidget(scroll)
+        return wrap
 
     # ── Footer ────────────────────────────────────────────────────────────
 
@@ -280,7 +380,11 @@ class ConfirmDeleteDialog(BaseDialog):
 
         h.addStretch()
 
-        delete = QPushButton("✕  Delete Permanently")
+        n = len(self._songs)
+        delete_label = (
+            "✕  Delete Permanently" if n <= 1
+            else f"✕  Delete {n} Permanently")
+        delete = QPushButton(delete_label)
         delete.setFixedHeight(36)
         delete.setMinimumWidth(180)
         delete.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
@@ -300,11 +404,18 @@ class ConfirmDeleteDialog(BaseDialog):
     # ── Actions ───────────────────────────────────────────────────────────
 
     def _on_confirm(self):
-        sid = int(self._song.get("id") or 0)
-        if not sid:
-            log.warning("[DELETE] confirm clicked but song id missing")
+        ids: list = []
+        for s in self._songs:
+            try:
+                sid = int(s.get("id") or 0)
+            except (TypeError, ValueError):
+                sid = 0
+            if sid:
+                ids.append(sid)
+        if not ids:
+            log.warning("[DELETE] confirm clicked but no song ids")
             self.reject()
             return
-        log.info(f"[DELETE] confirmed for song id={sid}")
-        self.delete_confirmed.emit(sid)
+        log.info(f"[DELETE] confirmed for {len(ids)} song id(s): {ids}")
+        self.delete_confirmed.emit(ids)
         self.accept()
