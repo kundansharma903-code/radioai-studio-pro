@@ -897,6 +897,7 @@ class SongsLibrary(QWidget):
         self._clock_lbl.setFont(mono(18, bold=True))
         self._clock_lbl.setStyleSheet(f"color: {TEXT_PRI}; background: transparent;")
         l = QLabel(Settings().station_display, self)
+        l.setObjectName("hdr_station_lbl")
         l.setGeometry(990, 28, 100, 14)
         l.setFont(inter(9, QFont.Weight.Medium))
         l.setStyleSheet(f"color: {GREEN}; background: transparent;")

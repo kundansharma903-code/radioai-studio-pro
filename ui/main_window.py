@@ -241,9 +241,31 @@ class MainWindow(QMainWindow):
             # coming-soon dict in the same commit).
             from ui.final_log import FinalLog
             self.final_log = FinalLog(self._db, scheduler=self._scheduler)
-            self.final_log.breadcrumb_clicked.connect(self._on_breadcrumb)
+            # Final Log Creator's top tabs (Libraries / Scheduling /
+            # Settings / Utilities) route through _on_hub_screen_requested
+            # because those tab keys live in that handler's switch — not
+            # in _on_breadcrumb which only handles a literal "control_panel"
+            # crumb. Without this wiring "Libraries" tab swallowed silently.
+            self.final_log.breadcrumb_clicked.connect(
+                self._on_hub_screen_requested)
             self.final_log.studio_clicked.connect(self._on_studio_clicked)
             self._stack.addWidget(self.final_log)
+
+            # General Settings (Figma 68:2) — Settings root page (only
+            # sub-page so far). SchedulingHub footer "Settings" + Hub
+            # tile "settings" both route here.
+            from ui.settings_general import SettingsGeneral
+            self.settings_general = SettingsGeneral(self._db)
+            self.settings_general.breadcrumb_clicked.connect(
+                self._on_hub_screen_requested)
+            self.settings_general.studio_clicked.connect(
+                self._on_studio_clicked)
+            # Any successful save broadcasts a branding refresh so the
+            # header station label on every other mounted screen catches
+            # the new station_name / station_frequency immediately.
+            self.settings_general.settings_saved.connect(
+                self._refresh_station_branding)
+            self._stack.addWidget(self.settings_general)
 
             # Studio Single Deck — broadcast operator workstation (Figma 182:2)
             # Phase D1: skeleton; D2 wires manual audio; D3 passes scheduler.
@@ -363,8 +385,10 @@ class MainWindow(QMainWindow):
         if screen == "studio_open":
             self._on_studio_clicked()
             return
-        if screen == "libraries":
-            # Libraries tab → Control Panel (hosts the library cards).
+        if screen == "libraries" or screen == "control_panel":
+            # Both keys land on the Control Panel — "libraries" is the
+            # FinalLog top tab, "control_panel" is the SettingsGeneral
+            # breadcrumb crumb.
             if hasattr(self, "control_panel"):
                 self._stack.setCurrentWidget(self.control_panel)
             return
@@ -441,6 +465,14 @@ class MainWindow(QMainWindow):
                 self.final_log.set_studio(self.studio)
             self._stack.setCurrentWidget(self.final_log)
             return
+        if screen == "settings" and hasattr(self, "settings_general"):
+            # Refresh from DB so any external edits surface.
+            try:
+                self.settings_general.reload()
+            except Exception as exc:
+                log.warning(f"settings reload failed: {exc}")
+            self._stack.setCurrentWidget(self.settings_general)
+            return
         # Everything else is a future scheduling sub-screen.
         from PyQt6.QtWidgets import QMessageBox
         labels = {
@@ -448,7 +480,6 @@ class MainWindow(QMainWindow):
             "rebroadcast":        "Rebroadcast Schedule",
             "rds":                "RDS",
             "log_viewer":         "Log Viewer",
-            "settings":           "Settings",
             "ai_magic":           "AI Magic",
         }
         title = labels.get(screen, screen)
@@ -468,6 +499,24 @@ class MainWindow(QMainWindow):
 
     def _on_nav_clicked(self, tab: str) -> None:
         log.info(f"Nav → {tab}")
+        # Top-nav routing — keep keys aligned with the labels rendered
+        # in ControlPanel._build_top_nav (Control Panel / Scheduling /
+        # Settings / Studio).
+        if tab == "Settings" and hasattr(self, "settings_general"):
+            try:
+                self.settings_general.reload()
+            except Exception as exc:
+                log.warning(f"settings reload failed: {exc}")
+            self._stack.setCurrentWidget(self.settings_general)
+        elif tab == "Scheduling" and hasattr(self, "scheduling_hub"):
+            if hasattr(self, "studio") and hasattr(self.scheduling_hub,
+                                                    "set_studio"):
+                self.scheduling_hub.set_studio(self.studio)
+            self._stack.setCurrentWidget(self.scheduling_hub)
+        elif tab == "Control Panel" and hasattr(self, "control_panel"):
+            self._stack.setCurrentWidget(self.control_panel)
+        elif tab == "Studio":
+            self._on_studio_clicked()
 
     def _on_studio_clicked(self) -> None:
         log.info("Open Studio →")
@@ -476,6 +525,57 @@ class MainWindow(QMainWindow):
 
     def _on_settings_clicked(self) -> None:
         log.info("Settings →")
+        if hasattr(self, "settings_general"):
+            try:
+                self.settings_general.reload()
+            except Exception as exc:
+                log.warning(f"settings reload failed: {exc}")
+            self._stack.setCurrentWidget(self.settings_general)
+
+    def _refresh_station_branding(self) -> None:
+        """Re-read Settings().station_display + push it to every header
+        station label across every mounted screen. Two cohorts:
+          • QLabel-based headers tagged with objectName "hdr_station_lbl"
+            — found via findChild, .setText() rewrites the cached string.
+          • paintEvent-based headers (control_panel, studio, app_chrome
+            phase-stub footer) — call .update() so the next paint cycle
+            re-reads Settings() and re-renders.
+        Triggered by SettingsGeneral.settings_saved."""
+        from PyQt6.QtWidgets import QLabel
+        try:
+            from core.settings import Settings
+            new_text = Settings().station_display or ""
+        except Exception as exc:
+            log.warning(f"branding refresh — Settings read failed: {exc}")
+            return
+
+        qlabel_screens = (
+            "songs_library", "instant_jingles", "spots_commercials",
+            "sweepers_library", "jingles_library", "stitcher",
+        )
+        for attr in qlabel_screens:
+            screen = getattr(self, attr, None)
+            if screen is None:
+                continue
+            lbl = screen.findChild(QLabel, "hdr_station_lbl")
+            if lbl is not None:
+                lbl.setText(new_text)
+
+        # paintEvent-based screens — force a repaint so their header
+        # re-renders with the new station_display.
+        for attr in ("control_panel", "studio"):
+            screen = getattr(self, attr, None)
+            if screen is not None:
+                screen.update()
+
+        # FinalLog stores its label as a self attribute (not findChild)
+        if hasattr(self, "final_log") and hasattr(
+                self.final_log, "_station_lbl"):
+            try:
+                self.final_log._station_lbl.setText(new_text)
+            except Exception:
+                pass
+        log.info(f"Station branding refreshed → {new_text!r}")
 
     def closeEvent(self, event):
         """Primary cleanup path — fires when the user closes the window
