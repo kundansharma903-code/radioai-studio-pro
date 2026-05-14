@@ -183,6 +183,14 @@ class MainWindow(QMainWindow):
             f"design canvas={WINDOW_W}x{WINDOW_H}"
         )
 
+        # Auto-start broadcast on boot when the operator has toggled
+        # 'Start in AUTO MODE automatically' (General Settings →
+        # Startup & Behaviour, default ON). Single-shot timer fires
+        # ~150ms after the GUI is fully painted so Studio's signal
+        # plumbing is settled before the scheduler tries to dispatch.
+        from PyQt6.QtCore import QTimer as _QTimer
+        _QTimer.singleShot(150, self._apply_startup_auto_mode)
+
     # ── Sizing helpers ────────────────────────────────────────────────────
 
     def _center_on_screen(self) -> None:
@@ -657,6 +665,47 @@ class MainWindow(QMainWindow):
         log.info("Settings →")
         if hasattr(self, "settings_hub"):
             self._stack.setCurrentWidget(self.settings_hub)
+
+    def _apply_startup_auto_mode(self) -> None:
+        """Honour 'Start in AUTO MODE automatically' (General Settings
+        → Startup & Behaviour). When the toggle is on, drive Studio
+        through its canonical Play entry point — _on_play_clicked —
+        which (a) starts the scheduler if idle, (b) picks the first
+        deck-bound song for the current clock+hour, (c) flips
+        _auto_advance_enabled so EOS keeps rolling. Result: songs
+        start playing without the operator opening Studio or clicking
+        Play.
+
+        Skips silently when no clock is assigned to the current cell
+        (the scheduler picker returns None) — the operator still has
+        to assign a clock to the current hour via Main Auto Schedule
+        for music to actually fire.
+
+        Failures are non-fatal."""
+        try:
+            from core.settings import Settings
+            on = Settings().get_bool("start_in_auto_mode", True)
+        except Exception as exc:
+            log.warning(f"startup auto-mode setting read failed: {exc}")
+            return
+        if not on:
+            log.info("Startup auto-mode: setting is OFF — leaving "
+                     "scheduler idle")
+            return
+        if not hasattr(self, "studio") or self.studio is None:
+            log.warning("Startup auto-mode: Studio not mounted")
+            return
+        # Already playing? Don't disturb. Covers the edge case where
+        # something else (e.g. a Stitcher block) is running at boot
+        # finalisation time.
+        if getattr(self.studio, "_playback_cid", None) is not None:
+            log.info("Startup auto-mode: deck already busy — skipping")
+            return
+        try:
+            self.studio._on_play_clicked()
+            log.info("Startup auto-mode: Studio Play triggered")
+        except Exception as exc:
+            log.warning(f"Startup auto-mode dispatch failed: {exc}")
 
     def _on_stack_currentChanged(self, idx: int) -> None:
         """Resize the stack to match the active screen's footprint so

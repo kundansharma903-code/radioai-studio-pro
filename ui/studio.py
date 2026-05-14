@@ -1319,10 +1319,16 @@ def _fmt_dur_short(ms: int) -> str:
 class _UpComingCard(QWidget):
     """One track card in the Up Coming list (360 × 124)."""
 
+    # Single-click — sent with the card's index so the parent queue
+    # widget can record the selected row + drive INSERT / REPLACE /
+    # DELETE positionally. Empty cards swallow the click silently.
+    clicked = pyqtSignal(int)
     double_clicked = pyqtSignal(dict)
 
-    def __init__(self, parent=None):
+    def __init__(self, index: int = 0, parent=None):
         super().__init__(parent)
+        self._index = index
+        self._selected = False
         self.setFixedSize(360, 124)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self._song: Optional[dict] = None
@@ -1345,10 +1351,28 @@ class _UpComingCard(QWidget):
         self._at_text = at_text or "—"
         self.update(self.rect())
 
+    def mousePressEvent(self, e: QMouseEvent) -> None:
+        if (e.button() == Qt.MouseButton.LeftButton
+                and self._song is not None):
+            self.clicked.emit(self._index)
+        super().mousePressEvent(e)
+
     def mouseDoubleClickEvent(self, e: QMouseEvent) -> None:
         if self._song is not None:
             self.double_clicked.emit(self._song)
         super().mouseDoubleClickEvent(e)
+
+    def set_selected(self, on: bool) -> None:
+        if self._selected == bool(on):
+            return
+        self._selected = bool(on)
+        self.update()
+
+    def song(self) -> Optional[dict]:
+        return self._song
+
+    def index(self) -> int:
+        return self._index
 
     def paintEvent(self, e: QPaintEvent) -> None:
         p = QPainter(self); p.setClipRect(e.rect())
@@ -1370,6 +1394,14 @@ class _UpComingCard(QWidget):
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.setPen(QPen(QColor(255, 255, 255, 18)))
         p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 8, 8)
+        # Selection ring — drawn on top so it overrides the NEXT
+        # rose tint visually when the operator picks a row to insert
+        # / replace / delete against.
+        if self._selected:
+            p.fillRect(r, _qcolor_a(CYAN, 0.10))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.setPen(QPen(_qcolor_a(CYAN_LIGHT, 0.85), 2))
+            p.drawRoundedRect(r.adjusted(1, 1, -1, -1), 8, 8)
 
         if self._song is None:
             p.setPen(QColor(TEXT_DIM))
@@ -1501,6 +1533,10 @@ class _UpComingQueue(QWidget):
     """380 × 820 panel: header + 5 cards + footer."""
 
     song_double_clicked = pyqtSignal(dict)
+    # Single-click on a populated card. Carries the card index (0..4)
+    # and the song dict so Studio can drive positional INSERT /
+    # REPLACE / DELETE against the operator's chosen row.
+    row_selected = pyqtSignal(int, dict)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1520,10 +1556,39 @@ class _UpComingQueue(QWidget):
         # 5 cards stacked vertically — y=64 + i*128
         self._cards: list[_UpComingCard] = []
         for i in range(5):
-            c = _UpComingCard(self)
+            c = _UpComingCard(index=i, parent=self)
             c.move(10, 64 + i * 128)
             c.double_clicked.connect(self.song_double_clicked.emit)
+            c.clicked.connect(self._on_card_clicked)
             self._cards.append(c)
+        # Currently-selected card index (-1 = no selection). Cleared
+        # on every set_queue so a fresh queue starts unselected.
+        self._selected_idx: int = -1
+
+    def _on_card_clicked(self, idx: int) -> None:
+        """Mark this card as selected, clear others. Emits
+        row_selected(idx, song) so Studio can capture the choice."""
+        if not (0 <= idx < len(self._cards)):
+            return
+        if self._cards[idx].song() is None:
+            return
+        self._selected_idx = idx
+        for i, c in enumerate(self._cards):
+            c.set_selected(i == idx)
+        self.row_selected.emit(idx, dict(self._cards[idx].song() or {}))
+
+    def selected_index(self) -> int:
+        return self._selected_idx
+
+    def selected_song(self) -> Optional[dict]:
+        if 0 <= self._selected_idx < len(self._cards):
+            return self._cards[self._selected_idx].song()
+        return None
+
+    def clear_selection(self) -> None:
+        self._selected_idx = -1
+        for c in self._cards:
+            c.set_selected(False)
 
     def set_queue(self, songs: list[dict], current_id: Optional[int] = None,
                   next_index: int = 1) -> None:
@@ -1536,6 +1601,18 @@ class _UpComingQueue(QWidget):
         ``peek_next`` returns items the scheduler WILL dispatch — the
         currently-playing item is not in the list, so index 0 IS the
         next-to-air."""
+        # Capture the previously-selected song so we can restore the
+        # highlight by id+type after the refresh (1Hz tick / scheduler
+        # advance both re-enter this method; clearing on every call
+        # would make the selection flicker out).
+        prev_sel_id = None
+        prev_sel_type = None
+        if 0 <= self._selected_idx < len(self._cards):
+            prev = self._cards[self._selected_idx].song()
+            if prev:
+                prev_sel_id = prev.get("id")
+                prev_sel_type = prev.get("_item_type")
+
         cum_s = 0
         for i, card in enumerate(self._cards):
             if i < len(songs):
@@ -1546,6 +1623,22 @@ class _UpComingQueue(QWidget):
                 cum_s += int(song.get("duration_ms", 0) or 0) // 1000
             else:
                 card.set_song(None)
+                card.set_selected(False)
+
+        # Re-apply selection by matching id + _item_type if the song
+        # still exists in the new queue. Otherwise drop the selection.
+        new_idx = -1
+        if prev_sel_id is not None:
+            for i, card in enumerate(self._cards):
+                cs = card.song()
+                if (cs and cs.get("id") == prev_sel_id
+                        and cs.get("_item_type") == prev_sel_type):
+                    new_idx = i
+                    break
+        self._selected_idx = new_idx
+        for i, c in enumerate(self._cards):
+            c.set_selected(i == new_idx)
+
         # Loaded total
         total_ms = sum(int(s.get("duration_ms") or 0) for s in songs)
         s_total = total_ms // 1000
@@ -2066,10 +2159,15 @@ class _LibrariesPanel(QWidget):
         self._table.row_selected.connect(self._on_row_selected)
         self._table.row_double_clicked.connect(self._on_row_double_clicked)
 
-        # Filter sub-panel — search input + Search/Reset buttons
+        # Filter sub-panel — search input + Search/Reset buttons.
+        # x=102 aligns with the songs table column (the action stack
+        # occupies x=14..90); legacy x=14 caused the search input to
+        # paint over the DELETE button. Right edge fits within the
+        # 720w panel.
+        FX = 102
         from PyQt6.QtWidgets import QLineEdit
         self._search = QLineEdit(self)
-        self._search.setGeometry(14, 540, 380, 32)
+        self._search.setGeometry(FX, 540, 360, 32)
         self._search.setPlaceholderText("Search by artist or title…")
         self._search.setFont(inter(11, QFont.Weight.Medium))
         self._search.setStyleSheet(
@@ -2079,26 +2177,41 @@ class _LibrariesPanel(QWidget):
             f"QLineEdit::placeholder {{ color: {TEXT_DIM}; }} "
             "QLineEdit:focus { border-color: rgba(6,182,212,0.5); }"
         )
+        self._search.returnPressed.connect(self._apply_search_filter)
 
         self._b_search = _LibPillBtn("Search", CYAN, 80, self)
-        self._b_search.move(404, 541)
+        self._b_search.move(FX + 370, 541)
+        self._b_search.clicked.connect(self._apply_search_filter)
         self._b_reset = _LibPillBtn("Reset", RED, 80, self)
-        self._b_reset.move(490, 541)
+        self._b_reset.move(FX + 456, 541)
+        self._b_reset.clicked.connect(self._reset_search_filter)
 
-        # Checkboxes
+        # Checkboxes — same column as search input
         self._cb_super = _LibCheckbox("SuperSearch", CYAN, checked=True,
                                       parent=self)
-        self._cb_super.move(14, 584)
+        self._cb_super.move(FX, 584)
         self._cb_new = _LibCheckbox("Show Only NEW Additions",
                                     PURPLE_LIGHT, parent=self)
-        self._cb_new.move(140, 584)
+        self._cb_new.move(FX + 130, 584)
         self._cb_surname = _LibCheckbox("Sort by Surname", AMBER_LIGHT,
                                         parent=self)
-        self._cb_surname.move(360, 584)
+        self._cb_surname.move(FX + 360, 584)
+        # Toggling any filter checkbox re-applies the current search +
+        # filter mask so the operator doesn't have to click Search.
+        for cb in (self._cb_super, self._cb_new, self._cb_surname):
+            try:
+                cb.toggled.connect(self._apply_search_filter)
+            except Exception:
+                pass
 
-        # Category dropdown
+        # Category dropdown — aligned with search/table column
         self._cat_dropdown = _LibCategoryDropdown(self)
-        self._cat_dropdown.move(14, 700)
+        self._cat_dropdown.move(FX, 700)
+
+        # Cache the full row set so Reset can restore. set_songs writes
+        # _rows AND _all_rows so subsequent filters can rebuild without
+        # re-querying the DB.
+        self._all_rows: list = []
 
     # ── Public API ───────────────────────────────────────────────────────
 
@@ -2108,10 +2221,85 @@ class _LibrariesPanel(QWidget):
             rows.append(_LibSongRow(
                 artist=str(s.get("artist") or "—"),
                 title=str(s.get("title") or "—")))
+        # Cache the full set so Reset can restore + filters can
+        # rebuild without re-querying the DB.
+        self._all_rows = list(rows)
         self._rows = rows
         self._total_song_count = int(total_song_count or len(songs))
         self._table.set_rows(self._rows)
         self._cat_dropdown.set_data("All Songs", self._total_song_count)
+        # Honour any pre-existing filter state (e.g. operator typed
+        # before set_songs landed) — re-apply on top of fresh data.
+        if hasattr(self, "_search") and self._search.text().strip():
+            self._apply_search_filter()
+
+    # ── Search + filter handlers ─────────────────────────────────────────
+
+    def _apply_search_filter(self) -> None:
+        """Filter _all_rows by the current search text + checkbox
+        state, write the result back to the songs table. Live data is
+        artist/title strings only today (legacy _LibSongRow shape);
+        SuperSearch is a placeholder for v1.1's full-text scan across
+        album/category/comments. Show Only NEW Additions filters to
+        the 50 most recently-added rows (cheap proxy; the DB-side
+        cutoff lands when songs.entry_date is consistently populated).
+        Sort by Surname alphabetises by the last whitespace-separated
+        token in artist."""
+        if not self._all_rows:
+            return
+        q = ""
+        if hasattr(self, "_search"):
+            q = self._search.text().strip().lower()
+        cb_new = bool(getattr(
+            getattr(self, "_cb_new", None), "is_checked", lambda: False)())
+        cb_surname = bool(getattr(
+            getattr(self, "_cb_surname", None),
+            "is_checked", lambda: False)())
+
+        result = list(self._all_rows)
+        if q:
+            result = [r for r in result
+                       if q in (r.artist or "").lower()
+                       or q in (r.title or "").lower()]
+        if cb_new:
+            # Approximate "newest" = last 50 entries from the original
+            # cached list (the DB hands rows roughly in entry order).
+            result = result[-50:]
+        if cb_surname:
+            def _surname_key(r):
+                a = (r.artist or "").strip()
+                parts = a.split()
+                return (parts[-1] if parts else a).lower()
+            result = sorted(result, key=_surname_key)
+
+        self._rows = result
+        self._total_song_count = len(result)
+        self._table.set_rows(self._rows)
+        # Repaint the "N RESULTS" badge in the header.
+        self.update()
+
+    def _reset_search_filter(self) -> None:
+        """Clear the search box, uncheck the auxiliary filter
+        toggles, and restore the full row set."""
+        if hasattr(self, "_search"):
+            self._search.clear()
+        for cb in (getattr(self, "_cb_new", None),
+                   getattr(self, "_cb_surname", None)):
+            if cb is not None:
+                try:
+                    cb.set_checked(False)
+                except Exception:
+                    pass
+        # Leave SuperSearch checked — design has it on by default
+        if hasattr(self, "_cb_super"):
+            try:
+                self._cb_super.set_checked(True)
+            except Exception:
+                pass
+        self._rows = list(self._all_rows)
+        self._total_song_count = len(self._rows)
+        self._table.set_rows(self._rows)
+        self.update()
 
     def _on_type_clicked(self, name: str) -> None:
         if name == self._active_type:
@@ -2175,9 +2363,11 @@ class _LibrariesPanel(QWidget):
         p.setPen(QColor(TEXT_SEC)); p.setFont(self._font_ideas)
         p.drawText(ideas, Qt.AlignmentFlag.AlignCenter, "+5 IDEAS")
 
-        # Filter sub-panel header
+        # Filter sub-panel header — aligned with the search-input
+        # column (x=102) so the heading no longer paints over the
+        # DELETE action button (which lives at x=14..90).
         p.setPen(QColor(CYAN_LIGHT)); p.setFont(self._font_section)
-        p.drawText(QRectF(14, 510, 240, 14),
+        p.drawText(QRectF(102, 510, 240, 14),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                    "SEARCH & FILTER")
         # Results count (right side of filter header)
@@ -2186,12 +2376,12 @@ class _LibrariesPanel(QWidget):
                    Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
                    f"{self._total_song_count} RESULTS")
 
-        # Hairline above category section
-        p.fillRect(QRectF(14, 670, self.width() - 28, 1),
+        # Hairline above category section — same column as filter
+        p.fillRect(QRectF(102, 670, self.width() - 116, 1),
                    QColor(255, 255, 255, 20))
         # CATEGORY label
         p.setPen(QColor(CYAN_LIGHT)); p.setFont(self._font_section)
-        p.drawText(QRectF(14, 678, 200, 14),
+        p.drawText(QRectF(102, 678, 200, 14),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                    "CATEGORY")
         # Manage Categories link (right of dropdown)
@@ -3697,6 +3887,12 @@ class Studio(QWidget):
         self._upcoming = _UpComingQueue(self)
         self._upcoming.move(16, BODY_Y)
         self._upcoming.song_double_clicked.connect(self._on_queue_song_play)
+        self._upcoming.row_selected.connect(self._on_queue_row_selected)
+        # Cached queue selection — set by single-click on an Up Coming
+        # card, used by INSERT / REPLACE / DELETE to act positionally
+        # against _queue_songs. None = no row selected, fall back to
+        # the legacy library-row-match path.
+        self._queue_selected_song: Optional[dict] = None
 
         self._libraries = _LibrariesPanel(self)
         self._libraries.move(412, BODY_Y)
@@ -6075,75 +6271,161 @@ class Studio(QWidget):
             return None
         return None
 
+    # ── Up Coming queue selection (single-click on a queue card) ───
+
+    def _on_queue_row_selected(self, idx: int, song: dict) -> None:
+        """Operator single-clicked an Up Coming card. INSERT /
+        REPLACE / DELETE on the next library-action click will pivot
+        around this row instead of the queue head."""
+        self._queue_selected_song = dict(song or {})
+        log.info(
+            f"[studio] queue row selected idx={idx} "
+            f"id={song.get('id')} "
+            f"type={song.get('_item_type', 'song')} "
+            f"title={song.get('title')!r}")
+
+    def _target_queue_list(self) -> list:
+        """The list currently driving the Up Coming panel — ADD /
+        INSERT / REPLACE / DELETE mutate THIS so the operator sees
+        their action take effect immediately. When the scheduler is
+        running, `_upcoming_preview` is the visible source; otherwise
+        the legacy `_queue_songs` fallback renders. Mutations to
+        `_upcoming_preview` survive until the next scheduler peek
+        refresh — broadcast-software convention (the operator's
+        manual override lives in the air until the scheduler
+        re-asserts on the next tick)."""
+        if self._upcoming_preview:
+            return self._upcoming_preview
+        return self._queue_songs
+
+    def _find_queue_position(self, song: dict) -> int:
+        """Return the index of `song` in the visible queue (whichever
+        list is driving the Up Coming panel right now). -1 when not
+        found. id + _item_type match."""
+        if not song:
+            return -1
+        target = self._target_queue_list()
+        sid = int(song.get("id") or 0)
+        stype = song.get("_item_type") or "song"
+        for i, s in enumerate(target):
+            if (int(s.get("id") or 0) == sid
+                    and (s.get("_item_type") or "song") == stype):
+                return i
+        return -1
+
     def _on_lib_add(self) -> None:
-        """ADD — append the selected library row to the manual queue
-        and refresh Up Coming. No-op when nothing is selected."""
+        """ADD — insert the selected library row AFTER the currently-
+        selected Up Coming row, or append to the tail when no queue
+        row is selected. Operates on whichever list drives the
+        visible panel (scheduler preview OR legacy queue) so the
+        action is immediately visible."""
         row = self._selected_library_row_as_queue_dict()
         if row is None:
-            log.debug("[studio] ADD — no row selected")
+            log.debug("[studio] ADD — no row selected (library)")
             return
-        self._queue_songs.append(row)
+        target = self._target_queue_list()
+        if self._queue_selected_song is not None:
+            pos = self._find_queue_position(self._queue_selected_song)
+            if pos >= 0:
+                target.insert(pos + 1, row)
+                self._refresh_upcoming_panel()
+                log.info(
+                    f"[studio] ADD → after visible idx {pos}: "
+                    f"{row.get('_item_type', 'song')} "
+                    f"{row.get('title')!r}")
+                return
+        target.append(row)
         self._refresh_upcoming_panel()
         log.info(
-            f"[studio] ADD → queue (now {len(self._queue_songs)} items): "
+            f"[studio] ADD → tail (now {len(target)} items): "
             f"{row.get('_item_type', 'song')} {row.get('title')!r}")
 
     def _on_lib_insert(self) -> None:
-        """INSERT — push the selected library row to the head of the
-        manual queue (NEXT slot)."""
+        """INSERT — drop the selected library row BEFORE the
+        currently-selected Up Coming row, or at the head when no
+        queue row is selected."""
         row = self._selected_library_row_as_queue_dict()
         if row is None:
-            log.debug("[studio] INSERT — no row selected")
+            log.debug("[studio] INSERT — no row selected (library)")
             return
-        self._queue_songs.insert(0, row)
+        target = self._target_queue_list()
+        pos = 0
+        if self._queue_selected_song is not None:
+            found = self._find_queue_position(self._queue_selected_song)
+            if found >= 0:
+                pos = found
+        target.insert(pos, row)
         self._refresh_upcoming_panel()
         log.info(
-            f"[studio] INSERT → queue head: "
+            f"[studio] INSERT → visible idx {pos}: "
             f"{row.get('_item_type', 'song')} {row.get('title')!r}")
 
     def _on_lib_replace(self) -> None:
-        """REPLACE — overwrite the queue head with the selected
-        library row. When the queue is empty this falls through to
-        an append (operator's intent is 'this is the next track')."""
+        """REPLACE — swap the selected Up Coming row with the library
+        row; falls back to overwriting the head when no queue row is
+        selected; falls back further to ADD when the queue is empty."""
         row = self._selected_library_row_as_queue_dict()
         if row is None:
-            log.debug("[studio] REPLACE — no row selected")
+            log.debug("[studio] REPLACE — no row selected (library)")
             return
-        if self._queue_songs:
-            old = self._queue_songs[0]
-            self._queue_songs[0] = row
+        target = self._target_queue_list()
+        pos = 0
+        if self._queue_selected_song is not None:
+            found = self._find_queue_position(self._queue_selected_song)
+            if found >= 0:
+                pos = found
+        if target and 0 <= pos < len(target):
+            old = target[pos]
+            target[pos] = row
+            # Selection moves to the new song so subsequent actions
+            # naturally chain ("replace again with X").
+            self._queue_selected_song = dict(row)
             log.info(
-                f"[studio] REPLACE → queue head: "
+                f"[studio] REPLACE → visible idx {pos}: "
                 f"{old.get('title')!r} → {row.get('title')!r}")
         else:
-            self._queue_songs.append(row)
+            target.append(row)
             log.info(
                 f"[studio] REPLACE (empty queue, treated as ADD) "
                 f"→ {row.get('title')!r}")
         self._refresh_upcoming_panel()
 
     def _on_lib_delete(self) -> None:
-        """DELETE — remove the selected library row's entry from the
-        manual queue (matching id + item_type). Does NOT touch the DB
-        — the library catalog is intact; only the broadcast queue is
-        mutated."""
+        """DELETE — remove the currently-selected Up Coming row from
+        the visible queue. Falls back to library-row-match when no
+        queue row is selected (legacy behaviour). Does NOT touch the
+        DB — only the broadcast queue is mutated."""
+        target = self._target_queue_list()
+        if self._queue_selected_song is not None:
+            pos = self._find_queue_position(self._queue_selected_song)
+            if pos >= 0:
+                old = target.pop(pos)
+                self._queue_selected_song = None
+                self._refresh_upcoming_panel()
+                log.info(
+                    f"[studio] DELETE → removed visible idx {pos} "
+                    f"({old.get('title')!r})")
+                return
+            # Selection went stale — fall through.
         row = self._selected_library_row_as_queue_dict()
         if row is None:
             log.debug("[studio] DELETE — no row selected")
             return
         target_id   = int(row.get("id") or 0)
         target_type = row.get("_item_type")
-        before = len(self._queue_songs)
-        self._queue_songs = [
-            s for s in self._queue_songs
+        before = len(target)
+        # Filter in-place so the same list instance stays the panel
+        # source (avoids a brief flash where the panel rebinds).
+        target[:] = [
+            s for s in target
             if not (int(s.get("id") or 0) == target_id
-                    and s.get("_item_type") == target_type)
+                    and (s.get("_item_type") or "song") == target_type)
         ]
-        removed = before - len(self._queue_songs)
+        removed = before - len(target)
         if removed:
             self._refresh_upcoming_panel()
             log.info(
-                f"[studio] DELETE → removed {removed} from queue "
+                f"[studio] DELETE → removed {removed} matching "
                 f"({row.get('title')!r})")
         else:
             log.info(
