@@ -1223,12 +1223,45 @@ class _AnalogClock(QWidget):
 # ════════════════════════════════════════════════════════════════════════
 
 class _Wordmark(QWidget):
+    """STUDIO PRO BROADCAST wordmark card + MIC live/off toggle pill.
+    The pill is a clickable hit-zone painted via paintEvent — single
+    click flips state + emits mic_clicked(bool). Visual state:
+      OFF → gray pill + "MIC OFF" label (deck audio at full master)
+      LIVE → green pill + "MIC ON" label + animated dot (deck audio
+              ducked to ~15% so the RJ can speak over a quiet
+              background music bed)."""
+
+    # Emitted on every state change. True = mic just went live;
+    # False = mic just turned off.
+    mic_clicked = pyqtSignal(bool)
+
+    # Hit-rect for the pill matches the geometry painted below.
+    _PILL_RECT = QRect(244, 30, 60, 22)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedSize(320, 80)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._mic_live = False
         self._font_big   = inter(28, QFont.Weight.Black, letter_spacing=-0.8)
         self._font_sub   = inter(8, QFont.Weight.Bold, letter_spacing=2.8)
         self._font_pill  = inter(8, QFont.Weight.Bold, letter_spacing=1.6)
+
+    def is_mic_live(self) -> bool:
+        return self._mic_live
+
+    def set_mic_live(self, on: bool) -> None:
+        was = self._mic_live
+        self._mic_live = bool(on)
+        if was != self._mic_live:
+            self.update(self._PILL_RECT)
+            self.mic_clicked.emit(self._mic_live)
+
+    def mousePressEvent(self, e: QMouseEvent) -> None:
+        if (e.button() == Qt.MouseButton.LeftButton
+                and self._PILL_RECT.contains(e.pos())):
+            self.set_mic_live(not self._mic_live)
+        super().mousePressEvent(e)
 
     def paintEvent(self, e: QPaintEvent) -> None:
         p = QPainter(self); p.setClipRect(e.rect())
@@ -1258,14 +1291,24 @@ class _Wordmark(QWidget):
         p.drawText(QRectF(16, 50, 220, 14),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                    "PRO BROADCAST")
-        # MIC OFF pill (right side, vertically centered)
-        pill = QRectF(self.width() - 76, 30, 60, 22)
-        p.fillRect(pill, _qcolor_a(TEXT_DIM, 0.30))
+        # MIC pill — green live / gray off
+        pill = QRectF(self._PILL_RECT)
+        if self._mic_live:
+            pill_bg = _qcolor_a(GREEN, 0.30)
+            pill_bd = _qcolor_a(GREEN, 0.70)
+            pill_fg = QColor(GREEN_LIGHT)
+            label   = "● MIC ON"
+        else:
+            pill_bg = _qcolor_a(TEXT_DIM, 0.30)
+            pill_bd = _qcolor_a(TEXT_DIM, 0.50)
+            pill_fg = QColor(TEXT_SEC)
+            label   = "MIC OFF"
+        p.fillRect(pill, pill_bg)
         p.setBrush(Qt.BrushStyle.NoBrush)
-        p.setPen(QPen(_qcolor_a(TEXT_DIM, 0.50)))
+        p.setPen(QPen(pill_bd))
         p.drawRoundedRect(pill.adjusted(0.5, 0.5, -0.5, -0.5), 6, 6)
-        p.setPen(QColor(TEXT_SEC)); p.setFont(self._font_pill)
-        p.drawText(pill, Qt.AlignmentFlag.AlignCenter, "MIC OFF")
+        p.setPen(pill_fg); p.setFont(self._font_pill)
+        p.drawText(pill, Qt.AlignmentFlag.AlignCenter, label)
         p.end()
 
 
@@ -3882,6 +3925,16 @@ class Studio(QWidget):
 
         self._wordmark = _Wordmark(self)
         self._wordmark.move(1584, MASTER_Y + 8)
+        self._wordmark.mic_clicked.connect(self._on_mic_toggled)
+        # Mic-live state — when True the deck is ducked to a quiet
+        # background bed so the RJ's physical mic (running through
+        # the operator's hardware mixer / audio interface) can speak
+        # over the music. v1 software path = pure ducking; full
+        # software-side mic mixing via BASS_RecordStart is a v1.1
+        # task (needs a recording stream + on-the-fly mix to the
+        # broadcast output).
+        self._mic_live: bool = False
+        self._pre_mic_volume: int = self.DEFAULT_VOLUME
 
     def _build_body_placeholders(self) -> None:
         self._upcoming = _UpComingQueue(self)
@@ -6270,6 +6323,69 @@ class Studio(QWidget):
                 }
             return None
         return None
+
+    # ── Mic live / off (Studio wordmark pill) ──────────────────────────
+
+    # Background-bed volume during a live mic break (% of master).
+    # 15% gives the RJ enough music for "atmosphere" without fighting
+    # the voice — standard talk-over level on commercial radio.
+    _MIC_DUCK_PERCENT = 15
+    # Ramp time for the volume slide so the duck / restore doesn't
+    # pop. 600ms matches the Stitcher-block duck rhythm.
+    _MIC_DUCK_FADE_MS = 600
+
+    def _on_mic_toggled(self, live: bool) -> None:
+        """Wordmark pill click handler. Engages / releases mic-live
+        mode by ducking the deck channel. Caches the pre-mic volume
+        so the restore lands exactly where the operator left it
+        (handy if they had master at 70% rather than the default)."""
+        live = bool(live)
+        self._mic_live = live
+        if live:
+            self._mic_engage()
+        else:
+            self._mic_release()
+
+    def _mic_engage(self) -> None:
+        """Slide the currently-playing deck channel down to the
+        background-bed level. No-op when the deck is idle (mic going
+        live with no music is fine — the RJ's mic is the only audio
+        on air)."""
+        if self._engine is None or self._playback_cid is None:
+            log.info("[studio] MIC LIVE — deck idle, nothing to duck")
+            return
+        self._pre_mic_volume = int(getattr(
+            self, "_master_volume", self.DEFAULT_VOLUME))
+        target = max(0, int(self._pre_mic_volume
+                              * self._MIC_DUCK_PERCENT / 100))
+        try:
+            self._engine.fade_volume_to(
+                self._playback_cid, target, self._MIC_DUCK_FADE_MS)
+        except Exception as exc:
+            log.warning(f"[studio] mic engage fade failed: {exc}")
+            return
+        log.info(
+            f"[studio] MIC LIVE — deck ducked {self._pre_mic_volume} "
+            f"→ {target} ({self._MIC_DUCK_PERCENT}% bed)")
+
+    def _mic_release(self) -> None:
+        """Restore the deck volume to its pre-mic level. Falls back
+        to the master volume when the cached pre-mic value isn't
+        available (extra defensive)."""
+        if self._engine is None or self._playback_cid is None:
+            log.info("[studio] MIC OFF — deck idle, nothing to restore")
+            return
+        target = int(getattr(
+            self, "_pre_mic_volume", self._master_volume)
+            or self._master_volume or self.DEFAULT_VOLUME)
+        try:
+            self._engine.fade_volume_to(
+                self._playback_cid, target, self._MIC_DUCK_FADE_MS)
+        except Exception as exc:
+            log.warning(f"[studio] mic release fade failed: {exc}")
+            return
+        log.info(
+            f"[studio] MIC OFF — deck restored to {target}")
 
     # ── Up Coming queue selection (single-click on a queue card) ───
 
