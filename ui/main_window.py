@@ -345,7 +345,7 @@ class MainWindow(QMainWindow):
             self._stack.addWidget(self.settings_studio)
 
             # Play History (Figma 437:3) — per-song analytics. Routed
-            # via Songs Library's "Play History" report action; the
+            # via Songs Library's detail-panel "Play History" tab; the
             # _on_report_clicked handler reads the currently-selected
             # song id off the songs_library + calls load_song().
             from ui.play_history import PlayHistory
@@ -355,6 +355,20 @@ class MainWindow(QMainWindow):
             self.play_history.studio_clicked.connect(
                 self._on_studio_clicked)
             self._stack.addWidget(self.play_history)
+
+            # Category Performance (Figma 448:3) — per-category report.
+            # Routed via Songs Library's "📊 Category Performance" tile
+            # (was "📊 Play History" pre-this-session). Operator picks
+            # a category in the filter dropdown, clicks the tile, and
+            # _on_report_clicked reads songs_library.current_category_id()
+            # before calling load_category().
+            from ui.category_performance import CategoryPerformance
+            self.category_performance = CategoryPerformance(self._db)
+            self.category_performance.breadcrumb_clicked.connect(
+                self._on_hub_screen_requested)
+            self.category_performance.studio_clicked.connect(
+                self._on_studio_clicked)
+            self._stack.addWidget(self.category_performance)
 
             # Studio Single Deck — broadcast operator workstation (Figma 182:2)
             # Phase D1: skeleton; D2 wires manual audio; D3 passes scheduler.
@@ -634,6 +648,36 @@ class MainWindow(QMainWindow):
                     log.warning(f"play_history load_song failed: {exc}")
                 self._stack.setCurrentWidget(self.play_history)
             return
+        if name == "category_performance":
+            # Category report — needs the Songs Library's currently-
+            # selected category filter. "Category (All)" → no scope
+            # → nudge the operator to pick one.
+            cid = None
+            if hasattr(self, "songs_library") and hasattr(
+                    self.songs_library, "current_category_id"):
+                try:
+                    cid = self.songs_library.current_category_id()
+                except Exception as exc:
+                    log.warning(
+                        f"current_category_id read failed: {exc}")
+                    cid = None
+            if not cid:
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.information(
+                    self, "Category Performance",
+                    "Pick a specific category from the Filters "
+                    "dropdown first, then click "
+                    "Category Performance.\n\n"
+                    "(\"Category (All)\" doesn't scope the report.)")
+                return
+            if hasattr(self, "category_performance"):
+                try:
+                    self.category_performance.load_category(int(cid))
+                except Exception as exc:
+                    log.warning(
+                        f"category_performance load failed: {exc}")
+                self._stack.setCurrentWidget(self.category_performance)
+            return
         # Other report actions still bubble up as logs only — they're
         # the "Rotation Health / Last Played / Top Songs" tiles which
         # haven't been built yet.
@@ -777,7 +821,7 @@ class MainWindow(QMainWindow):
             "songs_library", "instant_jingles", "spots_commercials",
             "sweepers_library", "jingles_library", "stitcher",
             "settings_hub", "settings_soundcard", "settings_studio",
-            "play_history",
+            "play_history", "category_performance",
         )
         for attr in qlabel_screens:
             screen = getattr(self, attr, None)

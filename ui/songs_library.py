@@ -1013,11 +1013,16 @@ class SongsLibrary(QWidget):
         l.setFont(inter(8, QFont.Weight.Bold, letter_spacing=1.2))
         l.setStyleSheet(f"color: {TEXT_MUTED}; background: transparent;")
 
+        # Tile keys are routed in MainWindow._on_report_clicked.
+        # "category_performance" = the per-CATEGORY report (Figma 448:3,
+        # this row is the operator's category-scope analytics entry).
+        # Per-SONG play history is reached via the detail-panel tab
+        # next to Audio Cues, which still emits "play_history".
         reports = [
-            ("📊 Play History",    AMBER,  "play_history"),
-            ("🎯 Rotation Health", GREEN,  "rotation_health"),
-            ("⏱ Last Played",     CYAN,   "last_played"),
-            ("📈 Top Songs",       PURPLE_LIGHT, "top_songs"),
+            ("📊 Category Performance", AMBER,  "category_performance"),
+            ("🎯 Rotation Health",     GREEN,  "rotation_health"),
+            ("⏱ Last Played",          CYAN,   "last_played"),
+            ("📈 Top Songs",            PURPLE_LIGHT, "top_songs"),
         ]
         for i, (txt, color, key) in enumerate(reports):
             btn = _SidebarReportButton(txt, color, self)
@@ -1887,6 +1892,37 @@ class SongsLibrary(QWidget):
             elif key == "vocal" and not sel.endswith("(All)"):
                 visible = (s.get("vocal", "") == sel)
             row.setVisible(visible)
+
+    # ── Public accessors for report tiles ────────────────────────────────
+
+    def current_category_name(self) -> str:
+        """Currently-selected category from the Category filter dropdown,
+        or empty string when the dropdown is on its "Category (All)"
+        sentinel. Consumed by MainWindow when routing the "Category
+        Performance" report tile."""
+        cb = self._dropdowns.get("category") if hasattr(self, "_dropdowns") \
+            else None
+        if cb is None:
+            return ""
+        sel = (cb.currentText() or "").strip()
+        if not sel or sel.endswith("(All)"):
+            return ""
+        return sel
+
+    def current_category_id(self):
+        """Resolve current_category_name() to a categories.id via a
+        single get_categories() lookup. Returns None when no specific
+        category is selected (the "All" sentinel)."""
+        name = self.current_category_name()
+        if not name:
+            return None
+        try:
+            for c in self._db.get_categories():
+                if (c["name"] or "").strip() == name:
+                    return int(c["id"])
+        except Exception as exc:
+            log.warning(f"current_category_id lookup failed: {exc}")
+        return None
 
     def _tick(self):
         if self._clock_lbl:

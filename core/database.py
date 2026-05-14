@@ -520,6 +520,190 @@ class Database:
         # from worrying about Row's quirky dict() conversion.
         return [{k: r[k] for k in r.keys()} for r in rows]
 
+    # ── Per-category performance (ui/category_performance.py / Figma 448:3) ──
+
+    def get_category_performance_summary(self, category_id: int) -> dict:
+        """Aggregate analytics across every song in this category.
+
+        Returns totals + recency + per-month / per-week counters +
+        lifetime-average-per-song + most-played-song identity. Mirrors
+        get_song_play_history_summary shape so the screen can lean on
+        the same field names.
+        """
+        cid = int(category_id)
+        conn = self._conn()
+
+        cnt_songs = conn.execute(
+            "SELECT COUNT(*) AS n FROM songs WHERE category_id = ?",
+            [cid]).fetchone()
+        song_count = int(cnt_songs["n"] if cnt_songs else 0)
+
+        cat = conn.execute(
+            "SELECT name, color FROM categories WHERE id = ?",
+            [cid]).fetchone()
+        cat_name = (cat["name"] if cat else "") or ""
+        cat_color = (cat["color"] if cat and "color" in cat.keys()
+                     else "") or ""
+
+        total = conn.execute(
+            "SELECT COUNT(*) AS n FROM broadcast_log bl "
+            "JOIN songs s ON bl.song_id = s.id "
+            "WHERE s.category_id = ?", [cid]).fetchone()
+        total_plays = int(total["n"] if total else 0)
+
+        last = conn.execute(
+            "SELECT MAX(bl.played_at) AS lp FROM broadcast_log bl "
+            "JOIN songs s ON bl.song_id = s.id "
+            "WHERE s.category_id = ?", [cid]).fetchone()
+        last_played_at = last["lp"] if last else None
+
+        def cnt(where: str) -> int:
+            r = conn.execute(
+                "SELECT COUNT(*) AS n FROM broadcast_log bl "
+                "JOIN songs s ON bl.song_id = s.id "
+                "WHERE s.category_id = ? " + where,
+                [cid]).fetchone()
+            return int(r["n"] if r else 0)
+
+        plays_this_month = cnt(
+            "AND strftime('%Y-%m', bl.played_at) = "
+            "strftime('%Y-%m', 'now','localtime')")
+        plays_last_month = cnt(
+            "AND strftime('%Y-%m', bl.played_at) = "
+            "strftime('%Y-%m', date('now','localtime',"
+            "'start of month','-1 day'))")
+        plays_this_week = cnt(
+            "AND date(bl.played_at) >= "
+            "date('now','localtime','weekday 0','-7 days')")
+        plays_last_week = cnt(
+            "AND date(bl.played_at) >= "
+            "date('now','localtime','weekday 0','-14 days') "
+            "AND date(bl.played_at) < "
+            "date('now','localtime','weekday 0','-7 days')")
+
+        avg_per_song = round(total_plays / song_count, 1) \
+            if song_count > 0 else 0.0
+
+        # Most-played song inside this category.
+        top = conn.execute(
+            "SELECT s.id, s.title, s.artist, COUNT(bl.id) AS n "
+            "FROM   songs s "
+            "LEFT JOIN broadcast_log bl ON bl.song_id = s.id "
+            "WHERE  s.category_id = ? "
+            "GROUP  BY s.id "
+            "ORDER  BY n DESC, s.title ASC "
+            "LIMIT  1", [cid]).fetchone()
+        if top is not None and int(top["n"] or 0) > 0:
+            most_played = {
+                "id":     int(top["id"]),
+                "title":  top["title"] or "—",
+                "artist": top["artist"] or "—",
+                "count":  int(top["n"] or 0),
+            }
+        else:
+            most_played = None
+
+        return {
+            "category_id":      cid,
+            "category_name":    cat_name,
+            "category_color":   cat_color,
+            "song_count":       song_count,
+            "total_plays":      total_plays,
+            "last_played_at":   last_played_at,
+            "plays_this_month": plays_this_month,
+            "plays_last_month": plays_last_month,
+            "plays_this_week":  plays_this_week,
+            "plays_last_week":  plays_last_week,
+            "avg_per_song":     avg_per_song,
+            "most_played":      most_played,
+        }
+
+    def get_category_monthly_plays(self, category_id: int,
+                                    months: int = 12) -> list:
+        """Per-month aggregate plays for every song in the category,
+        oldest-first. Zero-play months included so the bar chart never
+        has gaps. Mirrors get_song_monthly_plays output shape."""
+        cid = int(category_id)
+        n = max(1, min(60, int(months)))
+        rows = self._conn().execute(
+            "SELECT strftime('%Y-%m', bl.played_at) AS ym, "
+            "       COUNT(*) AS n "
+            "FROM   broadcast_log bl "
+            "JOIN   songs s ON bl.song_id = s.id "
+            "WHERE  s.category_id = ? "
+            "AND    date(bl.played_at) >= "
+            "       date('now','localtime','start of month', "
+            "       '-' || ? || ' months') "
+            "GROUP  BY ym",
+            [cid, n - 1]).fetchall()
+        counts_by_ym = {r["ym"]: int(r["n"]) for r in rows}
+
+        import datetime as _dt
+        today = _dt.date.today()
+        cur = _dt.date(today.year, today.month, 1)
+        seq: list = []
+        for _ in range(n):
+            seq.append((cur.year, cur.month))
+            if cur.month == 1:
+                cur = _dt.date(cur.year - 1, 12, 1)
+            else:
+                cur = _dt.date(cur.year, cur.month - 1, 1)
+        seq.reverse()
+
+        MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                          "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        out = []
+        for (y, m) in seq:
+            out.append({
+                "year":  y,
+                "month": m,
+                "label": MONTH_LABELS[m - 1],
+                "count": counts_by_ym.get(f"{y:04d}-{m:02d}", 0),
+            })
+        return out
+
+    def get_category_songs_ranked(self, category_id: int) -> list:
+        """Every song in this category with its total / week / month /
+        last-played stats — ordered by total plays desc, then title.
+        Zero-play songs are included so the operator can spot dead
+        inventory. Output: list of plain dicts (sqlite3.Row dicts get
+        flaky on Py 3.14, so we coerce up-front)."""
+        cid = int(category_id)
+        rows = self._conn().execute(
+            """
+            SELECT
+              s.id              AS id,
+              s.title           AS title,
+              s.artist          AS artist,
+              s.energy          AS energy,
+              s.vocal           AS vocal,
+              s.duration_ms     AS duration_ms,
+              s.bpm             AS bpm,
+              COALESCE(t.total_plays,  0) AS total_plays,
+              COALESCE(t.plays_week,   0) AS plays_week,
+              COALESCE(t.plays_month,  0) AS plays_month,
+              t.last_played_at  AS last_played_at
+            FROM   songs s
+            LEFT JOIN (
+              SELECT
+                bl.song_id                                   AS sid,
+                COUNT(*)                                     AS total_plays,
+                SUM(CASE WHEN date(bl.played_at) >=
+                          date('now','localtime','weekday 0','-7 days')
+                         THEN 1 ELSE 0 END)                  AS plays_week,
+                SUM(CASE WHEN strftime('%Y-%m', bl.played_at) =
+                              strftime('%Y-%m', 'now','localtime')
+                         THEN 1 ELSE 0 END)                  AS plays_month,
+                MAX(bl.played_at)                            AS last_played_at
+              FROM broadcast_log bl
+              GROUP BY bl.song_id
+            ) t ON t.sid = s.id
+            WHERE  s.category_id = ?
+            ORDER  BY total_plays DESC, s.title COLLATE NOCASE ASC
+            """,
+            [cid]).fetchall()
+        return [{k: r[k] for k in r.keys()} for r in rows]
+
     # ── Clocks ────────────────────────────────────────────────────────────────
 
     def get_active_clock(
