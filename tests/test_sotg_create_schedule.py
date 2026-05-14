@@ -367,10 +367,17 @@ def test_sotg_shell_card_routes_to_create_schedule(
     w.deleteLater()
 
 
-def test_remaining_three_sotg_cards_still_toast(
+def test_only_assign_api_key_card_still_toasts(
         qapp, db, qtbot, monkeypatch):
-    """Assign / Generate Report / Assign API Key are still placeholder
-    toasts. Only Create Schedule has graduated to a real screen."""
+    """Updated 2026-05-14 evening — three of the four SOTG step cards
+    are now real screens (Create Schedule, Assign, Generate Report).
+    Only Assign API Key remains a placeholder toast until that
+    screen ships in a follow-up session.
+
+    Original assertion (3 toasts incl. Assign) was already stale at
+    HEAD `859ba7b` — Assign shipped in that commit but this test
+    file was not synced; corrected together with the Generate Report
+    landing."""
     from ui import main_window as mw_mod
     monkeypatch.setattr(mw_mod.MainWindow, "_apply_startup_auto_mode",
                          lambda self: None)
@@ -382,9 +389,8 @@ def test_remaining_three_sotg_cards_still_toast(
     monkeypatch.setattr(
         QMessageBox, "information",
         lambda parent, title, text: toast_calls.append((title, text)))
-    for key in ("assign", "generate_report", "assign_api_key"):
-        w._on_hub_screen_requested(key)
+    w._on_hub_screen_requested("assign_api_key")
     titles = [t for t, _ in toast_calls]
-    assert titles == ["Assign", "Generate Report", "Assign API Key"]
+    assert titles == ["Assign API Key"]
     w.close()
     w.deleteLater()

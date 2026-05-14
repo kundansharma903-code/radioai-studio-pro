@@ -419,6 +419,17 @@ class MainWindow(QMainWindow):
                 self._on_studio_clicked)
             self._stack.addWidget(self.sotg_assign)
 
+            # SOTG · Generate Report (Figma 497:2) — Step 3. Daily play
+            # log + PDF download. Background-saves the current day's
+            # report at 23:59 via the minute tick wired below.
+            from ui.sotg_generate_report import SOTGGenerateReport
+            self.sotg_generate_report = SOTGGenerateReport(self._db)
+            self.sotg_generate_report.screen_requested.connect(
+                self._on_hub_screen_requested)
+            self.sotg_generate_report.studio_clicked.connect(
+                self._on_studio_clicked)
+            self._stack.addWidget(self.sotg_generate_report)
+
             # Studio Single Deck — broadcast operator workstation (Figma 182:2)
             # Phase D1: skeleton; D2 wires manual audio; D3 passes scheduler.
             from ui.studio import Studio
@@ -497,6 +508,23 @@ class MainWindow(QMainWindow):
             from PyQt6.QtGui import QShortcut, QKeySequence
             self._studio_shortcut = QShortcut(QKeySequence("F9"), self)
             self._studio_shortcut.activated.connect(self._on_studio_clicked)
+
+            # SOTG daily-report midnight auto-save tick.
+            # Ticks every 60s; fires _check_sotg_midnight_save() which is
+            # idempotent (Settings sentinel "last_sotg_report_save_date").
+            # Saves at HH:MM == 23:59 to capture the full day, with a
+            # second chance at 00:00..00:05 the next morning if the
+            # 23:59 tick was missed (app launched after midnight, etc.).
+            from PyQt6.QtCore import QTimer
+            self._sotg_save_timer = QTimer(self)
+            self._sotg_save_timer.setInterval(60_000)
+            self._sotg_save_timer.timeout.connect(
+                self._check_sotg_midnight_save)
+            self._sotg_save_timer.start()
+            # One immediate check on boot — picks up a missed save if
+            # the app starts at, say, 00:02 (yesterday's report still
+            # needs to be written).
+            QTimer.singleShot(2000, self._check_sotg_midnight_save)
         except Exception as exc:
             import traceback
             log.error(f"Mount failed: {exc}\n{traceback.format_exc()}")
@@ -694,20 +722,28 @@ class MainWindow(QMainWindow):
                 log.warning(f"sotg_assign refresh failed: {exc}")
             self._stack.setCurrentWidget(self.sotg_assign)
             return
-        if screen in ("generate_report", "assign_api_key"):
-            # Remaining 2 SOTG step cards — operator briefs each in
-            # its own session, then shell + design + build follow.
+        if (screen == "generate_report"
+                and hasattr(self, "sotg_generate_report")):
+            # SOTG Step 3 — daily play log + PDF download.
+            # Auto-refresh via showEvent inside the screen.
+            try:
+                self.sotg_generate_report.refresh()
+            except Exception as exc:
+                log.warning(
+                    f"sotg_generate_report refresh failed: {exc}")
+            self._stack.setCurrentWidget(self.sotg_generate_report)
+            return
+        if screen == "assign_api_key":
+            # Last SOTG step card — operator briefs this in its own
+            # session (Gemini / Claude / ChatGPT key + transcription
+            # pipeline). Until then, "coming soon" stays the contract.
             from PyQt6.QtWidgets import QMessageBox
-            labels = {
-                "generate_report":  "Generate Report",
-                "assign_api_key":   "Assign API Key",
-            }
             QMessageBox.information(
-                self, labels[screen],
-                f"{labels[screen]} — coming soon.\n\n"
-                "The Spot on the Go shell has landed; this step's "
-                "dedicated screen ships in a follow-up session once "
-                "the operator briefs the workflow.")
+                self, "Assign API Key",
+                "Assign API Key — coming soon.\n\n"
+                "Once an API key is configured here, AI Summary "
+                "text will appear under every Spot on the Go link "
+                "in the daily report.")
             return
         # Everything else is a future scheduling sub-screen.
         from PyQt6.QtWidgets import QMessageBox
@@ -910,6 +946,49 @@ class MainWindow(QMainWindow):
                 log.warning(
                     f"studio settings live-apply failed: {exc}")
 
+    def _check_sotg_midnight_save(self) -> None:
+        """60s tick — at 23:59 (or any time on the morning after if we
+        missed it), persist the previous broadcast day's SOTG daily
+        report to disk. Idempotent via a Settings sentinel keyed by
+        the report date itself, so retries through the day are safe."""
+        try:
+            from datetime import datetime as _dt, date as _ddate, timedelta
+            from core.settings import Settings as _Settings
+            from core.reports.sotg_daily_report import (
+                generate_sotg_daily_report,
+            )
+            now = _dt.now()
+            today = _ddate.today()
+            # Decide which date to save:
+            #   • 23:59 → today (full day captured up to 23:59:00)
+            #   • 00:00..00:05 → yesterday (catch-up if 23:59 was missed)
+            target: _ddate
+            if now.hour == 23 and now.minute >= 59:
+                target = today
+            elif now.hour == 0 and now.minute <= 5:
+                target = today - timedelta(days=1)
+            else:
+                return    # not in the save window
+            sent_key = "last_sotg_report_save_date"
+            stamped = _Settings().get(sent_key, "") or ""
+            if stamped == target.isoformat():
+                return    # already saved for this target date
+            path = generate_sotg_daily_report(target, db=self._db)
+            _Settings().set(sent_key, target.isoformat())
+            _Settings().set(
+                "last_sotg_report_save_at",
+                now.strftime("%d %b, %I:%M %p"))
+            log.info(
+                f"[sotg auto-save] target={target.isoformat()} → {path}")
+            # Refresh the screen footer if it's mounted + visible
+            if hasattr(self, "sotg_generate_report"):
+                try:
+                    self.sotg_generate_report._refresh_last_save_label()
+                except Exception:
+                    pass
+        except Exception as exc:
+            log.warning(f"sotg midnight save failed: {exc}")
+
     def _refresh_station_branding(self) -> None:
         """Re-read Settings().station_display + push it to every header
         station label across every mounted screen. Two cohorts:
@@ -933,7 +1012,7 @@ class MainWindow(QMainWindow):
             "settings_hub", "settings_soundcard", "settings_studio",
             "play_history", "category_performance", "ai_magic_hub",
             "spot_on_the_go_shell", "sotg_create_schedule",
-            "sotg_assign",
+            "sotg_assign", "sotg_generate_report",
         )
         for attr in qlabel_screens:
             screen = getattr(self, attr, None)

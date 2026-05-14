@@ -12,6 +12,11 @@ from core.reports.spot_play_report import (
     REPORT_MODE_SCHEDULED,
     DEFAULT_REPORT_DIR,
 )
+from core.reports.sotg_daily_report import (
+    generate_sotg_daily_report,
+    SOTGDailyReportError,
+    DEFAULT_REPORT_DIR as SOTG_DEFAULT_REPORT_DIR,
+)
 
 __all__ = [
     "generate_spot_play_report",
@@ -19,4 +24,7 @@ __all__ = [
     "REPORT_MODE_ACTUAL",
     "REPORT_MODE_SCHEDULED",
     "DEFAULT_REPORT_DIR",
+    "generate_sotg_daily_report",
+    "SOTGDailyReportError",
+    "SOTG_DEFAULT_REPORT_DIR",
 ]

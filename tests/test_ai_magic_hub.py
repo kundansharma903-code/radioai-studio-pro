@@ -178,10 +178,16 @@ def test_main_window_nav_ai_magic_routes_to_hub(qapp, db, qtbot,
     w.deleteLater()
 
 
-def test_main_window_toasts_on_sub_module_click(qapp, db, qtbot,
-                                                  monkeypatch):
-    """Today the two AI modules toast 'coming soon' — pin that
-    behaviour so a future wire-up doesn't silently regress."""
+def test_only_scheduling_automation_module_still_toasts(qapp, db, qtbot,
+                                                          monkeypatch):
+    """Updated 2026-05-14 evening — Spot on the Go shipped as a real
+    screen + sub-screens; only Scheduling Automation (the second AI
+    Magic module) remains a placeholder toast until that submodule
+    ships in a follow-up session.
+
+    Original assertion expected 'Spot on the Go' to toast — already
+    stale at HEAD `859ba7b` when the shell shipped; corrected
+    together with the Generate Report landing."""
     from ui import main_window as mw_mod
     monkeypatch.setattr(mw_mod.MainWindow, "_apply_startup_auto_mode",
                          lambda self: None)
@@ -189,7 +195,6 @@ def test_main_window_toasts_on_sub_module_click(qapp, db, qtbot,
     w = MainWindow(db=db)
     qtbot.addWidget(w)
     toast_calls: list[tuple] = []
-    # Patch QMessageBox.information to capture instead of show a modal.
     from PyQt6.QtWidgets import QMessageBox
     monkeypatch.setattr(
         QMessageBox, "information",
@@ -197,8 +202,10 @@ def test_main_window_toasts_on_sub_module_click(qapp, db, qtbot,
     w._on_hub_screen_requested("spot_on_the_go")
     w._on_hub_screen_requested("scheduling_automation")
     titles = [t for t, _ in toast_calls]
-    assert "Spot on the Go" in titles
-    assert "Scheduling Automation" in titles
+    assert "Spot on the Go" not in titles      # real screen now
+    assert "Scheduling Automation" in titles   # still a toast
+    # And the spot_on_the_go route landed on the actual screen
+    assert w._stack.currentWidget() is w.spot_on_the_go_shell
     w.close()
     w.deleteLater()
 

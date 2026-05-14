@@ -44,6 +44,11 @@ logs/
 stitcher_*.wav
 *.tmp
 
+# Runtime report output (PDF generators write here — never committed).
+# Leading slash anchors the pattern to the repo root so the source
+# folder core/reports/ is NOT swept up.
+/reports/
+
 # Distribution
 *.spec
 *.spec.bak

@@ -192,10 +192,16 @@ def test_main_window_ai_magic_card_routes_to_shell(
     w.deleteLater()
 
 
-def test_main_window_toasts_on_sub_card_clicks(
+def test_only_assign_api_key_card_still_toasts(
         qapp, db, qtbot, monkeypatch):
-    """The four step cards toast 'coming soon' today — pin that
-    behaviour so a future wire-up doesn't silently regress."""
+    """Updated 2026-05-14 evening — three of four step cards are now
+    real screens (Create Schedule, Assign, Generate Report). Only
+    Assign API Key remains a placeholder toast until that screen
+    ships in a follow-up session.
+
+    Original assertion expected all four cards to toast — already
+    stale at HEAD `859ba7b` (Create Schedule + Assign had landed);
+    corrected together with the Generate Report build."""
     from ui import main_window as mw_mod
     monkeypatch.setattr(mw_mod.MainWindow, "_apply_startup_auto_mode",
                          lambda self: None)
@@ -211,9 +217,9 @@ def test_main_window_toasts_on_sub_card_clicks(
                  "generate_report", "assign_api_key"):
         w._on_hub_screen_requested(key)
     titles = [t for t, _ in toast_calls]
-    assert "Create Schedule" in titles
-    assert "Assign" in titles
-    assert "Generate Report" in titles
-    assert "Assign API Key" in titles
+    assert "Create Schedule" not in titles    # real screen
+    assert "Assign" not in titles              # real screen
+    assert "Generate Report" not in titles    # real screen (this build)
+    assert "Assign API Key" in titles          # still a toast
     w.close()
     w.deleteLater()
