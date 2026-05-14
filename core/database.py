@@ -839,7 +839,12 @@ class Database:
     def _ensure_sotg_assignments_table(self) -> None:
         """Idempotent CREATE for sotg_assignments + its indexes. Lets
         the Assign screen run on a dev DB that pre-dates the
-        schema.sql update without a manual initialize pass."""
+        schema.sql update without a manual initialize pass.
+
+        Also runs the AI Summary column migration: 2026-05-14 added
+        ai_summary / ai_summary_at / ai_provider / ai_status. PRAGMA
+        table_info() guards each ALTER so re-running on an already-
+        migrated DB is a cheap no-op."""
         self._ensure_sotg_tables()  # parent FKs first
         conn = self._conn()
         conn.executescript(
@@ -858,6 +863,10 @@ class Database:
                 priority          TEXT,
                 status            TEXT NOT NULL DEFAULT 'PENDING',
                 fired_at          TEXT,
+                ai_summary        TEXT,
+                ai_summary_at     TEXT,
+                ai_provider       TEXT,
+                ai_status         TEXT,
                 created_at        TEXT DEFAULT CURRENT_TIMESTAMP,
                 updated_at        TEXT DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(link_id, scheduled_date)
@@ -868,6 +877,22 @@ class Database:
                 ON sotg_assignments(show_id, scheduled_date);
             """
         )
+        # Migration: dev DBs that pre-date the AI Summary columns
+        # need the columns appended. PRAGMA table_info gives the
+        # current column set; SQLite has no IF NOT EXISTS for
+        # ADD COLUMN, so we check first.
+        existing_cols = {
+            r["name"] for r in conn.execute(
+                "PRAGMA table_info(sotg_assignments)").fetchall()
+        }
+        for col, ddl in (
+            ("ai_summary",    "ALTER TABLE sotg_assignments ADD COLUMN ai_summary TEXT"),
+            ("ai_summary_at", "ALTER TABLE sotg_assignments ADD COLUMN ai_summary_at TEXT"),
+            ("ai_provider",   "ALTER TABLE sotg_assignments ADD COLUMN ai_provider TEXT"),
+            ("ai_status",     "ALTER TABLE sotg_assignments ADD COLUMN ai_status TEXT"),
+        ):
+            if col not in existing_cols:
+                conn.execute(ddl)
         conn.commit()
 
     @staticmethod
@@ -1038,7 +1063,13 @@ class Database:
         """All assignments on the given date, optionally filtered by
         status. Joined with the link template + show envelope so the
         dispatcher has everything it needs to fire. Ordered by sharp
-        time ascending — earliest first."""
+        time ascending — earliest first.
+
+        Includes the AI Summary columns (ai_summary, ai_summary_at,
+        ai_provider, ai_status) so the Generate Report screen + PDF
+        can render the italicized 4-line summary sub-block under each
+        link, and the Assign API Key screen's live preview can show
+        per-row transcription state."""
         self._ensure_sotg_assignments_table()
         sd = (scheduled_date or "").strip()
         params = [sd]
@@ -1054,6 +1085,10 @@ class Database:
                     a.priority      AS priority,
                     a.status        AS status,
                     a.fired_at      AS fired_at,
+                    a.ai_summary    AS ai_summary,
+                    a.ai_summary_at AS ai_summary_at,
+                    a.ai_provider   AS ai_provider,
+                    a.ai_status     AS ai_status,
                     l.link_order    AS link_order,
                     l.link_name     AS link_name,
                     s.show_name     AS show_name,
@@ -1119,6 +1154,105 @@ class Database:
             key = (r["status"] or "PENDING").lower()
             if key in out[sid]:
                 out[sid][key] = int(r["n"] or 0)
+        return out
+
+    # ── SOTG AI Summary helpers ────────────────────────────────────────
+
+    def set_sotg_assignment_summary(self, assignment_id: int, *,
+                                      summary: Optional[str],
+                                      provider: Optional[str],
+                                      status: str) -> None:
+        """Persist a transcription result for one SOTG assignment.
+
+        ``summary`` — the 4-line English summary text (None when status
+                      is PROCESSING / FAILED / SKIPPED).
+        ``provider`` — 'gemini' or 'openai' (None when no attempt made).
+        ``status`` — PENDING / PROCESSING / DONE / FAILED / SKIPPED.
+
+        Called by core/sotg_transcription_engine.py at every stage of
+        the per-drop pipeline."""
+        self._ensure_sotg_assignments_table()
+        if status not in ("PENDING", "PROCESSING", "DONE",
+                          "FAILED", "SKIPPED"):
+            raise ValueError(f"unknown ai_status {status!r}")
+        if provider is not None and provider not in ("gemini", "openai"):
+            raise ValueError(f"unknown ai_provider {provider!r}")
+        from datetime import datetime as _dt
+        ts = _dt.now().isoformat(timespec="seconds") if status == "DONE" else None
+        conn = self._conn()
+        conn.execute(
+            "UPDATE sotg_assignments SET "
+            "  ai_summary = ?, ai_summary_at = ?, ai_provider = ?, "
+            "  ai_status = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ?",
+            [summary, ts, provider, status, int(assignment_id)])
+        conn.commit()
+
+    def get_sotg_assignment_by_id(self, assignment_id: int
+                                    ) -> Optional[dict]:
+        """Single-row lookup by primary key — joined with the link +
+        show context the transcription engine needs to build summary
+        prompts (RJ name, show name, link title)."""
+        self._ensure_sotg_assignments_table()
+        row = self._conn().execute(
+            """
+            SELECT  a.*,
+                    l.link_order    AS link_order,
+                    l.link_name     AS link_name,
+                    s.show_name     AS show_name,
+                    s.rj_name       AS rj_name
+            FROM    sotg_assignments a
+            JOIN    sotg_links l ON l.id = a.link_id
+            JOIN    sotg_shows s ON s.id = a.show_id
+            WHERE   a.id = ?
+            """, [int(assignment_id)]).fetchone()
+        return {k: row[k] for k in row.keys()} if row else None
+
+    def get_pending_transcription_assignments(self, limit: int = 50
+                                                ) -> list:
+        """Backfill query — every FIRED assignment without a DONE
+        ai_status, capped at ``limit`` most-recent first (ORDER BY
+        fired_at DESC). Skips rows with no file_path (nothing to
+        transcribe). Used by the Backfill Missing button."""
+        self._ensure_sotg_assignments_table()
+        rows = self._conn().execute(
+            """
+            SELECT  a.*,
+                    l.link_order    AS link_order,
+                    l.link_name     AS link_name,
+                    s.show_name     AS show_name,
+                    s.rj_name       AS rj_name
+            FROM    sotg_assignments a
+            JOIN    sotg_links l ON l.id = a.link_id
+            JOIN    sotg_shows s ON s.id = a.show_id
+            WHERE   a.status = 'FIRED'
+            AND     (a.ai_status IS NULL OR a.ai_status != 'DONE')
+            AND     a.file_path IS NOT NULL
+            ORDER BY a.fired_at DESC, a.id DESC
+            LIMIT   ?
+            """, [int(limit)]).fetchall()
+        return [{k: r[k] for k in r.keys()} for r in rows]
+
+    def get_sotg_summary_counts_today(self) -> dict:
+        """Hero stat-pill numbers for the Assign API Key screen:
+        ``{ "done": N, "pending": K, "failed": F }``  for today's
+        FIRED rows. PENDING here means status NULL or PROCESSING."""
+        self._ensure_sotg_assignments_table()
+        from datetime import date as _date
+        today = _date.today().isoformat()
+        agg = self._conn().execute(
+            "SELECT ai_status, COUNT(*) AS n FROM sotg_assignments "
+            "WHERE scheduled_date = ? AND status = 'FIRED' "
+            "GROUP BY ai_status", [today]).fetchall()
+        out = {"done": 0, "pending": 0, "failed": 0}
+        for r in agg:
+            s = (r["ai_status"] or "PENDING").upper()
+            if s == "DONE":
+                out["done"] += int(r["n"] or 0)
+            elif s == "FAILED":
+                out["failed"] += int(r["n"] or 0)
+            else:    # PENDING / PROCESSING / SKIPPED / None
+                out["pending"] += int(r["n"] or 0)
         return out
 
     def get_category_songs_ranked(self, category_id: int) -> list:

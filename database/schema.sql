@@ -597,6 +597,10 @@ CREATE TABLE IF NOT EXISTS sotg_assignments (
     status              TEXT NOT NULL DEFAULT 'PENDING',
                                                  -- PENDING/READY/FIRED/MISSED/CONFLICT
     fired_at            TEXT,
+    ai_summary          TEXT,                    -- 4-line transcription summary
+    ai_summary_at       TEXT,                    -- ISO timestamp when saved
+    ai_provider         TEXT,                    -- 'gemini' / 'openai'
+    ai_status           TEXT,                    -- PENDING/PROCESSING/DONE/FAILED/SKIPPED
     created_at          TEXT DEFAULT CURRENT_TIMESTAMP,
     updated_at          TEXT DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(link_id, scheduled_date)

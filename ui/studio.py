@@ -3699,6 +3699,10 @@ class Studio(QWidget):
 
     breadcrumb_clicked = pyqtSignal(str)
     screen_requested   = pyqtSignal(str)
+    # Emitted after a SOTG drop has been successfully marked FIRED so
+    # the Transcription Engine can enqueue the assignment for
+    # background summarisation. Carries the assignment_id (int).
+    sotg_drop_fired    = pyqtSignal(int)
 
     DEFAULT_VOLUME = 85
     FADE_OUT_MS = 3000
@@ -5572,6 +5576,14 @@ class Studio(QWidget):
             self._db.mark_sotg_assignment_fired(aid)
         except Exception as exc:
             log.warning(f"[studio] sotg mark-fired failed: {exc}")
+
+        # Notify the Transcription Engine — must come AFTER the DB
+        # stamp so the engine sees status=FIRED on lookup. Wrapped in
+        # try/except because no listener is OK (engine may be off).
+        try:
+            self.sotg_drop_fired.emit(aid)
+        except Exception as exc:
+            log.debug(f"[studio] sotg_drop_fired emit failed: {exc}")
 
         # broadcast_log entry — operator can audit fires later.
         try:

@@ -248,14 +248,23 @@ class _PendingToggle(QFrame):
 class _AssignmentRow(QFrame):
     """One link row inside the scrollable table. Captures all QLabel
     references at build time (per incident #19) so refresh is a clean
-    setText on each."""
+    setText on each.
+
+    Height expands from 56 → 116 when ``ai_summary`` is populated —
+    a 4-line italic block lands beneath the link name to mirror the
+    PDF's per-row layout (operator's 2026-05-14 spec)."""
 
     HEIGHT = 56
+    HEIGHT_WITH_SUMMARY = 116
 
     def __init__(self, data: dict, parent=None):
         super().__init__(parent)
         self._data = data
-        self.setFixedHeight(self.HEIGHT)
+        ai_status = (data.get("ai_status") or "").upper()
+        summary = (data.get("ai_summary") or "").strip()
+        self._has_summary = ai_status == "DONE" and bool(summary)
+        h = self.HEIGHT_WITH_SUMMARY if self._has_summary else self.HEIGHT
+        self.setFixedHeight(h)
         show_color = _safe_color(data.get("color"))
         self._show_color = show_color
         self.setStyleSheet(
@@ -335,6 +344,20 @@ class _AssignmentRow(QFrame):
             f"color: {TEXT_PRI}; background: transparent; border: none;")
         dur_lbl.setAlignment(Qt.AlignmentFlag.AlignRight
                               | Qt.AlignmentFlag.AlignVCenter)
+
+        # 4-line AI summary sub-block — only when status is DONE +
+        # ai_summary populated. Spec: italic, indented under link name,
+        # smaller font, secondary color. Each line clipped at 1240px.
+        if self._has_summary:
+            lines = summary.splitlines()[:4]
+            base_y = 50
+            for i, line in enumerate(lines):
+                slbl = QLabel(line, self)
+                slbl.setGeometry(58, base_y + i * 14, 1230, 14)
+                slbl.setFont(inter(10, italic=True))
+                slbl.setStyleSheet(
+                    f"color: {TEXT_SEC}; background: transparent; "
+                    f"border: none;")
 
     def paintEvent(self, e):
         super().paintEvent(e)

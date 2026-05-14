@@ -287,10 +287,11 @@ def test_main_window_mounts_sotg_generate_report(
     w.deleteLater()
 
 
-def test_only_assign_api_key_still_toasts(qapp, db, qtbot, monkeypatch):
-    """Pre this build: generate_report + assign_api_key both toasted.
-    Now generate_report routes to the real screen; only assign_api_key
-    remains a toast (until that screen ships)."""
+def test_both_generate_report_and_assign_api_key_land_real(
+        qapp, db, qtbot, monkeypatch):
+    """Updated 2026-05-14 evening v3 — Assign API Key shipped. Both
+    Generate Report + Assign API Key now route to real screens; no
+    toast for either."""
     from ui import main_window as mw_mod
     monkeypatch.setattr(mw_mod.MainWindow, "_apply_startup_auto_mode",
                          lambda self: None)
@@ -306,8 +307,8 @@ def test_only_assign_api_key_still_toasts(qapp, db, qtbot, monkeypatch):
     assert toast_calls == []
     assert w._stack.currentWidget() is w.sotg_generate_report
     w._on_hub_screen_requested("assign_api_key")
-    titles = [t for t, _ in toast_calls]
-    assert titles == ["Assign API Key"]
+    assert toast_calls == []
+    assert w._stack.currentWidget() is w.sotg_assign_api_key
     w.close()
     w.deleteLater()
 

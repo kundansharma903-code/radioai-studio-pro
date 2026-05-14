@@ -425,14 +425,12 @@ def test_sotg_shell_assign_card_reaches_real_screen(
     w.deleteLater()
 
 
-def test_only_assign_api_key_card_still_toasts(
+def test_all_four_sotg_step_cards_land_on_real_screens(
         qapp, db, qtbot, monkeypatch):
-    """Updated 2026-05-14 evening — Generate Report shipped as a real
-    screen (ui/sotg_generate_report.py). Only Assign API Key remains
-    a placeholder toast until that screen ships in a follow-up
-    session. The full regression is owned by
-    tests/test_sotg_generate_report_screen.py; this kept for cohesion
-    with the original SOTG-card sweep."""
+    """Updated 2026-05-14 evening v3 — Assign API Key shipped this
+    pass. All four SOTG step cards now route to real screens; no
+    toast remains. The full regression for each individual screen
+    lives in its own test file."""
     from ui import main_window as mw_mod
     monkeypatch.setattr(mw_mod.MainWindow, "_apply_startup_auto_mode",
                          lambda self: None)
@@ -444,8 +442,15 @@ def test_only_assign_api_key_card_still_toasts(
     monkeypatch.setattr(
         QMessageBox, "information",
         lambda parent, title, text: toast_calls.append((title, text)))
-    w._on_hub_screen_requested("assign_api_key")
-    titles = [t for t, _ in toast_calls]
-    assert titles == ["Assign API Key"]
+    for key, screen_attr in (
+        ("create_schedule",  "sotg_create_schedule"),
+        ("assign",           "sotg_assign"),
+        ("generate_report",  "sotg_generate_report"),
+        ("assign_api_key",   "sotg_assign_api_key"),
+    ):
+        w._on_hub_screen_requested(key)
+        assert w._stack.currentWidget() is getattr(w, screen_attr), key
+    # And nothing toasted along the way
+    assert [t for t, _ in toast_calls] == []
     w.close()
     w.deleteLater()

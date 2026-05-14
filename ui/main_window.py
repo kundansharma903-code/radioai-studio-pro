@@ -68,6 +68,16 @@ class MainWindow(QMainWindow):
         from core.stitcher_engine import StitcherEngine
         self._stitcher_engine = StitcherEngine()
 
+        # SOTG Transcription Engine — QThread worker that listens for
+        # fired SOTG drops, sends the audio to Gemini / OpenAI, and
+        # persists a 4-line summary on the assignment row. Single
+        # shared instance owned by MainWindow; the Studio dispatcher
+        # emits sotg_drop_fired(aid) and the engine pulls audio + key
+        # + adapter config from Settings on each job.
+        from core.sotg_transcription_engine import SOTGTranscriptionEngine
+        self._transcription_engine = SOTGTranscriptionEngine(
+            db=self._db, parent=self)
+
         # Phase B5: aboutToQuit safety net. Fires on app force-quit, OS
         # shutdown, or any path that bypasses closeEvent. cleanup_all is
         # idempotent so the dual-hook is cheap.
@@ -430,6 +440,20 @@ class MainWindow(QMainWindow):
                 self._on_studio_clicked)
             self._stack.addWidget(self.sotg_generate_report)
 
+            # SOTG · Assign API Key (Figma 503:3) — Step 4. Wires
+            # Gemini / OpenAI keys to the SOTGTranscriptionEngine. The
+            # engine then auto-summarises every FIRED drop into
+            # ai_summary, which the report screen + PDF render as a
+            # 4-line italic block under each link.
+            from ui.sotg_assign_api_key import SOTGAssignAPIKey
+            self.sotg_assign_api_key = SOTGAssignAPIKey(
+                self._db, engine=self._transcription_engine)
+            self.sotg_assign_api_key.screen_requested.connect(
+                self._on_hub_screen_requested)
+            self.sotg_assign_api_key.studio_clicked.connect(
+                self._on_studio_clicked)
+            self._stack.addWidget(self.sotg_assign_api_key)
+
             # Studio Single Deck — broadcast operator workstation (Figma 182:2)
             # Phase D1: skeleton; D2 wires manual audio; D3 passes scheduler.
             from ui.studio import Studio
@@ -439,6 +463,14 @@ class MainWindow(QMainWindow):
                 instant_jingle_engine=self._instant_jingle_engine,
                 sweeper_engine=self._sweeper_engine)
             self.studio.breadcrumb_clicked.connect(self._on_breadcrumb)
+            # SOTG drop FIRED → Transcription Engine enqueue. Real-time
+            # post-FIRED summarisation (operator's Q1 = (a)).
+            try:
+                self.studio.sotg_drop_fired.connect(
+                    self._transcription_engine.enqueue)
+            except Exception as exc:
+                log.warning(
+                    f"sotg_drop_fired connect failed: {exc}")
             # Standalone IJ screen → Studio live refresh. When the
             # operator assigns audio / renames a pad / tweaks a pallet
             # in ui/instant_jingles.py, Studio's tile grid picks up the
@@ -733,17 +765,17 @@ class MainWindow(QMainWindow):
                     f"sotg_generate_report refresh failed: {exc}")
             self._stack.setCurrentWidget(self.sotg_generate_report)
             return
-        if screen == "assign_api_key":
-            # Last SOTG step card — operator briefs this in its own
-            # session (Gemini / Claude / ChatGPT key + transcription
-            # pipeline). Until then, "coming soon" stays the contract.
-            from PyQt6.QtWidgets import QMessageBox
-            QMessageBox.information(
-                self, "Assign API Key",
-                "Assign API Key — coming soon.\n\n"
-                "Once an API key is configured here, AI Summary "
-                "text will appear under every Spot on the Go link "
-                "in the daily report.")
+        if (screen == "assign_api_key"
+                and hasattr(self, "sotg_assign_api_key")):
+            # SOTG Step 4 — Gemini / OpenAI key + transcription engine.
+            # Refresh activity log on entry so summaries fired while
+            # elsewhere become visible.
+            try:
+                self.sotg_assign_api_key.refresh()
+            except Exception as exc:
+                log.warning(
+                    f"sotg_assign_api_key refresh failed: {exc}")
+            self._stack.setCurrentWidget(self.sotg_assign_api_key)
             return
         # Everything else is a future scheduling sub-screen.
         from PyQt6.QtWidgets import QMessageBox
@@ -1013,6 +1045,7 @@ class MainWindow(QMainWindow):
             "play_history", "category_performance", "ai_magic_hub",
             "spot_on_the_go_shell", "sotg_create_schedule",
             "sotg_assign", "sotg_generate_report",
+            "sotg_assign_api_key",
         )
         for attr in qlabel_screens:
             screen = getattr(self, attr, None)
@@ -1060,6 +1093,18 @@ class MainWindow(QMainWindow):
         ORDER MATTERS: scheduler stops FIRST so it can't fire any more
         spot_due / song_auto_advance signals into a tearing-down audio
         engine. Then audio cleanup."""
+        # 0. Stop the transcription engine's QThread worker so it
+        # doesn't outlive the QApplication. Idempotent; safe to call
+        # even if it was never started.
+        if (hasattr(self, "_transcription_engine")
+                and self._transcription_engine is not None):
+            try:
+                self._transcription_engine.shutdown()
+                log.info("SOTGTranscriptionEngine shutdown done")
+            except Exception as exc:
+                log.warning(
+                    f"transcription engine shutdown failed: {exc}")
+
         # 1. Stop scheduler (silence the event source)
         if hasattr(self, "_scheduler") and self._scheduler is not None:
             try:

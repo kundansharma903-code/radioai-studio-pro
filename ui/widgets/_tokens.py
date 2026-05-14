@@ -37,23 +37,26 @@ ROBOTO_MONO       = "Roboto Mono"
 
 
 def _font(family: str, size: int, weight: QFont.Weight,
-          letter_spacing: float = 0.0) -> QFont:
+          letter_spacing: float = 0.0, italic: bool = False) -> QFont:
     f = QFont(family)
     f.setPixelSize(size)
     f.setWeight(weight)
+    if italic:
+        f.setItalic(True)
     if letter_spacing != 0.0:
         f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, letter_spacing)
     return f
 
 
 def inter(size: int, weight: QFont.Weight = QFont.Weight.Normal,
-          letter_spacing: float = 0.0) -> QFont:
-    return _font(INTER_FAMILY, size, weight, letter_spacing)
+          letter_spacing: float = 0.0, italic: bool = False) -> QFont:
+    return _font(INTER_FAMILY, size, weight, letter_spacing, italic)
 
 
-def mono(size: int, bold: bool = True, letter_spacing: float = 0.0) -> QFont:
+def mono(size: int, bold: bool = True, letter_spacing: float = 0.0,
+         italic: bool = False) -> QFont:
     w = QFont.Weight.Bold if bold else QFont.Weight.Normal
-    return _font(ROBOTO_MONO, size, w, letter_spacing)
+    return _font(ROBOTO_MONO, size, w, letter_spacing, italic)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────
