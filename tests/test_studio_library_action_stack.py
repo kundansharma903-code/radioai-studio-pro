@@ -115,11 +115,17 @@ def test_replace_overwrites_queue_head(qtbot, db, engine):
     s = Studio(db=db, engine=engine, scheduler=None,
                instant_jingle_engine=_FakeIJE())
     qtbot.addWidget(s)
-    if len(s._queue_songs) < 2:
-        pytest.skip("Need ≥2 songs in the manual queue baseline")
+    if not s._queue_songs:
+        pytest.skip("Need ≥1 song in the manual queue baseline")
     s._libraries._on_type_clicked("Songs")
-    s._libraries._on_row_selected(1)   # pick the 2nd song
-    target = s._queue_songs[1]
+    # Songs tile now sources from the full DB library (db.get_songs()),
+    # not _queue_songs. Pick a real library row + read its rich data
+    # back via the panel's selected_song_data() accessor so the assert
+    # compares against the song REPLACE actually consumed.
+    s._libraries._on_row_selected(1)   # pick the 2nd library row
+    target = s._libraries.selected_song_data()
+    if not target:
+        pytest.skip("Library panel needs ≥2 songs to pick row 1")
     s._on_lib_replace()
     assert s._queue_songs[0].get("title") == target.get("title")
 
@@ -150,16 +156,16 @@ def test_delete_removes_matching_queue_entry(qtbot, db, engine):
     s = Studio(db=db, engine=engine, scheduler=None,
                instant_jingle_engine=_FakeIJE())
     qtbot.addWidget(s)
-    if not s._queue_songs:
-        pytest.skip("Need ≥1 song in baseline queue")
     s._libraries._on_type_clicked("Songs")
     s._libraries._on_row_selected(0)
-    target = dict(s._queue_songs[0])
+    # Pick the library-panel's selected song (Songs tile now sources
+    # from db.get_songs(), not _queue_songs). Then seed the queue
+    # with exactly that song so DELETE has a deterministic match.
+    target = s._libraries.selected_song_data()
+    if not target:
+        pytest.skip("Library panel has no songs to pick")
     target_id = int(target.get("id") or 0)
-    # Filter the queue down to a fresh single copy so DELETE has a
-    # deterministic match (avoid duplicates from real DB).
-    s._queue_songs = [target]
-    s._libraries._on_row_selected(0)
+    s._queue_songs = [dict(target)]
     s._on_lib_delete()
     assert all(int(q.get("id") or 0) != target_id
                for q in s._queue_songs), \
@@ -205,15 +211,20 @@ def test_prepair_loads_deck_paused(qtbot, db):
     s = Studio(db=db, engine=eng, scheduler=None,
                instant_jingle_engine=_FakeIJE())
     qtbot.addWidget(s)
-    if not s._queue_songs:
-        pytest.skip("Need ≥1 song in baseline queue with file_path")
     s._libraries._on_type_clicked("Songs")
-    s._libraries._on_row_selected(0)
-    # Make sure the picked row points at a real file (some seeds have
-    # placeholder paths that don't exist on disk — skip cleanly).
-    row = s._queue_songs[0]
-    if not row.get("file_path") or not os.path.exists(row["file_path"]):
-        pytest.skip("Need a queue row with playable file_path")
+    # Walk the library rows to find one with a playable file_path —
+    # the dev DB has some entries pointing at deleted files, can't
+    # PREPAIR those.
+    row = None
+    for i in range(len(s._libraries._all_rows)):
+        s._libraries._on_row_selected(i)
+        candidate = s._libraries.selected_song_data()
+        if (candidate and candidate.get("file_path")
+                and os.path.exists(candidate["file_path"])):
+            row = candidate
+            break
+    if row is None:
+        pytest.skip("No library song with a playable file_path")
     s._on_lib_prepair()
     sequence = [c[0] for c in eng.calls]
     assert "load" in sequence

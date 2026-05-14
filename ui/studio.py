@@ -1908,10 +1908,18 @@ GREEN_DK = "#047857"
 
 
 class _LibSongRow:
-    """Plain data slot for one row in the songs table."""
-    def __init__(self, artist: str = "", title: str = ""):
+    """Plain data slot for one row in the songs table.
+
+    artist + title are the only fields the painter reads. data is an
+    optional payload — the host passes the full song dict (id, file_path,
+    duration_ms, category, etc.) so that filter-driven row selection
+    can resolve back to the rich record without an idx→cache lookup
+    against the unfiltered list (which would race with the search box)."""
+    def __init__(self, artist: str = "", title: str = "",
+                 data: Optional[dict] = None):
         self.artist = artist
         self.title = title
+        self.data = data
 
 
 class _LibSongsTable(QWidget):
@@ -2086,7 +2094,12 @@ class _LibPillBtn(QWidget):
 
 
 class _LibCategoryDropdown(QWidget):
-    """Big 540×42 cyan-glow dropdown showing 'All Songs' + chevron."""
+    """Big 540×42 cyan-glow dropdown showing the active category +
+    its song count. Click anywhere on the widget to request a category
+    menu — the host responds by popping a QMenu populated from
+    db.get_categories() and re-loading the library on selection."""
+
+    clicked = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -2103,6 +2116,16 @@ class _LibCategoryDropdown(QWidget):
         self._label = label
         self._count = int(count or 0)
         self.update(self.rect())
+
+    def mousePressEvent(self, e: QMouseEvent) -> None:
+        # Left-click anywhere on the widget asks the host to open the
+        # category picker. The picker (QMenu) is owned by the host so
+        # this widget doesn't need a DB handle.
+        if e.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+            e.accept()
+        else:
+            super().mousePressEvent(e)
 
     def paintEvent(self, e: QPaintEvent) -> None:
         p = QPainter(self); p.setClipRect(e.rect())
@@ -2142,6 +2165,8 @@ class _LibrariesPanel(QWidget):
     # ↔ jingles ↔ etc.). Studio listens, fetches the right list from
     # DB, and calls set_songs / set_sweepers as appropriate.
     library_type_changed = pyqtSignal(str)   # tile name (e.g. "Sweepers")
+    # Operator clicked the category dropdown — host pops the menu.
+    category_menu_requested = pyqtSignal()
     add_clicked     = pyqtSignal()      # ADD     — append selected row to queue
     insert_clicked  = pyqtSignal()      # INSERT  — insert at queue head
     replace_clicked = pyqtSignal()      # REPLACE — overwrite queue head
@@ -2247,9 +2272,13 @@ class _LibrariesPanel(QWidget):
             except Exception:
                 pass
 
-        # Category dropdown — aligned with search/table column
+        # Category dropdown — aligned with search/table column.
+        # Click bubbles up to the host (Studio) which opens a QMenu
+        # populated from db.get_categories(). Selection re-fetches
+        # the songs list filtered by the chosen category.
         self._cat_dropdown = _LibCategoryDropdown(self)
         self._cat_dropdown.move(FX, 700)
+        self._cat_dropdown.clicked.connect(self.category_menu_requested.emit)
 
         # Cache the full row set so Reset can restore. set_songs writes
         # _rows AND _all_rows so subsequent filters can rebuild without
@@ -2259,22 +2288,50 @@ class _LibrariesPanel(QWidget):
     # ── Public API ───────────────────────────────────────────────────────
 
     def set_songs(self, songs: list[dict], total_song_count: int = 0) -> None:
+        """Push a list of song dicts into the table. Each dict must
+        carry at least 'artist' and 'title' for the row painter; any
+        extra keys (id, file_path, duration_ms, category, …) attach to
+        the row's `data` payload so selected_song_data() can return
+        the rich record even after search has filtered the table.
+
+        The dropdown label is NOT touched here — the host controls
+        that via set_category_label() so the visible label and the
+        data source stay consistent."""
         rows = []
         for s in songs:
             rows.append(_LibSongRow(
                 artist=str(s.get("artist") or "—"),
-                title=str(s.get("title") or "—")))
+                title=str(s.get("title") or "—"),
+                data=dict(s) if isinstance(s, dict) else None))
         # Cache the full set so Reset can restore + filters can
         # rebuild without re-querying the DB.
         self._all_rows = list(rows)
         self._rows = rows
         self._total_song_count = int(total_song_count or len(songs))
         self._table.set_rows(self._rows)
-        self._cat_dropdown.set_data("All Songs", self._total_song_count)
         # Honour any pre-existing filter state (e.g. operator typed
         # before set_songs landed) — re-apply on top of fresh data.
         if hasattr(self, "_search") and self._search.text().strip():
             self._apply_search_filter()
+
+    def selected_song_data(self) -> Optional[dict]:
+        """Rich dict for the currently-selected row, or None when
+        nothing is selected. Uses self._rows (the VISIBLE post-filter
+        list) so a row index resolved against a search-filtered table
+        still maps to the correct underlying song."""
+        idx = self.selected_row_index()
+        if 0 <= idx < len(self._rows):
+            data = self._rows[idx].data
+            if data:
+                return dict(data)
+        return None
+
+    def set_category_label(self, label: str, count: int) -> None:
+        """Update the category dropdown's visible label + per-category
+        song count. Called by the host whenever the loaded category
+        scope changes (initial mount, Songs tile click, dropdown
+        selection)."""
+        self._cat_dropdown.set_data(label or "All Songs", int(count or 0))
 
     # ── Search + filter handlers ─────────────────────────────────────────
 
@@ -3859,8 +3916,13 @@ class Studio(QWidget):
         self._load_upcoming_queue()        # Phase B — populate first
         self._apply_idle_state()
         if hasattr(self, "_libraries"):
-            self._libraries.set_songs(self._queue_songs,
-                                       len(self._queue_songs))
+            # Seed the Libraries panel with the FULL songs library
+            # (db.get_songs() filtered to is_enabled = 1). Pre-this-
+            # session this seeded with self._queue_songs which made
+            # search/filter operate on the queue instead of the
+            # library — operator-blocking for any "find a song to add"
+            # workflow.
+            self._load_library_songs(None)
         self._refresh_history()
         self._update_status_pills()
         # Seed the Active Clock indicator from any value the scheduler
@@ -3951,6 +4013,21 @@ class Studio(QWidget):
         self._libraries.move(412, BODY_Y)
         self._libraries.song_double_clicked.connect(
             self._on_library_song_double_clicked)
+        # Songs library cache — populated by _load_library_songs() on
+        # constructor + tile clicks + category-dropdown selections +
+        # showEvent. Stores rich queue-dict-shaped rows so the ADD /
+        # INSERT / REPLACE action stack can hand them straight to
+        # _queue_songs without re-querying the DB.
+        # Pre-this-session the Libraries panel was seeded with the
+        # current queue contents (a 12-row scheduler preview), which
+        # meant search/filter operated on the queue not the library —
+        # operator workflow "search Tum Hi Ho → ADD" silently broke
+        # when the song wasn't already queued.
+        self._library_songs: list[dict] = []
+        # Currently-loaded category scope. None = "All Songs" (the
+        # full library). Persists across tile clicks so the operator
+        # doesn't have to re-pick after touching Sweepers / Jingles.
+        self._library_current_category_id: Optional[int] = None
         # Phase 2 sweeper wiring: type-tile click swaps the table source
         # between songs / sweepers / etc. Studio caches the resolved row
         # list so row-double-click can dispatch correctly.
@@ -3968,6 +4045,11 @@ class Studio(QWidget):
         self._library_spots: list[dict] = []
         self._libraries.library_type_changed.connect(
             self._on_library_type_changed)
+        # Category dropdown click → pop a QMenu with all categories.
+        # Handler reads db.get_categories() at click time so any newly
+        # added category surfaces without an app restart.
+        self._libraries.category_menu_requested.connect(
+            self._on_library_category_menu)
         # Action stack — ADD / INSERT / REPLACE / DELETE / PREPAIR.
         # Each handler resolves the currently-selected library row
         # (any type) into a queue-dict and applies the action to
@@ -6154,17 +6236,17 @@ class Studio(QWidget):
 
     def _on_library_type_changed(self, name: str) -> None:
         """A type tile in the Libraries panel was clicked. Swap the
-        table source to match. Songs use _queue_songs (same as before);
-        Sweepers query the live `sweepers` table; Jingles query the
-        master `jingles` library; the remaining tiles are placeholders
-        for now and clear the table.
+        table source to match. Songs query db.get_songs() filtered by
+        the currently-selected category dropdown scope; Sweepers query
+        the live `sweepers` table; Jingles query the master `jingles`
+        library; the remaining tiles are placeholders for now and
+        clear the table.
         """
         if name == "Songs":
             self._library_sweepers = []
             self._library_jingles = []
             self._library_spots = []
-            self._libraries.set_songs(
-                self._queue_songs, len(self._queue_songs))
+            self._load_library_songs(self._library_current_category_id)
             return
         if name == "Sweepers":
             try:
@@ -6270,6 +6352,152 @@ class Studio(QWidget):
         self._libraries.set_songs([], 0)
 
     # ────────────────────────────────────────────────────────────────────
+    # Libraries panel — Songs source (full DB library, category-scoped)
+    # ────────────────────────────────────────────────────────────────────
+
+    def _load_library_songs(self, category_id: Optional[int]) -> None:
+        """Fetch songs from the DB and push into the Libraries panel.
+
+        category_id=None → all enabled songs (label "All Songs");
+        a real id → only that category's songs (label uses the
+        category's name + per-category count).
+
+        Caches the rich queue-dict rows in self._library_songs so the
+        ADD / INSERT / REPLACE / PREPAIR action handlers can resolve
+        a row index → song dict without touching the DB. Display rows
+        in the table are slim (title + artist) — _LibSongsTable only
+        needs those two strings to paint.
+        """
+        try:
+            rows = list(self._db.get_songs(category_id=category_id))
+        except Exception as exc:
+            log.warning(f"[studio] library songs fetch failed: {exc}")
+            rows = []
+
+        cache: list[dict] = []
+        display: list[dict] = []
+        for r in rows:
+            keys = r.keys() if hasattr(r, "keys") else []
+            sid = int(r["id"]) if "id" in keys and r["id"] is not None else 0
+            title = (r["title"] if "title" in keys else "") or "—"
+            artist = (r["artist"] if "artist" in keys else "") or "—"
+            cache.append({
+                "id":           sid,
+                "title":        title,
+                "artist":       artist,
+                "file_path":    (r["file_path"]
+                                  if "file_path" in keys else "") or "",
+                "duration_ms":  int(r["duration_ms"] or 0)
+                                if "duration_ms" in keys else 0,
+                "category":     (r["cat_name"]
+                                  if "cat_name" in keys else "") or "",
+                "category_id":  int(r["category_id"]
+                                     if "category_id" in keys and
+                                     r["category_id"] is not None else 0),
+                "bpm":          (r["bpm"] if "bpm" in keys else None),
+                "energy":       (r["energy"] if "energy" in keys else ""),
+                "vocal":        (r["vocal"] if "vocal" in keys else ""),
+                # _item_type is the (id, type) tuple identity field
+                # DELETE filters against. Scheduler-picked queue items
+                # carry it from _compute_next_song; library rows need
+                # it too so DELETE matches on a queue row that came
+                # from ADD/INSERT/REPLACE off the library.
+                "_item_type":   "song",
+            })
+            display.append({"title": title, "artist": artist})
+
+        self._library_songs = cache
+        self._library_current_category_id = category_id
+
+        # Resolve dropdown label: "All Songs" for None, the category's
+        # name for a real id (with a defensive fallback to "Category"
+        # if the categories table has been mutated mid-flight).
+        label = "All Songs"
+        if category_id is not None:
+            try:
+                for c in self._db.get_categories():
+                    if int(c["id"]) == int(category_id):
+                        label = (c["name"] or "Category").strip()
+                        break
+            except Exception as exc:
+                log.warning(f"[studio] category-name lookup failed: {exc}")
+
+        # Push to the panel: pass the rich cache directly so each row
+        # carries its full song dict on .data — selected_song_data()
+        # uses that to resolve filter-driven row selections back to
+        # the right record. Then set the label so a quick re-paint
+        # sees consistent state.
+        self._libraries.set_songs(cache, len(cache))
+        self._libraries.set_category_label(label, len(cache))
+        log.info(
+            f"[studio] library panel loaded: category_id={category_id} "
+            f"label={label!r} count={len(display)}")
+
+    def _on_library_category_menu(self) -> None:
+        """Pop a QMenu under the category dropdown listing All Songs +
+        every row in db.get_categories(). Selection re-loads the
+        Libraries panel via _load_library_songs(category_id)."""
+        from PyQt6.QtWidgets import QMenu
+        try:
+            cats = list(self._db.get_categories())
+        except Exception as exc:
+            log.warning(f"[studio] category menu fetch failed: {exc}")
+            cats = []
+
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            "QMenu { background: #0a0b18; color: #f1f5ff; "
+            "border: 1px solid rgba(255,255,255,0.10); "
+            "padding: 6px 0; }"
+            "QMenu::item { padding: 6px 18px; font-size: 12px; }"
+            "QMenu::item:selected { background: rgba(6,182,212,0.18); "
+            "color: #67e8f9; }"
+        )
+
+        # Total count for the "All Songs" entry — db.count_songs() with
+        # no filter. Fall back to len(get_songs()) if count_songs trips.
+        try:
+            total = int(self._db.count_songs() or 0)
+        except Exception:
+            try:
+                total = len(list(self._db.get_songs()))
+            except Exception:
+                total = 0
+        act_all = menu.addAction(f"All Songs  ·  {total:,} songs")
+        act_all.setData(None)
+        if cats:
+            menu.addSeparator()
+        for c in cats:
+            cid = int(c["id"])
+            name = (c["name"] or "—").strip() or "—"
+            cnt = int(c["song_count"] or 0) if "song_count" in c.keys() else 0
+            a = menu.addAction(f"{name}  ·  {cnt:,} songs")
+            a.setData(cid)
+
+        # Anchor the menu directly under the dropdown widget so it
+        # feels like a real combo-box popup.
+        drop = self._libraries._cat_dropdown
+        anchor = drop.mapToGlobal(QPoint(0, drop.height()))
+        chosen = menu.exec(anchor)
+        if chosen is None:
+            return
+        self._load_library_songs(chosen.data())
+
+    def showEvent(self, e) -> None:
+        """When Studio comes back into view, re-fetch the Libraries
+        panel from the DB so any songs added/removed elsewhere (Songs
+        Library) surface without an app restart. Only refresh when the
+        Songs tile is the active library type — switching back from
+        Sweepers etc. shouldn't side-effect their cached state."""
+        super().showEvent(e)
+        try:
+            if (hasattr(self, "_libraries")
+                    and self._libraries.active_library_type() == "Songs"):
+                self._load_library_songs(self._library_current_category_id)
+        except Exception as exc:
+            log.debug(f"[studio] showEvent library refresh: {exc}")
+
+    # ────────────────────────────────────────────────────────────────────
     # Libraries panel — Action Stack (ADD / INSERT / REPLACE / DELETE / PREPAIR)
     # ────────────────────────────────────────────────────────────────────
 
@@ -6285,9 +6513,15 @@ class Studio(QWidget):
         if idx < 0:
             return None
         if active in ("Songs", "Tracks", "Favorites"):
-            if 0 <= idx < len(self._queue_songs):
-                return dict(self._queue_songs[idx])
-            return None
+            # The Libraries panel is now backed by the full DB songs
+            # library (self._library_songs), not the queue. Read
+            # through the panel's selected_song_data() so a row
+            # selected from a search-filtered view resolves to the
+            # correct underlying song (filtered idx vs full-cache idx
+            # would otherwise drift the moment the operator types in
+            # the search box).
+            data = self._libraries.selected_song_data()
+            return dict(data) if data else None
         if active == "Sweepers":
             if 0 <= idx < len(self._library_sweepers):
                 sw = self._library_sweepers[idx]
