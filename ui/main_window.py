@@ -102,6 +102,13 @@ class MainWindow(QMainWindow):
 
         self._stack = QStackedWidget()
         self._stack.setFixedSize(WINDOW_W, WINDOW_H)  # design canvas
+        # Resize the stack to the active screen's footprint on every
+        # widget change. Without this, the stack stays at the largest
+        # screen's size (1920×1080 for Studio / Final Log) — so on
+        # smaller screens (1440×900) the operator could scroll
+        # horizontally into 480px of blank space past the content
+        # edge. Hook fires for setCurrentWidget + setCurrentIndex.
+        self._stack.currentChanged.connect(self._on_stack_currentChanged)
 
         scroll = QScrollArea()
         scroll.setObjectName("mwScroll")
@@ -118,19 +125,42 @@ class MainWindow(QMainWindow):
         scroll.viewport().setPalette(pal)
         scroll.viewport().setAutoFillBackground(True)
 
-        # Style the scrollbars (#mwScroll selector to scope precisely)
+        # Style the scrollbars (#mwScroll selector to scope precisely).
+        # Polished pattern matching modern broadcast apps:
+        #   - Track barely visible (transparent), top/bottom inset so
+        #     the handle never kisses the window edges.
+        #   - Handle subtle gray idle, cyan on hover, brighter on
+        #     press. 60px minimum so it's always easy to grab even
+        #     when the content overflow is huge.
+        #   - 10px outer width with 3px horizontal handle margin →
+        #     effective 4px visible handle, which reads as "thin"
+        #     while remaining easy to click.
+        #   - No add-line / sub-line arrow buttons (modern convention).
         scroll.setStyleSheet(
             "QScrollArea#mwScroll { background: #06080f; border: none; }"
             "QScrollArea#mwScroll > QWidget > QWidget { background: #06080f; }"
-            "QScrollBar:vertical { background: rgba(255,255,255,0.02); width: 8px; }"
-            "QScrollBar::handle:vertical { background: rgba(167,139,250,0.4); "
-            "border-radius: 4px; min-height: 30px; margin: 2px; }"
-            "QScrollBar::handle:vertical:hover { background: rgba(167,139,250,0.7); }"
-            "QScrollBar:horizontal { background: rgba(255,255,255,0.02); height: 8px; }"
-            "QScrollBar::handle:horizontal { background: rgba(167,139,250,0.4); "
-            "border-radius: 4px; min-width: 30px; margin: 2px; }"
-            "QScrollBar::handle:horizontal:hover { background: rgba(167,139,250,0.7); }"
-            "QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }"
+            "QScrollBar:vertical { background: transparent; "
+            "width: 10px; margin: 8px 0 8px 0; }"
+            "QScrollBar::handle:vertical { background: "
+            "rgba(255,255,255,0.10); border-radius: 3px; "
+            "min-height: 60px; margin: 0 3px; }"
+            "QScrollBar::handle:vertical:hover { "
+            "background: rgba(34,211,238,0.55); }"
+            "QScrollBar::handle:vertical:pressed { "
+            "background: rgba(6,182,212,0.85); }"
+            "QScrollBar:horizontal { background: transparent; "
+            "height: 10px; margin: 0 8px 0 8px; }"
+            "QScrollBar::handle:horizontal { background: "
+            "rgba(255,255,255,0.10); border-radius: 3px; "
+            "min-width: 60px; margin: 3px 0; }"
+            "QScrollBar::handle:horizontal:hover { "
+            "background: rgba(34,211,238,0.55); }"
+            "QScrollBar::handle:horizontal:pressed { "
+            "background: rgba(6,182,212,0.85); }"
+            "QScrollBar::add-line, QScrollBar::sub-line { "
+            "width: 0; height: 0; background: transparent; border: none; }"
+            "QScrollBar::add-page, QScrollBar::sub-page { "
+            "background: transparent; }"
         )
         scroll.setWidget(self._stack)
         self.setCentralWidget(scroll)
@@ -306,6 +336,18 @@ class MainWindow(QMainWindow):
                 self._on_studio_settings_saved)
             self._stack.addWidget(self.settings_studio)
 
+            # Play History (Figma 437:3) — per-song analytics. Routed
+            # via Songs Library's "Play History" report action; the
+            # _on_report_clicked handler reads the currently-selected
+            # song id off the songs_library + calls load_song().
+            from ui.play_history import PlayHistory
+            self.play_history = PlayHistory(self._db)
+            self.play_history.breadcrumb_clicked.connect(
+                self._on_hub_screen_requested)
+            self.play_history.studio_clicked.connect(
+                self._on_studio_clicked)
+            self._stack.addWidget(self.play_history)
+
             # Studio Single Deck — broadcast operator workstation (Figma 182:2)
             # Phase D1: skeleton; D2 wires manual audio; D3 passes scheduler.
             from ui.studio import Studio
@@ -431,6 +473,12 @@ class MainWindow(QMainWindow):
             if hasattr(self, "control_panel"):
                 self._stack.setCurrentWidget(self.control_panel)
             return
+        if screen == "songs" and hasattr(self, "songs_library"):
+            # Play History's "Songs Library" breadcrumb crumb lands
+            # here. Mirrors the ControlPanel card route in
+            # _on_card_clicked so the user never sees a no-op click.
+            self._stack.setCurrentWidget(self.songs_library)
+            return
         if screen == "scheduling_hub" and hasattr(self, "scheduling_hub"):
             self._stack.setCurrentWidget(self.scheduling_hub)
             return
@@ -551,12 +599,36 @@ class MainWindow(QMainWindow):
 
     def _on_song_selected(self, song_id: int) -> None:
         log.info(f"Song selected: id={song_id}")
+        # Track for downstream report actions (e.g. Play History
+        # needs the currently-focused song id at the moment the
+        # operator clicks the report tile).
+        self._selected_song_id = int(song_id) if song_id else None
 
     def _on_play_song(self, song_id: int) -> None:
         log.info(f"Play song: id={song_id}")
 
     def _on_report_clicked(self, name: str) -> None:
         log.info(f"Report → {name}")
+        if name == "play_history":
+            sid = getattr(self, "_selected_song_id", None)
+            if not sid:
+                # No song selected — toast a friendly nudge.
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.information(
+                    self, "Play History",
+                    "Select a song from the list first, "
+                    "then click Play History.")
+                return
+            if hasattr(self, "play_history"):
+                try:
+                    self.play_history.load_song(int(sid))
+                except Exception as exc:
+                    log.warning(f"play_history load_song failed: {exc}")
+                self._stack.setCurrentWidget(self.play_history)
+            return
+        # Other report actions still bubble up as logs only — they're
+        # the "Rotation Health / Last Played / Top Songs" tiles which
+        # haven't been built yet.
 
     def _on_nav_clicked(self, tab: str) -> None:
         log.info(f"Nav → {tab}")
@@ -585,6 +657,42 @@ class MainWindow(QMainWindow):
         log.info("Settings →")
         if hasattr(self, "settings_hub"):
             self._stack.setCurrentWidget(self.settings_hub)
+
+    def _on_stack_currentChanged(self, idx: int) -> None:
+        """Resize the stack to match the active screen's footprint so
+        the outer QScrollArea never lets the operator scroll into
+        blank space past the screen's right or bottom edge.
+
+        Most RadioAI screens are 1440×900 but Studio + Final Log are
+        1920×1080 — without this resize the stack stayed at the
+        largest (1920×1080) and 1440-wide screens left 480px of
+        scrollable emptiness on the right.
+
+        Safety: minimum 800×600 (matches MainWindow's setMinimumSize)
+        so the stack never collapses to 0×0 if a widget reports a
+        bogus size before its setFixedSize has applied."""
+        if idx < 0:
+            return
+        if not hasattr(self, "_stack") or self._stack is None:
+            return
+        w = self._stack.widget(idx)
+        if w is None:
+            return
+        # Prefer the explicit setFixedSize (min == max == widget size).
+        # Fall back to widget.size() (post-show), then sizeHint.
+        size = w.size()
+        if size.width() <= 0 or size.height() <= 0:
+            mn = w.minimumSize(); mx = w.maximumSize()
+            if mn.width() > 0 and mn == mx:
+                size = mn
+            else:
+                size = w.sizeHint()
+        target_w = max(800, int(size.width() or 0))
+        target_h = max(600, int(size.height() or 0))
+        try:
+            self._stack.setFixedSize(target_w, target_h)
+        except Exception as exc:
+            log.debug(f"stack resize failed: {exc}")
 
     def _on_studio_settings_saved(self) -> None:
         """SettingsStudio.settings_saved broadcaster. Pushes the
@@ -620,6 +728,7 @@ class MainWindow(QMainWindow):
             "songs_library", "instant_jingles", "spots_commercials",
             "sweepers_library", "jingles_library", "stitcher",
             "settings_hub", "settings_soundcard", "settings_studio",
+            "play_history",
         )
         for attr in qlabel_screens:
             screen = getattr(self, attr, None)

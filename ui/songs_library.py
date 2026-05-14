@@ -1092,31 +1092,50 @@ class SongsLibrary(QWidget):
             f"border-left: 1px solid {rgba('#ffffff', 0.06)};"
         )
 
-        # Tabs row (36px tall)
+        # Tabs row (36px tall) — interactive in Phase 5-B. The three
+        # tabs now drive actions:
+        #   • Song Details → no-op (default, shows the existing form)
+        #   • Audio Cues   → opens the Audio Cue Editor dialog (the
+        #                     same target as the ✎ Edit Cues button
+        #                     below — operator can use either entry).
+        #   • Play History → emits report_clicked("play_history") so
+        #                     MainWindow routes to the per-song
+        #                     analytics screen (Figma 437:3).
         tabs_bg = QFrame(self)
         tabs_bg.setGeometry(x0, y0, DETAIL_W, 36)
         tabs_bg.setStyleSheet(
             f"background: {BG_DARK_PANEL}; "
             f"border-bottom: 1px solid {rgba('#ffffff', 0.06)};"
         )
-        for i, (txt, active) in enumerate([
-            ("Song Details", True), ("Audio Cues", False), ("Play History", False),
-        ]):
+        self._detail_tab_btns: dict = {}
+        tab_specs = [("Song Details", "song_details"),
+                      ("Audio Cues",   "audio_cues"),
+                      ("Play History", "play_history")]
+        for i, (txt, key) in enumerate(tab_specs):
             btn = QPushButton(txt, self)
             btn.setGeometry(x0 + 14 + i * 105, y0, 100, 36)
             btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-            color = CYAN if active else TEXT_MUTED
-            weight = QFont.Weight.Bold if active else QFont.Weight.Medium
-            btn.setFont(inter(11, weight))
+            btn.setFont(inter(11, QFont.Weight.Medium))
             btn.setStyleSheet(
-                f"QPushButton {{ background: transparent; color: {color}; "
+                f"QPushButton {{ background: transparent; "
+                f"color: {TEXT_MUTED}; "
                 f"border: none; padding: 0; text-align: left; }}"
                 f"QPushButton:hover {{ color: {TEXT_PRI}; }}"
             )
-        # Active tab underline
-        ul = QFrame(self)
-        ul.setGeometry(x0 + 14, y0 + 34, 90, 2)
-        ul.setStyleSheet(f"background: {CYAN};")
+            btn.clicked.connect(
+                lambda _=False, k=key: self._on_detail_tab_clicked(k))
+            self._detail_tab_btns[key] = btn
+        # Active tab underline — moved by _on_detail_tab_clicked
+        self._detail_tab_underline = QFrame(self)
+        self._detail_tab_underline.setGeometry(
+            x0 + 14, y0 + 34, 90, 2)
+        self._detail_tab_underline.setStyleSheet(
+            f"background: {CYAN};")
+        self._detail_tab_x0 = x0   # captured for the underline shift
+        self._detail_tab_y0 = y0
+        # Mark "Song Details" active by default
+        self._active_detail_tab = "song_details"
+        self._set_detail_tab_active(self._active_detail_tab)
 
         # Song header card at y=86 absolute (inside detail at 36..100)
         self._song_header = _SongHeaderCard(self)
@@ -1209,6 +1228,76 @@ class SongsLibrary(QWidget):
             parent=self.window(), engine=self._engine)
         dlg.cues_saved.connect(self._on_cues_saved)
         dlg.exec()
+
+    # ── Detail-panel tab interactions ────────────────────────────────────
+
+    def _set_detail_tab_active(self, key: str) -> None:
+        """Repaint the three tab buttons + slide the underline so
+        the named tab reads active. Does NOT trigger any action —
+        caller's responsibility (Audio Cues → open dialog,
+        Play History → emit report_clicked, etc.)."""
+        if not hasattr(self, "_detail_tab_btns"):
+            return
+        # Restyle each tab's foreground colour + weight
+        for k, btn in self._detail_tab_btns.items():
+            is_active = (k == key)
+            color = CYAN if is_active else TEXT_MUTED
+            weight = (QFont.Weight.Bold if is_active
+                      else QFont.Weight.Medium)
+            btn.setFont(inter(11, weight))
+            btn.setStyleSheet(
+                f"QPushButton {{ background: transparent; "
+                f"color: {color}; "
+                f"border: none; padding: 0; text-align: left; }}"
+                f"QPushButton:hover {{ color: {TEXT_PRI}; }}"
+            )
+        # Slide the underline. Tab order = the original tab_specs.
+        order = ["song_details", "audio_cues", "play_history"]
+        try:
+            idx = order.index(key)
+        except ValueError:
+            idx = 0
+        x0 = getattr(self, "_detail_tab_x0", 0)
+        y0 = getattr(self, "_detail_tab_y0", 0)
+        if hasattr(self, "_detail_tab_underline"):
+            self._detail_tab_underline.setGeometry(
+                x0 + 14 + idx * 105, y0 + 34, 90, 2)
+        self._active_detail_tab = key
+
+    def _on_detail_tab_clicked(self, key: str) -> None:
+        """User clicked one of the three detail-panel tabs. Audio
+        Cues + Play History trigger their respective actions; Song
+        Details is a passive default. The active visual snaps to
+        the clicked tab regardless — except we don't lock 'active'
+        on Audio Cues / Play History because they open into other
+        screens; the underline returns to Song Details so the form
+        below the tabs (which is what's actually rendering) stays
+        labelled correctly."""
+        if key == "song_details":
+            self._set_detail_tab_active("song_details")
+            return
+        if key == "audio_cues":
+            self._open_cue_editor()
+            # Visual stays on Song Details — the Audio Cue Editor is
+            # a modal dialog over the form, not a panel swap.
+            self._set_detail_tab_active("song_details")
+            return
+        if key == "play_history":
+            if not self._selected_id:
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.information(
+                    self, "No song selected",
+                    "Click a song in the table first, "
+                    "then Play History.")
+                self._set_detail_tab_active("song_details")
+                return
+            self.report_clicked.emit("play_history")
+            # Routing into the Play History screen replaces the
+            # active widget on the MainWindow stack; the tab visual
+            # in Songs Library snaps back to Song Details so the
+            # operator returning here doesn't see a stale highlight.
+            self._set_detail_tab_active("song_details")
+            return
 
     def _on_cues_saved(self, song_id: int):
         log.info(f"cues_saved received for song id={song_id}")

@@ -371,6 +371,155 @@ class Database:
             out[int(r["hr"])] = int(r["n"])
         return out
 
+    # ── Per-song play history (Figma 437:3 / ui/play_history.py) ──────────
+
+    def get_song_play_history_summary(self, song_id: int) -> dict:
+        """Single-song analytics — totals, recency, per-month / per-week
+        counters, rolling 4-week average. All driven off broadcast_log
+        with date filters in SQLite-native format so the SQL stays
+        portable to the production DB."""
+        sid = int(song_id)
+        conn = self._conn()
+        # Totals + first/last played + song-row added_at. The dev DB
+        # uses 'entry_date' (older schema); newer installs use
+        # 'created_at'. Probe for both — neither failing should kill
+        # the summary call.
+        cols = {c["name"] for c in conn.execute(
+            "PRAGMA table_info(songs)").fetchall()}
+        date_col = ("entry_date" if "entry_date" in cols
+                    else ("created_at" if "created_at" in cols else None))
+        added_at = None
+        if date_col is not None:
+            try:
+                srow = conn.execute(
+                    f"SELECT {date_col} AS d FROM songs WHERE id = ?",
+                    [sid]).fetchone()
+                added_at = srow["d"] if srow else None
+            except Exception:
+                added_at = None
+
+        total = conn.execute(
+            "SELECT COUNT(*) AS n FROM broadcast_log WHERE song_id = ?",
+            [sid]).fetchone()
+        total_plays = int(total["n"] if total else 0)
+
+        last = conn.execute(
+            "SELECT MAX(played_at) AS lp FROM broadcast_log "
+            "WHERE song_id = ?", [sid]).fetchone()
+        last_played_at = last["lp"] if last else None
+
+        # Month / week buckets — SQLite date('now') is in UTC; localtime
+        # keeps the count honest for an operator whose system clock is
+        # the broadcast reference. All filters use 'localtime' modifier
+        # so we stay consistent with broadcast_log.played_at.
+        def cnt(where: str, params: list = None) -> int:
+            r = conn.execute(
+                f"SELECT COUNT(*) AS n FROM broadcast_log "
+                f"WHERE song_id = ? {where}",
+                [sid] + (params or [])).fetchone()
+            return int(r["n"] if r else 0)
+
+        plays_this_month = cnt(
+            "AND strftime('%Y-%m', played_at) = "
+            "strftime('%Y-%m', 'now','localtime')")
+        plays_last_month = cnt(
+            "AND strftime('%Y-%m', played_at) = "
+            "strftime('%Y-%m', date('now','localtime','start of month',"
+            "'-1 day'))")
+        plays_this_week = cnt(
+            "AND date(played_at) >= "
+            "date('now','localtime','weekday 0','-7 days')")
+        plays_last_week = cnt(
+            "AND date(played_at) >= "
+            "date('now','localtime','weekday 0','-14 days') "
+            "AND date(played_at) < "
+            "date('now','localtime','weekday 0','-7 days')")
+        plays_4_weeks = cnt(
+            "AND date(played_at) >= "
+            "date('now','localtime','-28 days')")
+        avg_per_week = round(plays_4_weeks / 4.0, 1)
+
+        return {
+            "song_id":          sid,
+            "added_at":         added_at,
+            "total_plays":      total_plays,
+            "last_played_at":   last_played_at,
+            "plays_this_month": plays_this_month,
+            "plays_last_month": plays_last_month,
+            "plays_this_week":  plays_this_week,
+            "plays_last_week":  plays_last_week,
+            "avg_per_week":     avg_per_week,
+        }
+
+    def get_song_monthly_plays(self, song_id: int,
+                                months: int = 12) -> list:
+        """Return per-month play counts for the last `months` months,
+        oldest-first. Output: list of dicts {year, month, label, count}.
+        Months with zero plays are included so the bar chart never has
+        gaps."""
+        sid = int(song_id)
+        n = max(1, min(60, int(months)))
+        # Aggregate counts by YYYY-MM
+        rows = self._conn().execute(
+            "SELECT strftime('%Y-%m', played_at) AS ym, COUNT(*) AS n "
+            "FROM broadcast_log "
+            "WHERE song_id = ? "
+            "AND date(played_at) >= "
+            "date('now','localtime','start of month', "
+            "'-' || ? || ' months') "
+            "GROUP BY ym",
+            [sid, n - 1]).fetchall()
+        counts_by_ym = {r["ym"]: int(r["n"]) for r in rows}
+
+        # Build the rolling window — oldest..current
+        import datetime as _dt
+        today = _dt.date.today()
+        # First of current month
+        cur = _dt.date(today.year, today.month, 1)
+        out: list = []
+        seq: list = []
+        for _ in range(n):
+            seq.append((cur.year, cur.month))
+            # Step back one month
+            if cur.month == 1:
+                cur = _dt.date(cur.year - 1, 12, 1)
+            else:
+                cur = _dt.date(cur.year, cur.month - 1, 1)
+        seq.reverse()  # oldest-first
+
+        MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                          "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        for (y, m) in seq:
+            key = f"{y:04d}-{m:02d}"
+            out.append({
+                "year":  y,
+                "month": m,
+                "label": MONTH_LABELS[m - 1],
+                "count": counts_by_ym.get(key, 0),
+            })
+        return out
+
+    def get_song_recent_plays(self, song_id: int,
+                                limit: int = 5) -> list:
+        """Recent broadcast_log entries for this song joined with the
+        clock name + day-of-week / slot info. Most-recent first."""
+        sid = int(song_id)
+        rows = self._conn().execute(
+            """
+            SELECT bl.played_at, bl.clock_id, bl.slot_idx, bl.operator,
+                   bl.deck,
+                   c.name AS clock_name
+            FROM   broadcast_log bl
+            LEFT JOIN clocks c ON bl.clock_id = c.id
+            WHERE  bl.song_id = ?
+            ORDER  BY bl.played_at DESC
+            LIMIT  ?
+            """,
+            [sid, int(limit)]).fetchall()
+        # Coerce to plain dicts for the screen — saves the consumer
+        # from worrying about Row's quirky dict() conversion.
+        return [{k: r[k] for k in r.keys()} for r in rows]
+
     # ── Clocks ────────────────────────────────────────────────────────────────
 
     def get_active_clock(
