@@ -546,5 +546,66 @@ CREATE INDEX IF NOT EXISTS idx_finalentry_log  ON final_log_entries(log_id, posi
 -- Spot schedules (new table)
 CREATE INDEX IF NOT EXISTS idx_spot_sched_hour ON spot_schedules(hour, day_of_week);
 
+-- ─── Spot on the Go (AI Magic submodule) ─────────────────────────────────
+-- A show = recurring daily programming block (RJ Komal · Bhakti Sagar ·
+-- 04:00-07:00 · Daily) with N editable link names. The sharp per-link
+-- time + file + High/Low priority live in a separate Assign-step table
+-- (added when that screen ships). Create Schedule only authors the
+-- envelope + link-name template.
+CREATE TABLE IF NOT EXISTS sotg_shows (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    rj_name         TEXT    NOT NULL,
+    show_name       TEXT    NOT NULL,
+    days            TEXT    NOT NULL DEFAULT 'Daily',
+                                  -- 'Daily' / 'Weekdays' / 'Weekends'
+    time_start      TEXT    NOT NULL,        -- 'HH:MM' (24h)
+    time_end        TEXT    NOT NULL,        -- 'HH:MM' (24h)
+    color           TEXT    DEFAULT '#06b6d4',
+    description     TEXT    DEFAULT '',
+    created_at      TEXT    DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TEXT    DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS sotg_links (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    show_id         INTEGER NOT NULL
+                    REFERENCES sotg_shows(id) ON DELETE CASCADE,
+    link_order      INTEGER NOT NULL,        -- 1..N within the show
+    link_name       TEXT    NOT NULL,        -- 'Link 1' default, editable
+    created_at      TEXT    DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_sotg_links_show
+    ON sotg_links(show_id, link_order);
+
+-- Per-day Assign step: one row per (link, scheduled_date) tuple.
+-- File + sharp time + priority + status live here. UNIQUE(link_id,
+-- scheduled_date) so re-upserting a link's assignment for the same day
+-- replaces in place. Cascades on show or link delete.
+CREATE TABLE IF NOT EXISTS sotg_assignments (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    show_id             INTEGER NOT NULL
+                        REFERENCES sotg_shows(id) ON DELETE CASCADE,
+    link_id             INTEGER NOT NULL
+                        REFERENCES sotg_links(id) ON DELETE CASCADE,
+    scheduled_date      TEXT    NOT NULL,        -- 'YYYY-MM-DD'
+    file_path           TEXT,
+    file_name           TEXT,
+    file_duration_ms    INTEGER DEFAULT 0,
+    sharp_time          TEXT,                    -- 'HH:MM' (24h)
+    priority            TEXT,                    -- 'High' / 'Low'
+    status              TEXT NOT NULL DEFAULT 'PENDING',
+                                                 -- PENDING/READY/FIRED/MISSED/CONFLICT
+    fired_at            TEXT,
+    created_at          TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(link_id, scheduled_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sotg_assignments_date
+    ON sotg_assignments(scheduled_date);
+CREATE INDEX IF NOT EXISTS idx_sotg_assignments_show_date
+    ON sotg_assignments(show_id, scheduled_date);
+
 -- Record this schema version
 INSERT OR IGNORE INTO schema_migrations (name) VALUES ('v2.0.0_foundation');

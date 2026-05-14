@@ -662,6 +662,465 @@ class Database:
             })
         return out
 
+    # ── Spot on the Go (AI Magic submodule) — Create Schedule ─────────────
+
+    def _ensure_sotg_tables(self) -> None:
+        """Idempotent CREATE for sotg_shows + sotg_links + their index.
+        First call creates; subsequent calls are no-op. Lets the
+        Create Schedule screen run on a dev DB that pre-dates the
+        schema.sql update without forcing a manual `db_manager.py
+        --initialize` pass."""
+        conn = self._conn()
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS sotg_shows (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                rj_name     TEXT    NOT NULL,
+                show_name   TEXT    NOT NULL,
+                days        TEXT    NOT NULL DEFAULT 'Daily',
+                time_start  TEXT    NOT NULL,
+                time_end    TEXT    NOT NULL,
+                color       TEXT    DEFAULT '#06b6d4',
+                description TEXT    DEFAULT '',
+                created_at  TEXT    DEFAULT CURRENT_TIMESTAMP,
+                updated_at  TEXT    DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS sotg_links (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                show_id     INTEGER NOT NULL
+                            REFERENCES sotg_shows(id) ON DELETE CASCADE,
+                link_order  INTEGER NOT NULL,
+                link_name   TEXT    NOT NULL,
+                created_at  TEXT    DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_sotg_links_show
+                ON sotg_links(show_id, link_order);
+            """
+        )
+        conn.commit()
+
+    def create_sotg_show(self, *, rj_name: str, show_name: str,
+                          days: str, time_start: str, time_end: str,
+                          color: str, description: str,
+                          link_names: list) -> int:
+        """Insert one show + its N link rows in a single transaction.
+        Returns the new show id. Raises on any validation slip."""
+        self._ensure_sotg_tables()
+        rj = (rj_name or "").strip()
+        sn = (show_name or "").strip()
+        if not rj or not sn:
+            raise ValueError("rj_name and show_name are required")
+        days_norm = (days or "Daily").strip() or "Daily"
+        if days_norm not in ("Daily", "Weekdays", "Weekends"):
+            raise ValueError(f"Unknown days value: {days_norm!r}")
+        ts = (time_start or "").strip()
+        te = (time_end or "").strip()
+        if len(ts) != 5 or ts[2] != ":" or len(te) != 5 or te[2] != ":":
+            raise ValueError(
+                f"time_start/time_end must be HH:MM 24h ({ts!r} {te!r})")
+        links = list(link_names or [])
+        if len(links) < 1 or len(links) > 12:
+            raise ValueError(
+                f"link_names must hold 1..12 entries (got {len(links)})")
+
+        conn = self._conn()
+        try:
+            conn.execute("BEGIN")
+            cur = conn.execute(
+                "INSERT INTO sotg_shows "
+                "(rj_name, show_name, days, time_start, time_end, "
+                " color, description) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                [rj, sn, days_norm, ts, te,
+                 color or "#06b6d4", description or ""])
+            show_id = int(cur.lastrowid)
+            for i, name in enumerate(links):
+                conn.execute(
+                    "INSERT INTO sotg_links "
+                    "(show_id, link_order, link_name) VALUES (?, ?, ?)",
+                    [show_id, i + 1, (name or f"Link {i+1}").strip()])
+            conn.commit()
+            return show_id
+        except Exception:
+            conn.rollback()
+            raise
+
+    def update_sotg_show(self, show_id: int, *, rj_name: str,
+                          show_name: str, days: str, time_start: str,
+                          time_end: str, color: str, description: str,
+                          link_names: list) -> None:
+        """Replace every field on the show + rebuild its link rows from
+        scratch. Single transaction. Validates the same as create."""
+        self._ensure_sotg_tables()
+        sid = int(show_id)
+        rj = (rj_name or "").strip()
+        sn = (show_name or "").strip()
+        if not rj or not sn:
+            raise ValueError("rj_name and show_name are required")
+        days_norm = (days or "Daily").strip() or "Daily"
+        if days_norm not in ("Daily", "Weekdays", "Weekends"):
+            raise ValueError(f"Unknown days value: {days_norm!r}")
+        ts = (time_start or "").strip()
+        te = (time_end or "").strip()
+        if len(ts) != 5 or ts[2] != ":" or len(te) != 5 or te[2] != ":":
+            raise ValueError(
+                f"time_start/time_end must be HH:MM 24h ({ts!r} {te!r})")
+        links = list(link_names or [])
+        if len(links) < 1 or len(links) > 12:
+            raise ValueError(
+                f"link_names must hold 1..12 entries (got {len(links)})")
+
+        conn = self._conn()
+        try:
+            conn.execute("BEGIN")
+            conn.execute(
+                "UPDATE sotg_shows SET rj_name = ?, show_name = ?, "
+                "days = ?, time_start = ?, time_end = ?, color = ?, "
+                "description = ?, updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ?",
+                [rj, sn, days_norm, ts, te,
+                 color or "#06b6d4", description or "", sid])
+            conn.execute("DELETE FROM sotg_links WHERE show_id = ?",
+                          [sid])
+            for i, name in enumerate(links):
+                conn.execute(
+                    "INSERT INTO sotg_links "
+                    "(show_id, link_order, link_name) VALUES (?, ?, ?)",
+                    [sid, i + 1, (name or f"Link {i+1}").strip()])
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+    def delete_sotg_show(self, show_id: int) -> None:
+        """Delete one show — ON DELETE CASCADE drops its links too."""
+        self._ensure_sotg_tables()
+        conn = self._conn()
+        conn.execute("DELETE FROM sotg_shows WHERE id = ?",
+                      [int(show_id)])
+        conn.commit()
+
+    def get_sotg_shows(self) -> list:
+        """List every show + its link count. Ordered by time_start asc
+        so the saved-shows table matches the day's chronological flow.
+        Output: list of plain dicts."""
+        self._ensure_sotg_tables()
+        rows = self._conn().execute(
+            """
+            SELECT s.*,
+                   COALESCE(
+                     (SELECT COUNT(*) FROM sotg_links l
+                      WHERE l.show_id = s.id), 0) AS link_count
+            FROM   sotg_shows s
+            ORDER  BY s.time_start ASC, s.id ASC
+            """
+        ).fetchall()
+        return [{k: r[k] for k in r.keys()} for r in rows]
+
+    def get_sotg_show(self, show_id: int) -> Optional[dict]:
+        """One show + its link rows nested under 'links'. Returns None
+        if the show doesn't exist."""
+        self._ensure_sotg_tables()
+        sid = int(show_id)
+        row = self._conn().execute(
+            "SELECT * FROM sotg_shows WHERE id = ?", [sid]).fetchone()
+        if row is None:
+            return None
+        show = {k: row[k] for k in row.keys()}
+        link_rows = self._conn().execute(
+            "SELECT id, link_order, link_name FROM sotg_links "
+            "WHERE show_id = ? ORDER BY link_order ASC",
+            [sid]).fetchall()
+        show["links"] = [{k: r[k] for k in r.keys()} for r in link_rows]
+        return show
+
+    # ── Spot on the Go — Assign (per-day file/time/priority) ──────────────
+
+    def _ensure_sotg_assignments_table(self) -> None:
+        """Idempotent CREATE for sotg_assignments + its indexes. Lets
+        the Assign screen run on a dev DB that pre-dates the
+        schema.sql update without a manual initialize pass."""
+        self._ensure_sotg_tables()  # parent FKs first
+        conn = self._conn()
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS sotg_assignments (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                show_id           INTEGER NOT NULL
+                                  REFERENCES sotg_shows(id) ON DELETE CASCADE,
+                link_id           INTEGER NOT NULL
+                                  REFERENCES sotg_links(id) ON DELETE CASCADE,
+                scheduled_date    TEXT NOT NULL,
+                file_path         TEXT,
+                file_name         TEXT,
+                file_duration_ms  INTEGER DEFAULT 0,
+                sharp_time        TEXT,
+                priority          TEXT,
+                status            TEXT NOT NULL DEFAULT 'PENDING',
+                fired_at          TEXT,
+                created_at        TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at        TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(link_id, scheduled_date)
+            );
+            CREATE INDEX IF NOT EXISTS idx_sotg_assignments_date
+                ON sotg_assignments(scheduled_date);
+            CREATE INDEX IF NOT EXISTS idx_sotg_assignments_show_date
+                ON sotg_assignments(show_id, scheduled_date);
+            """
+        )
+        conn.commit()
+
+    @staticmethod
+    def _validate_hhmm(s: str) -> bool:
+        if not s or len(s) != 5 or s[2] != ":":
+            return False
+        try:
+            hh, mm = int(s[:2]), int(s[3:])
+        except ValueError:
+            return False
+        return 0 <= hh < 24 and 0 <= mm < 60
+
+    def upsert_sotg_assignment(self, *, show_id: int, link_id: int,
+                                scheduled_date: str,
+                                file_path: Optional[str],
+                                file_name: Optional[str],
+                                file_duration_ms: int,
+                                sharp_time: str,
+                                priority: str,
+                                status: str = "READY",
+                                allow_past: bool = False) -> int:
+        """INSERT-or-REPLACE one assignment for (link_id, scheduled_date).
+        Server-side guard rejects past times when scheduled_date is
+        today + allow_past is False — keeps a stale UI from sneaking a
+        past schedule through. Returns the assignment id."""
+        self._ensure_sotg_assignments_table()
+        sid = int(show_id)
+        lid = int(link_id)
+        sd = (scheduled_date or "").strip()
+        # YYYY-MM-DD validation
+        if len(sd) != 10 or sd[4] != "-" or sd[7] != "-":
+            raise ValueError(
+                f"scheduled_date must be YYYY-MM-DD ({sd!r})")
+        st = (sharp_time or "").strip()
+        if not self._validate_hhmm(st):
+            raise ValueError(
+                f"sharp_time must be HH:MM 24h ({st!r})")
+        prio_norm = (priority or "").strip().title()
+        if prio_norm not in ("High", "Low"):
+            raise ValueError(
+                f"priority must be 'High' or 'Low' ({priority!r})")
+        if status not in ("PENDING", "READY", "FIRED",
+                          "MISSED", "CONFLICT"):
+            raise ValueError(f"unknown status {status!r}")
+        # Past-time guard
+        if not allow_past:
+            import datetime as _dt
+            try:
+                d = _dt.date(int(sd[:4]), int(sd[5:7]), int(sd[8:]))
+            except ValueError:
+                raise ValueError(
+                    f"scheduled_date parse failed ({sd!r})")
+            today = _dt.date.today()
+            if d == today:
+                now = _dt.datetime.now()
+                hh, mm = int(st[:2]), int(st[3:])
+                target_m = hh * 60 + mm
+                now_m = now.hour * 60 + now.minute
+                if target_m < now_m:
+                    raise ValueError(
+                        f"Cannot schedule {st} for today — that "
+                        f"time has already passed (now "
+                        f"{now.strftime('%H:%M')}).")
+            elif d < today:
+                raise ValueError(
+                    f"Cannot schedule for a past date {sd!r}.")
+
+        conn = self._conn()
+        # Look up existing row by UNIQUE(link_id, scheduled_date)
+        existing = conn.execute(
+            "SELECT id FROM sotg_assignments "
+            "WHERE link_id = ? AND scheduled_date = ?",
+            [lid, sd]).fetchone()
+        if existing:
+            conn.execute(
+                "UPDATE sotg_assignments SET show_id = ?, "
+                "file_path = ?, file_name = ?, "
+                "file_duration_ms = ?, sharp_time = ?, "
+                "priority = ?, status = ?, "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                [sid, file_path, file_name,
+                 int(file_duration_ms or 0), st, prio_norm,
+                 status, int(existing["id"])])
+            aid = int(existing["id"])
+        else:
+            cur = conn.execute(
+                "INSERT INTO sotg_assignments "
+                "(show_id, link_id, scheduled_date, file_path, "
+                " file_name, file_duration_ms, sharp_time, "
+                " priority, status) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [sid, lid, sd, file_path, file_name,
+                 int(file_duration_ms or 0), st, prio_norm,
+                 status])
+            aid = int(cur.lastrowid)
+        conn.commit()
+        return aid
+
+    def delete_sotg_assignment(self, assignment_id: int) -> None:
+        """Drop one assignment by id."""
+        self._ensure_sotg_assignments_table()
+        conn = self._conn()
+        conn.execute("DELETE FROM sotg_assignments WHERE id = ?",
+                      [int(assignment_id)])
+        conn.commit()
+
+    def mark_sotg_assignment_fired(self, assignment_id: int,
+                                     fired_at: Optional[str] = None) -> None:
+        """Stamp status = FIRED on the assignment + fired_at timestamp.
+        Audio engine should call this after a successful link play."""
+        self._ensure_sotg_assignments_table()
+        from datetime import datetime as _dt
+        ts = fired_at or _dt.now().isoformat(timespec="seconds")
+        conn = self._conn()
+        conn.execute(
+            "UPDATE sotg_assignments "
+            "SET status = 'FIRED', fired_at = ?, "
+            "updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ?", [ts, int(assignment_id)])
+        conn.commit()
+
+    def get_sotg_assignment(self, link_id: int,
+                              scheduled_date: str) -> Optional[dict]:
+        """Single assignment lookup keyed by the UNIQUE(link, date)
+        constraint. Returns None if not yet authored for that day."""
+        self._ensure_sotg_assignments_table()
+        row = self._conn().execute(
+            "SELECT * FROM sotg_assignments "
+            "WHERE link_id = ? AND scheduled_date = ?",
+            [int(link_id), (scheduled_date or "").strip()]).fetchone()
+        return {k: row[k] for k in row.keys()} if row else None
+
+    def get_sotg_assignments_for_show_date(self, show_id: int,
+                                             scheduled_date: str
+                                             ) -> list:
+        """All assignments for one (show, date) tuple, joined with the
+        link template so the UI can render link_order + link_name
+        alongside the file/time/priority/status. Sorted by link_order."""
+        self._ensure_sotg_assignments_table()
+        sid = int(show_id)
+        sd = (scheduled_date or "").strip()
+        rows = self._conn().execute(
+            """
+            SELECT  l.id            AS link_id,
+                    l.link_order    AS link_order,
+                    l.link_name     AS link_name,
+                    a.id            AS assignment_id,
+                    a.file_path     AS file_path,
+                    a.file_name     AS file_name,
+                    a.file_duration_ms AS file_duration_ms,
+                    a.sharp_time    AS sharp_time,
+                    a.priority      AS priority,
+                    a.status        AS status,
+                    a.fired_at      AS fired_at
+            FROM    sotg_links l
+            LEFT JOIN sotg_assignments a
+                ON  a.link_id = l.id
+                AND a.scheduled_date = ?
+            WHERE   l.show_id = ?
+            ORDER BY l.link_order ASC
+            """,
+            [sd, sid]).fetchall()
+        return [{k: r[k] for k in r.keys()} for r in rows]
+
+    def get_sotg_assignments_for_date(self, scheduled_date: str,
+                                        status: Optional[str] = None
+                                        ) -> list:
+        """All assignments on the given date, optionally filtered by
+        status. Joined with the link template + show envelope so the
+        dispatcher has everything it needs to fire. Ordered by sharp
+        time ascending — earliest first."""
+        self._ensure_sotg_assignments_table()
+        sd = (scheduled_date or "").strip()
+        params = [sd]
+        sql = """
+            SELECT  a.id            AS assignment_id,
+                    a.show_id       AS show_id,
+                    a.link_id       AS link_id,
+                    a.scheduled_date AS scheduled_date,
+                    a.file_path     AS file_path,
+                    a.file_name     AS file_name,
+                    a.file_duration_ms AS file_duration_ms,
+                    a.sharp_time    AS sharp_time,
+                    a.priority      AS priority,
+                    a.status        AS status,
+                    a.fired_at      AS fired_at,
+                    l.link_order    AS link_order,
+                    l.link_name     AS link_name,
+                    s.show_name     AS show_name,
+                    s.rj_name       AS rj_name,
+                    s.color         AS color
+            FROM    sotg_assignments a
+            JOIN    sotg_links l ON l.id = a.link_id
+            JOIN    sotg_shows s ON s.id = a.show_id
+            WHERE   a.scheduled_date = ?
+        """
+        if status:
+            sql += " AND a.status = ?"
+            params.append(status)
+        sql += " ORDER BY a.sharp_time ASC, a.id ASC"
+        rows = self._conn().execute(sql, params).fetchall()
+        return [{k: r[k] for k in r.keys()} for r in rows]
+
+    def mark_sotg_assignment_missed(self, assignment_id: int) -> None:
+        """Stamp status = MISSED. Used by the dispatcher when an
+        assignment's sharp time has slipped past its tolerance window
+        with no fire."""
+        self._ensure_sotg_assignments_table()
+        conn = self._conn()
+        conn.execute(
+            "UPDATE sotg_assignments SET status = 'MISSED', "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            [int(assignment_id)])
+        conn.commit()
+
+    def get_sotg_assignment_counts_for_date(
+            self, scheduled_date: str) -> dict:
+        """Per-show breakdown for a given date:
+            { show_id: {'total': N, 'ready': K, 'fired': F,
+                        'missed': M, 'conflict': C, 'pending': P } }
+        Used by the left-panel show cards to render the X/Y badge +
+        mini status icons."""
+        self._ensure_sotg_assignments_table()
+        sd = (scheduled_date or "").strip()
+        out: dict = {}
+        # First: every show's total link count.
+        show_rows = self._conn().execute(
+            "SELECT s.id, COUNT(l.id) AS total "
+            "FROM sotg_shows s "
+            "LEFT JOIN sotg_links l ON l.show_id = s.id "
+            "GROUP BY s.id"
+        ).fetchall()
+        for r in show_rows:
+            out[int(r["id"])] = {
+                "total": int(r["total"] or 0),
+                "ready": 0, "fired": 0, "missed": 0,
+                "conflict": 0, "pending": 0,
+            }
+        # Then: per-status counts for assignments on this date.
+        agg = self._conn().execute(
+            "SELECT show_id, status, COUNT(*) AS n "
+            "FROM sotg_assignments WHERE scheduled_date = ? "
+            "GROUP BY show_id, status", [sd]).fetchall()
+        for r in agg:
+            sid = int(r["show_id"])
+            if sid not in out:
+                out[sid] = {"total": 0, "ready": 0, "fired": 0,
+                             "missed": 0, "conflict": 0, "pending": 0}
+            key = (r["status"] or "PENDING").lower()
+            if key in out[sid]:
+                out[sid][key] = int(r["n"] or 0)
+        return out
+
     def get_category_songs_ranked(self, category_id: int) -> list:
         """Every song in this category with its total / week / month /
         last-played stats — ordered by total plays desc, then title.

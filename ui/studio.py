@@ -3831,6 +3831,17 @@ class Studio(QWidget):
         # None = no pending spot. Cleared on stop-next, loop, and
         # AUTO-off (operator-takes-control transitions).
         self._pending_spot_campaign_id: Optional[int] = None
+        # Spot on the Go dispatch state. _pending_sotg_assignment is
+        # the cached LOW-priority drop waiting for the current song's
+        # natural EOS. HIGH-priority drops fade the deck and fire
+        # immediately. _pre_sotg_song_id anchors the queue resume
+        # after the SOTG file's own EOS — mirrors the spot resume
+        # pattern (_pre_spot_song_id). _sotg_active_aid is the
+        # assignment id whose file is currently on the deck so the
+        # EOS handler can stamp the FIRED status + advance.
+        self._pending_sotg_assignment: Optional[dict] = None
+        self._pre_sotg_song_id: Optional[int] = None
+        self._sotg_active_aid: Optional[int] = None
         # Rapid-fire log_play guard — broadcast_log was getting duplicate
         # rows when an EOS-error loop (file fails to play → EOS fires
         # immediately → auto-advance picks the same song from a single-
@@ -3911,6 +3922,16 @@ class Studio(QWidget):
         self._tick_timer.timeout.connect(self._on_tick)
         self._tick_timer.start()
         self._on_tick()
+
+        # 5s tick for Spot on the Go dispatch — checks today's READY
+        # assignments, fires anything inside the ±30s sharp-time
+        # window, marks anything past the miss threshold as MISSED.
+        # Independent from _tick_timer so a long DB query can't stall
+        # the analog-clock display.
+        self._sotg_check_timer = QTimer(self)
+        self._sotg_check_timer.setInterval(self._SOTG_TICK_MS)
+        self._sotg_check_timer.timeout.connect(self._sotg_check_tick)
+        self._sotg_check_timer.start()
 
         # Initial state
         self._load_upcoming_queue()        # Phase B — populate first
@@ -4376,13 +4397,65 @@ class Studio(QWidget):
     def _dispatch_crossfade_overlap(self) -> bool:
         """Pull the next deck-bound song from the scheduler and start
         it on a new channel while the current channel keeps fading.
-        Returns True if the crossfade actually started."""
+        Returns True if the crossfade actually started.
+
+        Priority hook (Phase 2 SOTG): if a paid spot or a Spot-on-the-
+        Go drop is queued for after this song, fire that here INSTEAD
+        of loading the next song. Otherwise the crossfade-tail branch
+        of _on_engine_playback_ended silently absorbs the old song's
+        EOS and the pending drop never gets a chance to fire (the
+        2026-05-14 LOW-priority-never-played bug)."""
         if self._engine is None:
             return False
         try:
             cur_id = (self._current_track or {}).get("id")
         except Exception:
             cur_id = None
+
+        # Paid spot wins highest — fire it via the standard
+        # spot-dispatch path; mark the outgoing song's channel as
+        # fading so its eventual EOS gets quietly cleaned up.
+        if self._pending_spot_campaign_id is not None:
+            pending = self._pending_spot_campaign_id
+            self._pending_spot_campaign_id = None
+            self._pre_spot_song_id = cur_id
+            self._fading_cid = self._playback_cid
+            self._playback_cid = None
+            self._playback_kind = None
+            self._current_track = None
+            log.info(
+                f"[studio] crossfade absorbed by pending spot "
+                f"{pending}")
+            try:
+                self._do_scheduler_spot_due(pending)
+            except Exception as exc:
+                log.warning(
+                    f"[studio] crossfade→spot fire failed: {exc}")
+            return True
+
+        # SOTG drop deferred from LOW priority during the song that's
+        # now ending — fire it instead of the next song. _play_sotg_file
+        # bypasses _do_sotg_fire's priority router (which would try to
+        # defer again because _playback_kind is still 'deck'). The
+        # outgoing channel gets marked as fading for silent cleanup.
+        if self._pending_sotg_assignment is not None:
+            pending = self._pending_sotg_assignment
+            self._pending_sotg_assignment = None
+            self._pre_sotg_song_id = cur_id
+            self._fading_cid = self._playback_cid
+            self._playback_cid = None
+            self._playback_kind = None
+            self._current_track = None
+            log.info(
+                f"[studio] crossfade absorbed by pending SOTG "
+                f"aid={pending.get('assignment_id')}")
+            try:
+                self._play_sotg_file(pending)
+            except Exception as exc:
+                log.warning(
+                    f"[studio] crossfade→SOTG fire failed: {exc}")
+            return True
+
         try:
             nxt = self._compute_next_song(after_id=cur_id)
         except Exception as exc:
@@ -4695,11 +4768,24 @@ class Studio(QWidget):
         # evaluation on its own _on_engine_position ticks.
         self._fade_triggered_for_cid = None
 
-        # (a) spot resume
+        # (a) spot resume — paid spot file ended.
         if kind == "spot":
             anchor_id = self._pre_spot_song_id
             self._pre_spot_song_id = None
             self._refresh_history()
+            # If a SOTG drop was deferred while the paid spot was on
+            # air, fire it now before resuming the queue. Per
+            # priority ladder: paid spot > SOTG > song.
+            if self._pending_sotg_assignment is not None:
+                pending = self._pending_sotg_assignment
+                self._pending_sotg_assignment = None
+                log.info(
+                    f"[studio] spot EOS → firing deferred SOTG "
+                    f"aid={pending.get('assignment_id')}")
+                # _pre_sotg_song_id anchors the post-SOTG resume.
+                self._pre_sotg_song_id = anchor_id
+                self._do_sotg_fire(pending)
+                return
             next_song = self._compute_next_song(after_id=anchor_id)
             if next_song is not None:
                 log.info(f"[studio] spot EOS → resume queue: "
@@ -4707,6 +4793,28 @@ class Studio(QWidget):
                 self._on_queue_song_play(next_song)
                 return
             log.info("[studio] spot EOS → queue exhausted, idle")
+            self._current_track = None
+            self._apply_idle_state()
+            self._update_status_pills()
+            return
+
+        # (a-prime) SOTG resume — Spot on the Go file ended. Resume
+        # the song queue from _pre_sotg_song_id (the song that was on
+        # air when the SOTG fired, or anchor passed through from a
+        # spot-then-SOTG chain).
+        if kind == "sotg":
+            anchor_id = self._pre_sotg_song_id
+            self._pre_sotg_song_id = None
+            self._sotg_active_aid = None
+            self._refresh_history()
+            next_song = self._compute_next_song(after_id=anchor_id)
+            if next_song is not None:
+                log.info(
+                    f"[studio] sotg EOS → resume queue: "
+                    f"{next_song.get('title')!r}")
+                self._on_queue_song_play(next_song)
+                return
+            log.info("[studio] sotg EOS → queue exhausted, idle")
             self._current_track = None
             self._apply_idle_state()
             self._update_status_pills()
@@ -4762,6 +4870,19 @@ class Studio(QWidget):
                 log.info(
                     f"[studio] song EOS → playing deferred spot {pending}")
                 self._do_scheduler_spot_due(pending)
+                return
+            # Deferred LOW-priority SOTG fires here, after paid spot
+            # (which always wins). _pre_sotg_song_id anchors the
+            # post-SOTG queue resume.
+            if self._pending_sotg_assignment is not None:
+                pending = self._pending_sotg_assignment
+                self._pending_sotg_assignment = None
+                if pre_track is not None:
+                    self._pre_sotg_song_id = pre_track.get("id")
+                log.info(
+                    f"[studio] song EOS → firing deferred SOTG "
+                    f"aid={pending.get('assignment_id')}")
+                self._do_sotg_fire(pending)
                 return
             cur_id = (pre_track or {}).get("id")
             next_song = self._compute_next_song(after_id=cur_id)
@@ -5238,6 +5359,240 @@ class Studio(QWidget):
 
     def _on_scheduler_song_advance(self) -> None:
         log.info("[studio] scheduler: song_auto_advance")
+
+    # ────────────────────────────────────────────────────────────────────
+    # Spot on the Go dispatch — polls sotg_assignments + fires drops
+    # ────────────────────────────────────────────────────────────────────
+
+    _SOTG_TICK_MS              = 5000   # check every 5 seconds
+    _SOTG_FIRE_TOLERANCE_S     = 30     # fire if within ±30s of sharp
+    _SOTG_MISS_THRESHOLD_S     = 60     # mark MISSED past this
+    _SOTG_HIGH_FADE_MS         = 10000  # 10s fade-out for HIGH priority
+
+    def _sotg_check_tick(self) -> None:
+        """Per-tick SOTG dispatcher. Pulls today's READY assignments,
+        fires any inside the ±tolerance window, stamps MISSED on
+        anything past the miss threshold. Safe to call on a silent
+        deck or a deck mid-song.
+
+        Wrapped in try/except so a transient DB error never kills the
+        broadcast loop — handover lesson 'try/except every scheduler
+        _on_tick path' applies."""
+        try:
+            from datetime import date as _ddate, datetime as _dt
+            today = _ddate.today().isoformat()
+            try:
+                rows = list(self._db.get_sotg_assignments_for_date(
+                    today, status="READY"))
+            except Exception as exc:
+                log.debug(f"[studio] sotg check fetch: {exc}")
+                return
+
+            now = _dt.now()
+            now_m = now.hour * 60 + now.minute
+
+            for r in rows:
+                sharp = (r.get("sharp_time") or "").strip()
+                if len(sharp) != 5 or sharp[2] != ":":
+                    continue
+                try:
+                    sh, sm = int(sharp[:2]), int(sharp[3:])
+                except ValueError:
+                    continue
+                target_m = sh * 60 + sm
+                delta_s = (target_m - now_m) * 60 - now.second
+
+                # In-window → fire
+                if abs(delta_s) <= self._SOTG_FIRE_TOLERANCE_S:
+                    aid = int(r.get("assignment_id") or 0)
+                    if aid <= 0:
+                        continue
+                    # Skip if we just fired this one (status flips on
+                    # mark_fired but the DB read above may be stale)
+                    if (self._sotg_active_aid is not None
+                            and self._sotg_active_aid == aid):
+                        continue
+                    self._do_sotg_fire(r)
+                    # Fire only one per tick — multiple drops at the
+                    # same minute don't make sense; if you want them
+                    # queued, set them 1 min apart.
+                    break
+                # Past miss threshold → stamp MISSED
+                if delta_s < -self._SOTG_MISS_THRESHOLD_S:
+                    aid = int(r.get("assignment_id") or 0)
+                    if aid > 0:
+                        try:
+                            self._db.mark_sotg_assignment_missed(aid)
+                            log.info(
+                                f"[studio] sotg MISSED aid={aid} "
+                                f"sharp={sharp} "
+                                f"file={r.get('file_name')!r}")
+                        except Exception as exc:
+                            log.debug(
+                                f"[studio] sotg miss-mark: {exc}")
+        except Exception as exc:
+            import traceback
+            log.error(f"[studio] sotg tick crashed: "
+                      f"{type(exc).__name__}: {exc}\n"
+                      f"{traceback.format_exc()}")
+
+    def _do_sotg_fire(self, assignment: dict) -> None:
+        """Route a due SOTG assignment to playback. Priority semantics
+        per operator brief (also surfaced in Figma 462:3 ladder):
+
+            Paid spot on air now → defer (pending_sotg_assignment)
+            Song on air + HIGH    → fade-out song over 10s, play SOTG
+            Song on air + LOW     → defer to song EOS, then play SOTG
+            Deck idle             → play SOTG immediately
+
+        The fired DB stamp lands here (status FIRED + fired_at) so a
+        crash before the on-air result doesn't double-fire on the
+        next tick. Resume after SOTG-EOS uses _pre_sotg_song_id to
+        pick the next deck-bound song.
+        """
+        if self._engine is None:
+            log.warning("[studio] sotg fire skipped — no engine")
+            return
+        file_path = assignment.get("file_path") or ""
+        if not file_path or not os.path.exists(file_path):
+            log.warning(
+                f"[studio] sotg aid={assignment.get('assignment_id')} "
+                f"file missing — marking MISSED: {file_path!r}")
+            try:
+                self._db.mark_sotg_assignment_missed(
+                    int(assignment.get("assignment_id") or 0))
+            except Exception:
+                pass
+            return
+
+        # Paid spot in progress (or pending) — always wins. Cache the
+        # SOTG and let the spot-resume path fire it after the spot
+        # ends. This also covers the LOW-priority defer case once a
+        # song-end has cycled through.
+        if self._playback_kind == "spot":
+            self._pending_sotg_assignment = dict(assignment)
+            log.info(
+                f"[studio] sotg deferred (paid spot on air) "
+                f"aid={assignment.get('assignment_id')}")
+            return
+
+        priority = (assignment.get("priority") or "").strip().title()
+
+        # Song on air + LOW → defer to natural EOS.
+        if (priority == "Low"
+                and self._playback_kind == "deck"
+                and self._playback_cid is not None
+                and self._current_track is not None):
+            self._pending_sotg_assignment = dict(assignment)
+            log.info(
+                f"[studio] sotg LOW deferred — current song will "
+                f"play out, then aid="
+                f"{assignment.get('assignment_id')} fires")
+            return
+
+        # Song on air + HIGH → fade song to 0 over 10s, load SOTG on
+        # a fresh channel, play. The outgoing channel's EOS path is
+        # already silent-cleanup once it hits fade-end (handled by
+        # _on_engine_playback_ended via _fading_cid tracking).
+        if (priority == "High"
+                and self._playback_kind == "deck"
+                and self._playback_cid is not None
+                and self._current_track is not None):
+            try:
+                self._pre_sotg_song_id = self._current_track.get("id")
+                self._engine.fade_volume_to(
+                    self._playback_cid, 0, self._SOTG_HIGH_FADE_MS)
+                self._fading_cid = self._playback_cid
+                self._playback_cid = None
+                self._playback_kind = None
+                self._current_track = None
+                log.info(
+                    f"[studio] sotg HIGH fade-out triggered on "
+                    f"outgoing deck, loading {file_path!r}")
+            except Exception as exc:
+                log.warning(
+                    f"[studio] sotg fade-out failed: {exc}")
+
+        # Either deck was idle, or we just kicked off the fade —
+        # either way, load SOTG on a fresh channel + play.
+        self._play_sotg_file(assignment)
+
+    def _play_sotg_file(self, assignment: dict) -> None:
+        """Load the assignment's file onto the deck + play. Stamps the
+        DB status to FIRED so a crash mid-play doesn't re-fire it on
+        the next tick (status is the source of truth)."""
+        file_path = assignment.get("file_path") or ""
+        aid = int(assignment.get("assignment_id") or 0)
+        try:
+            cid = self._engine.load_file(file_path)
+        except Exception as exc:
+            log.warning(f"[studio] sotg load_file failed: {exc}")
+            try:
+                self._db.mark_sotg_assignment_missed(aid)
+            except Exception:
+                pass
+            return
+        try:
+            self._engine.set_volume(cid, int(self._master_volume))
+            self._engine.play(cid)
+        except Exception as exc:
+            log.warning(f"[studio] sotg play failed: {exc}")
+            try:
+                self._engine.cleanup(cid)
+            except Exception:
+                pass
+            try:
+                self._db.mark_sotg_assignment_missed(aid)
+            except Exception:
+                pass
+            return
+
+        self._playback_cid = cid
+        self._playback_kind = "sotg"
+        self._sotg_active_aid = aid
+        title = assignment.get("link_name") or "SOTG Link"
+        show_name = assignment.get("show_name") or ""
+        rj = assignment.get("rj_name") or ""
+        artist = f"{rj}  ·  {show_name}".strip(" ·")
+        dur = int(assignment.get("file_duration_ms") or 0)
+        self._current_track = {
+            "id":           aid + 10_000_000,  # offset namespace so it
+                                                # can't collide with songs.id
+            "title":        title,
+            "artist":       artist or "Spot on the Go",
+            "duration_ms":  dur,
+            "tags":         ["SOTG",
+                              (assignment.get("priority") or "—").upper()],
+        }
+        self._current_duration_ms = (
+            self._engine.get_duration_ms(cid) or dur or 0)
+        self._apply_playing_state(self._current_track)
+
+        try:
+            self._db.mark_sotg_assignment_fired(aid)
+        except Exception as exc:
+            log.warning(f"[studio] sotg mark-fired failed: {exc}")
+
+        # broadcast_log entry — operator can audit fires later.
+        try:
+            self._db.log_play(
+                entry_type="sotg",
+                song_id=None,
+                duration_ms=int(self._current_duration_ms or 0),
+                deck="A",
+                was_manual=0,
+            )
+        except Exception as exc:
+            log.debug(f"[studio] sotg broadcast_log write: {exc}")
+
+        log.info(
+            f"[studio] sotg FIRED aid={aid} prio="
+            f"{(assignment.get('priority') or '—')!r} "
+            f"sharp={assignment.get('sharp_time')!r} "
+            f"file={os.path.basename(file_path)} "
+            f"ch={cid} dur={self._current_duration_ms}ms")
+        self._refresh_history()
+        self._update_status_pills()
 
     # ── Stitcher trigger state (idempotency) ─────────────────────────────
     _STITCHER_REFIRE_GUARD_S = 120   # don't re-fire within 2 min of last fire

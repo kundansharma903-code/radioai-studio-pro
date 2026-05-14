@@ -370,6 +370,55 @@ class MainWindow(QMainWindow):
                 self._on_studio_clicked)
             self._stack.addWidget(self.category_performance)
 
+            # AI Magic Hub (Figma 454:3) — landing page for the two AI
+            # automation modules (Spot on the Go / Scheduling
+            # Automation). Spot on the Go now routes to its own shell;
+            # Scheduling Automation still toasts "coming soon".
+            from ui.ai_magic_hub import AIMagicHub
+            self.ai_magic_hub = AIMagicHub(self._db)
+            self.ai_magic_hub.screen_requested.connect(
+                self._on_hub_screen_requested)
+            self.ai_magic_hub.studio_clicked.connect(
+                self._on_studio_clicked)
+            self._stack.addWidget(self.ai_magic_hub)
+
+            # Spot on the Go shell (Figma 462:3) — 4-card landing for
+            # the SOTG submodule (Create Schedule / Assign / Generate
+            # Report / Assign API Key). Create Schedule now routes to
+            # its own screen; remaining three still toast.
+            from ui.spot_on_the_go_shell import SpotOnTheGoShell
+            self.spot_on_the_go_shell = SpotOnTheGoShell(self._db)
+            self.spot_on_the_go_shell.screen_requested.connect(
+                self._on_hub_screen_requested)
+            self.spot_on_the_go_shell.studio_clicked.connect(
+                self._on_studio_clicked)
+            self._stack.addWidget(self.spot_on_the_go_shell)
+
+            # SOTG · Create Schedule (Figma 469:3) — first SOTG
+            # sub-screen. Authors recurring show envelopes (RJ, show,
+            # days, time slot, color, description, N link names).
+            # The sharp-time/file/priority piece comes next in Assign.
+            from ui.sotg_create_schedule import SOTGCreateSchedule
+            self.sotg_create_schedule = SOTGCreateSchedule(self._db)
+            self.sotg_create_schedule.screen_requested.connect(
+                self._on_hub_screen_requested)
+            self.sotg_create_schedule.studio_clicked.connect(
+                self._on_studio_clicked)
+            self._stack.addWidget(self.sotg_create_schedule)
+
+            # SOTG · Assign (Figma 474:3) — Step 2. Per-day file +
+            # sharp time + priority assignment for each link defined
+            # in Create Schedule. Shares the AudioEngine for inline
+            # preview (▶/■). Past-time guard enforced in both the
+            # widget and db.upsert_sotg_assignment.
+            from ui.sotg_assign import SOTGAssign
+            self.sotg_assign = SOTGAssign(self._db, engine=self._engine)
+            self.sotg_assign.screen_requested.connect(
+                self._on_hub_screen_requested)
+            self.sotg_assign.studio_clicked.connect(
+                self._on_studio_clicked)
+            self._stack.addWidget(self.sotg_assign)
+
             # Studio Single Deck — broadcast operator workstation (Figma 182:2)
             # Phase D1: skeleton; D2 wires manual audio; D3 passes scheduler.
             from ui.studio import Studio
@@ -604,6 +653,62 @@ class MainWindow(QMainWindow):
                 log.warning(f"studio settings reload failed: {exc}")
             self._stack.setCurrentWidget(self.settings_studio)
             return
+        if (screen == "ai_magic"
+                and hasattr(self, "ai_magic_hub")):
+            self._stack.setCurrentWidget(self.ai_magic_hub)
+            return
+        if (screen == "spot_on_the_go"
+                and hasattr(self, "spot_on_the_go_shell")):
+            self._stack.setCurrentWidget(self.spot_on_the_go_shell)
+            return
+        if screen == "scheduling_automation":
+            # Still a placeholder — the Scheduling Automation submodule
+            # gets its shell + sub-screens in a later session.
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.information(
+                self, "Scheduling Automation",
+                "Scheduling Automation — coming soon.\n\n"
+                "The AI Magic hub design has landed; this module's "
+                "dedicated configuration screen ships in a follow-up "
+                "session once the workflow is finalized.")
+            return
+        if (screen == "create_schedule"
+                and hasattr(self, "sotg_create_schedule")):
+            # SOTG Step 1 — refresh the table from DB on entry so any
+            # external mutation (re-import, manual SQL) reflects.
+            try:
+                self.sotg_create_schedule._refresh_saved_shows()
+            except Exception as exc:
+                log.warning(
+                    f"sotg_create_schedule refresh failed: {exc}")
+            self._stack.setCurrentWidget(self.sotg_create_schedule)
+            return
+        if (screen == "assign"
+                and hasattr(self, "sotg_assign")):
+            # SOTG Step 2 — refresh shows + per-link assignments on
+            # entry so creating a new show in Step 1 surfaces here
+            # immediately.
+            try:
+                self.sotg_assign.refresh()
+            except Exception as exc:
+                log.warning(f"sotg_assign refresh failed: {exc}")
+            self._stack.setCurrentWidget(self.sotg_assign)
+            return
+        if screen in ("generate_report", "assign_api_key"):
+            # Remaining 2 SOTG step cards — operator briefs each in
+            # its own session, then shell + design + build follow.
+            from PyQt6.QtWidgets import QMessageBox
+            labels = {
+                "generate_report":  "Generate Report",
+                "assign_api_key":   "Assign API Key",
+            }
+            QMessageBox.information(
+                self, labels[screen],
+                f"{labels[screen]} — coming soon.\n\n"
+                "The Spot on the Go shell has landed; this step's "
+                "dedicated screen ships in a follow-up session once "
+                "the operator briefs the workflow.")
+            return
         # Everything else is a future scheduling sub-screen.
         from PyQt6.QtWidgets import QMessageBox
         labels = {
@@ -611,7 +716,6 @@ class MainWindow(QMainWindow):
             "rebroadcast":        "Rebroadcast Schedule",
             "rds":                "RDS",
             "log_viewer":         "Log Viewer",
-            "ai_magic":           "AI Magic",
         }
         title = labels.get(screen, screen)
         QMessageBox.information(
@@ -685,9 +789,9 @@ class MainWindow(QMainWindow):
     def _on_nav_clicked(self, tab: str) -> None:
         log.info(f"Nav → {tab}")
         # Top-nav routing — keep keys aligned with the labels rendered
-        # in ControlPanel._build_top_nav (Control Panel / Scheduling /
-        # Settings / Studio). Settings lands on the hub (Figma 426:3),
-        # which routes onward to General / Soundcard / Studio sub-pages.
+        # in ControlPanel._build_top_nav (Libraries / Scheduling /
+        # Settings / AI Magic ✦). Settings lands on the hub (Figma
+        # 426:3); AI Magic lands on its own hub (Figma 454:3).
         if tab == "Settings" and hasattr(self, "settings_hub"):
             self._stack.setCurrentWidget(self.settings_hub)
         elif tab == "Scheduling" and hasattr(self, "scheduling_hub"):
@@ -699,6 +803,12 @@ class MainWindow(QMainWindow):
             self._stack.setCurrentWidget(self.control_panel)
         elif tab == "Studio":
             self._on_studio_clicked()
+        elif tab == "AI Magic ✦" and hasattr(self, "ai_magic_hub"):
+            # The ControlPanel emits the literal tab label including the
+            # sparkle suffix — match it verbatim. Any other AI Magic
+            # entry points (sibling screen header chips) route via
+            # screen_requested("ai_magic") → _on_hub_screen_requested.
+            self._stack.setCurrentWidget(self.ai_magic_hub)
 
     def _on_studio_clicked(self) -> None:
         log.info("Open Studio →")
@@ -821,7 +931,9 @@ class MainWindow(QMainWindow):
             "songs_library", "instant_jingles", "spots_commercials",
             "sweepers_library", "jingles_library", "stitcher",
             "settings_hub", "settings_soundcard", "settings_studio",
-            "play_history", "category_performance",
+            "play_history", "category_performance", "ai_magic_hub",
+            "spot_on_the_go_shell", "sotg_create_schedule",
+            "sotg_assign",
         )
         for attr in qlabel_screens:
             screen = getattr(self, attr, None)
