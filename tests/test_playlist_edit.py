@@ -20,6 +20,7 @@ from PyQt6.QtCore import Qt, QModelIndex
 from PyQt6.QtWidgets import QMessageBox
 
 from core.database import Database
+from core import dialogs as _dialogs
 from ui.playlist_edit import (
     PlaylistEdit, _QueueModel, _ToolbarButton, _ActionStack,
     _PlaylistTableCard, _FilterPanel,
@@ -204,18 +205,16 @@ def test_load_for_unknown_id_routes_back(qtbot, pe_env):
     eng = _FakeEngine()
     s = PlaylistEdit(db=pe_env.db, engine=eng)
     qtbot.addWidget(s)
-    # Replace QMessageBox.warning with a no-op so we don't block
-    import PyQt6.QtWidgets as qw
-    orig = qw.QMessageBox.warning
-    qw.QMessageBox.warning = staticmethod(
-        lambda *a, **kw: qw.QMessageBox.StandardButton.Ok)
+    # Replace dialogs.warning with a no-op so we don't block
+    orig = _dialogs.warning
+    _dialogs.warning = staticmethod(lambda *a, **kw: None)
     routes: list[str] = []
     s.screen_requested.connect(routes.append)
     try:
         # An id that almost certainly doesn't exist
         s.load_for_id(999_999_999)
     finally:
-        qw.QMessageBox.warning = orig
+        _dialogs.warning = orig
     assert "playlists" in routes
 
 
@@ -315,8 +314,7 @@ def test_save_validation_blocks_empty_queue(screen, qtbot, monkeypatch):
     s.load_for_id(pid)
     assert s._model.rowCount() == 0
     warned = []
-    monkeypatch.setattr(
-        QMessageBox, "warning",
+    monkeypatch.setattr(_dialogs, "warning",
         staticmethod(lambda *a, **kw: warned.append(a) or
                      QMessageBox.StandardButton.Ok))
     s._on_save()
@@ -334,8 +332,7 @@ def test_save_error_surfaces_messagebox(screen, monkeypatch):
     def raising_update(*a, **kw):
         raise RuntimeError("simulated DB write failure")
     monkeypatch.setattr(env.db, "update_playlist_draft", raising_update)
-    monkeypatch.setattr(
-        QMessageBox, "warning",
+    monkeypatch.setattr(_dialogs, "warning",
         staticmethod(lambda *a, **kw: boom.append(a) or
                      QMessageBox.StandardButton.Ok))
     ok = s._save()
@@ -374,8 +371,7 @@ def test_preview_without_engine_pops_messagebox(qtbot, pe_env, monkeypatch):
     s.load_for_id(pid)
     s._table_card.table().setCurrentIndex(s._model.index(0, 0))
     fired = []
-    monkeypatch.setattr(
-        QMessageBox, "information",
+    monkeypatch.setattr(_dialogs, "info",
         staticmethod(lambda *a, **kw: fired.append(a) or
                      QMessageBox.StandardButton.Ok))
     s._on_preview_track()
@@ -398,20 +394,18 @@ def test_preview_with_studio_on_air_shows_confirm_dialog(screen, monkeypatch):
         _current_track = {"title": "Live Show", "artist": "DJ"}
     s.set_studio(_StudioStub())
 
-    # Capture exec() result — first sim Cancel, then OK
+    # Stub dialogs.confirm — first Cancel, then OK
     calls_before = len(eng.calls)
-    monkeypatch.setattr(
-        QMessageBox, "exec",
-        lambda self_box: QMessageBox.StandardButton.Cancel)
+    monkeypatch.setattr(_dialogs, "confirm",
+                         lambda *a, **k: False)
     s._on_preview_track()
     # No engine calls — user cancelled
     assert len(eng.calls) == calls_before, \
         "Cancel on confirm dialog must NOT trigger preview"
 
     # Now sim OK → engine fires
-    monkeypatch.setattr(
-        QMessageBox, "exec",
-        lambda self_box: QMessageBox.StandardButton.Ok)
+    monkeypatch.setattr(_dialogs, "confirm",
+                         lambda *a, **k: True)
     s._on_preview_track()
     assert any(c[0] == "load_file" for c in eng.calls)
 
@@ -425,8 +419,7 @@ def test_decorative_icons_emit_coming_soon(screen, monkeypatch):
     pid = env.make_playlist("dec"); env.seed_tracks(pid, count=1)
     s.load_for_id(pid)
     fired = []
-    monkeypatch.setattr(
-        QMessageBox, "information",
+    monkeypatch.setattr(_dialogs, "info",
         staticmethod(lambda *a, **kw: fired.append(a) or
                      QMessageBox.StandardButton.Ok))
     s._on_decorative_icon("folder")
@@ -467,7 +460,7 @@ def test_cancel_dirty_prompts_confirm(screen, monkeypatch):
     # Sim user clicks Cancel on the confirm dialog
     monkeypatch.setattr(
         QMessageBox, "exec",
-        lambda self_box: QMessageBox.StandardButton.Cancel)
+        lambda self_box: False)
     routes: list[str] = []
     s.screen_requested.connect(routes.append)
     s._cancel_then_route("playlists")

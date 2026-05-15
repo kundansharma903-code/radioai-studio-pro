@@ -21,6 +21,7 @@ import pytest
 
 from core.database import Database
 from ui.sweepers_library import SweepersLibrary, POSITION_OPTIONS
+from core import dialogs as _dialogs
 
 
 # ── Test data fixtures ──────────────────────────────────────────────────────
@@ -158,8 +159,8 @@ def test_add_sweeper_signal_fires_on_add_new(qapp, db, monkeypatch):
     """Stub QMessageBox so the test isn't gated on a modal dialog —
     the signal still has to fire."""
     from PyQt6.QtWidgets import QMessageBox
-    monkeypatch.setattr(QMessageBox, "information",
-                        lambda *a, **k: QMessageBox.StandardButton.Ok)
+    monkeypatch.setattr(_dialogs, "info",
+                        lambda *a, **k: None)
     s = SweepersLibrary(db)
     captured: list[bool] = []
     s.add_sweeper_clicked.connect(lambda: captured.append(True))

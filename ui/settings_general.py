@@ -46,6 +46,7 @@ from pathlib import Path
 from typing import Optional, List, Tuple
 
 from PyQt6.QtCore import Qt, QRectF, QTimer, pyqtSignal
+from core import dialogs
 from PyQt6.QtGui import (
     QPainter, QColor, QPen, QBrush, QLinearGradient, QFont, QCursor,
 )
@@ -982,12 +983,12 @@ class SettingsGeneral(QWidget):
         try:
             self._save_left_column()
         except Exception as exc:
-            QMessageBox.warning(
+            dialogs.warning(
                 self, "Save failed",
                 f"Could not save station settings:\n{exc}")
             return
         self.settings_saved.emit()
-        QMessageBox.information(
+        dialogs.info(
             self, "Saved",
             "Station identity + file paths saved.")
 
@@ -996,23 +997,23 @@ class SettingsGeneral(QWidget):
             self._save_left_column()
             self._save_right_column()
         except Exception as exc:
-            QMessageBox.warning(
+            dialogs.warning(
                 self, "Save failed",
                 f"Could not save preferences:\n{exc}")
             return
         self.settings_saved.emit()
-        QMessageBox.information(
+        dialogs.info(
             self, "Saved",
             "All General Settings preferences saved.")
 
     def _on_backup_now(self) -> None:
-        QMessageBox.information(
+        dialogs.info(
             self, "Backup Now",
             "Backup Now — coming in v1.1.\n\n"
             "Path is saved; manual filesystem copy works for now.")
 
     def _on_restore_backup(self) -> None:
-        QMessageBox.information(
+        dialogs.info(
             self, "Restore Backup",
             "Restore Backup — coming in v1.1.\n\n"
             "Manual restore from the backup folder works for now.")

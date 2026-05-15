@@ -22,6 +22,7 @@ import pytest
 
 from core.database import Database
 from core.settings import Settings
+from core import dialogs as _dialogs
 
 
 # Keys this integration touches
@@ -260,7 +261,7 @@ def test_missing_file_skip_action(
     s._cfg_fallback_action = "Skip and play next available song"
     s._cfg_missing_file_alert = False
     calls: list = []
-    monkeypatch.setattr(QMessageBox, "warning",
+    monkeypatch.setattr(_dialogs, "warning",
                          staticmethod(
                              lambda *a, **k: calls.append(a) or 0))
     s._handle_missing_file({"title": "T", "id": 1}, "/missing")
@@ -277,7 +278,7 @@ def test_missing_file_alert_toggle_shows_toast(
     s._cfg_fallback_action = "Skip and play next available song"
     s._cfg_missing_file_alert = True
     calls: list = []
-    monkeypatch.setattr(QMessageBox, "warning",
+    monkeypatch.setattr(_dialogs, "warning",
                          staticmethod(
                              lambda *a, **k: calls.append(a) or 0))
     s._handle_missing_file({"title": "T", "id": 1}, "/missing")
@@ -290,7 +291,7 @@ def test_missing_file_stop_action_stops_scheduler(
     s, eng, sch = studio
     s._cfg_fallback_action = "Stop playback + alert operator"
     s._cfg_missing_file_alert = False  # Stop force-alerts regardless
-    monkeypatch.setattr(QMessageBox, "warning",
+    monkeypatch.setattr(_dialogs, "warning",
                          staticmethod(lambda *a, **k: 0))
     s._handle_missing_file({"title": "T", "id": 1}, "/missing")
     assert sch.stop_calls == 1
@@ -430,7 +431,7 @@ def test_missing_file_requeue_pushes_to_queue_head(
     s, eng, sch = studio
     s._cfg_fallback_action = "Re-queue the same song"
     s._cfg_missing_file_alert = False
-    monkeypatch.setattr(QMessageBox, "warning",
+    monkeypatch.setattr(_dialogs, "warning",
                          staticmethod(lambda *a, **k: 0))
     if not hasattr(s, "_queue_songs") or not isinstance(s._queue_songs,
                                                           list):

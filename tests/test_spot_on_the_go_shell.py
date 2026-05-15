@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import QLabel
 
 from core.database import Database
 from ui.spot_on_the_go_shell import SpotOnTheGoShell, _StepCard
+from core import dialogs as _dialogs
 
 
 @pytest.fixture
@@ -209,8 +210,7 @@ def test_all_four_step_cards_route_to_real_screens(
     qtbot.addWidget(w)
     toast_calls: list[tuple] = []
     from PyQt6.QtWidgets import QMessageBox
-    monkeypatch.setattr(
-        QMessageBox, "information",
+    monkeypatch.setattr(_dialogs, "info",
         lambda parent, title, text: toast_calls.append((title, text)))
     for key in ("create_schedule", "assign",
                  "generate_report", "assign_api_key"):

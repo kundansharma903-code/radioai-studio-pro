@@ -39,6 +39,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QLabel
 
 from core.database import Database
+from core import dialogs as _dialogs
 
 
 @pytest.fixture
@@ -381,8 +382,7 @@ def test_all_four_sotg_step_cards_land_on_real_screens(
     qtbot.addWidget(w)
     toast_calls: list[tuple] = []
     from PyQt6.QtWidgets import QMessageBox
-    monkeypatch.setattr(
-        QMessageBox, "information",
+    monkeypatch.setattr(_dialogs, "info",
         lambda parent, title, text: toast_calls.append((title, text)))
     for key, screen_attr in (
         ("create_schedule",  "sotg_create_schedule"),

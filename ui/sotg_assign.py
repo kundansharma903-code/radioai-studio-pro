@@ -34,6 +34,7 @@ from datetime import date as ddate, datetime, timedelta
 from typing import Optional
 
 from PyQt6.QtCore import Qt, QRectF, QTimer, pyqtSignal
+from core import dialogs
 from PyQt6.QtGui import (
     QPainter, QColor, QPen, QBrush, QLinearGradient, QRadialGradient,
     QFont, QCursor,
@@ -1504,11 +1505,11 @@ class SOTGAssign(QWidget):
                 status="READY",
             )
         except ValueError as exc:
-            QMessageBox.warning(
+            dialogs.warning(
                 self, "Save blocked", str(exc))
             return
         except Exception as exc:
-            QMessageBox.critical(
+            dialogs.error(
                 self, "Save failed", f"{exc}")
             return
         # Re-render — picks up the new assignment_id, ready status,

@@ -44,6 +44,7 @@ import logging
 import os
 from datetime import datetime
 from typing import Optional
+from core import dialogs
 
 from PyQt6.QtCore import (
     Qt, QRect, QRectF, QPoint, QPointF, QTimer, pyqtSignal,
@@ -4539,7 +4540,7 @@ class Studio(QWidget):
         if alert or must_alert:
             try:
                 from PyQt6.QtWidgets import QMessageBox
-                QMessageBox.warning(
+                dialogs.warning(
                     self, "Track file missing",
                     f"'{title}' — file not found:\n"
                     f"{path or '(blank path)'}")
@@ -6236,7 +6237,7 @@ class Studio(QWidget):
         self.breadcrumb_clicked.emit("control_panel")
 
     def _on_settings(self) -> None:
-        QMessageBox.information(self, "Settings", "Settings — coming soon.")
+        dialogs.info(self, "Settings", "Settings — coming soon.")
 
     # ────────────────────────────────────────────────────────────────────
     # Phase A — InstantJingleEngine wiring

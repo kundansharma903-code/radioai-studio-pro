@@ -62,6 +62,7 @@ from __future__ import annotations
 
 import logging
 from typing import Optional, Literal
+from core import dialogs
 
 from PyQt6.QtCore import (
     Qt, QRect, QRectF, QPoint, QPointF, QSize, QTimer, QModelIndex,
@@ -1665,7 +1666,7 @@ class PlaylistEdit(QWidget):
             log.warning(f"get_playlist({playlist_id}) failed: {exc}")
             row = None
         if row is None:
-            QMessageBox.warning(self, "Playlist not found",
+            dialogs.warning(self, "Playlist not found",
                                 f"Could not load playlist id={playlist_id}.")
             self._is_loading = False
             self.screen_requested.emit("playlists")
@@ -1743,7 +1744,7 @@ class PlaylistEdit(QWidget):
     def _on_add(self) -> None:
         track = self._first_filter_match()
         if track is None:
-            QMessageBox.information(
+            dialogs.info(
                 self, "Nothing to add",
                 "No songs match the current filter.")
             return
@@ -1757,7 +1758,7 @@ class PlaylistEdit(QWidget):
             return
         track = self._first_filter_match()
         if track is None:
-            QMessageBox.information(self, "Nothing to insert",
+            dialogs.info(self, "Nothing to insert",
                                     "No songs match the current filter.")
             return
         self._model.insert_at(sel, track)
@@ -1770,7 +1771,7 @@ class PlaylistEdit(QWidget):
             return
         track = self._first_filter_match()
         if track is None:
-            QMessageBox.information(self, "Nothing to replace with",
+            dialogs.info(self, "Nothing to replace with",
                                     "No songs match the current filter.")
             return
         self._model.replace_at(sel, track)
@@ -1784,7 +1785,7 @@ class PlaylistEdit(QWidget):
         self._mark_dirty()
 
     def _on_prepair(self) -> None:
-        QMessageBox.information(
+        dialogs.info(
             self, "PREPAIR — voice track",
             "Voice-track prep — coming soon.")
 
@@ -1810,7 +1811,7 @@ class PlaylistEdit(QWidget):
         pass
 
     def _on_decorative_icon(self, key: str) -> None:
-        QMessageBox.information(
+        dialogs.info(
             self, "Coming soon",
             f"'{ELEMENT_ICONS.get(key, key)}' — coming soon.")
 
@@ -1819,7 +1820,7 @@ class PlaylistEdit(QWidget):
     def _on_preview_track(self) -> None:
         sel = self._table_card.table().selected_row()
         if sel is None or sel >= self._model.rowCount():
-            QMessageBox.information(self, "Preview",
+            dialogs.info(self, "Preview",
                                     "Select a track in the queue first.")
             return
         track = self._model.all_rows()[sel]
@@ -1827,26 +1828,23 @@ class PlaylistEdit(QWidget):
 
     def _start_preview(self, track: dict) -> None:
         if self._engine is None:
-            QMessageBox.information(
+            dialogs.info(
                 self, "Preview unavailable",
                 "AudioEngine reference not wired into Edit Playlist.")
             return
         # On-air protection — confirm if Studio is on-air
         if (self._studio is not None
                 and getattr(self._studio, "_current_track", None) is not None):
-            box = QMessageBox(self)
-            box.setWindowTitle("Preview while on air?")
-            box.setText("Studio is currently on air.\n\n"
-                        "Preview will not affect the on-air output, but "
-                        "make sure you're routing preview to monitors.")
-            box.setStandardButtons(
-                QMessageBox.StandardButton.Ok
-                | QMessageBox.StandardButton.Cancel)
-            if box.exec() != QMessageBox.StandardButton.Ok:
+            if not dialogs.confirm(
+                    self, "Preview while on air?",
+                    "Studio is currently on air.\n\n"
+                    "Preview will not affect the on-air output, but "
+                    "make sure you're routing preview to monitors.",
+                    yes_label="Preview Anyway"):
                 return
         path = track.get("file_path")
         if not path:
-            QMessageBox.information(self, "Preview",
+            dialogs.info(self, "Preview",
                                     "Track file path missing.")
             return
         # Stop any prior preview
@@ -1866,10 +1864,10 @@ class PlaylistEdit(QWidget):
                      f"track={track.get('title')!r}")
         except Exception as exc:
             log.warning(f"preview load_file failed: {exc}")
-            QMessageBox.warning(self, "Preview failed", str(exc))
+            dialogs.warning(self, "Preview failed", str(exc))
 
     def _on_preview_breaks(self) -> None:
-        QMessageBox.information(
+        dialogs.info(
             self, "Preview Breaks",
             "Preview Breaks — coming soon.\n\nWill auto-play the "
             "current campaign break in context.")
@@ -1880,7 +1878,7 @@ class PlaylistEdit(QWidget):
         self._filter._search.selectAll()
 
     def _on_mic_clicked(self) -> None:
-        QMessageBox.information(
+        dialogs.info(
             self, "Mic recording",
             "Voice-track mic recording — coming soon.")
 
@@ -1889,7 +1887,7 @@ class PlaylistEdit(QWidget):
             return    # already on this tab
         labels = {"memos": "Memos", "schedule": "Schedule & Details",
                   "export": "Export Playlist"}
-        QMessageBox.information(
+        dialogs.info(
             self, labels.get(key, "Tab"),
             f"{labels.get(key, key)} — coming soon. Edit Playlist active.")
 
@@ -1988,7 +1986,7 @@ class PlaylistEdit(QWidget):
             )
         except Exception as exc:
             log.warning(f"update_playlist_draft failed: {exc}")
-            QMessageBox.warning(
+            dialogs.warning(
                 self, "Save failed",
                 f"Could not save playlist meta:\n{exc}")
             return False
@@ -1998,7 +1996,7 @@ class PlaylistEdit(QWidget):
                 int(self._playlist_id), self._model.song_ids())
         except Exception as exc:
             log.warning(f"replace_playlist_songs failed: {exc}")
-            QMessageBox.warning(
+            dialogs.warning(
                 self, "Save partially failed",
                 f"Meta saved, but track list save failed:\n{exc}\n\n"
                 "Click Save again to retry the track list.")
@@ -2010,17 +2008,17 @@ class PlaylistEdit(QWidget):
     def _on_save(self) -> None:
         err = self._validate_for_save()
         if err:
-            QMessageBox.warning(self, "Cannot save", err); return
+            dialogs.warning(self, "Cannot save", err); return
         if self._save():
             self._dirty = False
             self.saved.emit(int(self._playlist_id))
-            QMessageBox.information(self, "Saved",
+            dialogs.info(self, "Saved",
                                     "Playlist saved successfully.")
 
     def _on_save_exit(self) -> None:
         err = self._validate_for_save()
         if err:
-            QMessageBox.warning(self, "Cannot save", err); return
+            dialogs.warning(self, "Cannot save", err); return
         if self._save():
             self._dirty = False
             self.saved.emit(int(self._playlist_id))
@@ -2031,15 +2029,11 @@ class PlaylistEdit(QWidget):
 
     def _cancel_then_route(self, route: str) -> None:
         if self._dirty:
-            box = QMessageBox(self)
-            box.setWindowTitle("Discard changes?")
-            box.setText("You have unsaved changes. Discard and leave the "
-                        "editor?")
-            box.setStandardButtons(
-                QMessageBox.StandardButton.Yes
-                | QMessageBox.StandardButton.Cancel)
-            box.setDefaultButton(QMessageBox.StandardButton.Cancel)
-            if box.exec() != QMessageBox.StandardButton.Yes:
+            if not dialogs.confirm(
+                    self, "Discard changes?",
+                    "You have unsaved changes. Discard and leave "
+                    "the editor?",
+                    danger=True, yes_label="Discard"):
                 return
         # Stop any active preview before leaving
         self._on_transport_stop()

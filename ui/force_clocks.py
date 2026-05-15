@@ -15,6 +15,7 @@ from typing import Optional
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QCursor, QFont, QMouseEvent
+from core import dialogs
 from PyQt6.QtWidgets import (
     QWidget, QFrame, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
     QDialog, QLineEdit, QComboBox, QMessageBox,
@@ -139,14 +140,14 @@ class _AddOverrideDialog(QDialog):
         ts = self._tstart.text().strip() or "00:00"
         te = self._tend.text().strip() or "23:59"
         if not name or not clock_id or not date:
-            QMessageBox.warning(self, "Missing fields",
+            dialogs.warning(self, "Missing fields",
                                 "Name, target clock, and date are required.")
             return
         # Cheap date validation — must be YYYY-MM-DD
         try:
             datetime.strptime(date, "%Y-%m-%d")
         except ValueError:
-            QMessageBox.warning(self, "Invalid date",
+            dialogs.warning(self, "Invalid date",
                                 "Date must be YYYY-MM-DD (e.g. 2026-08-15).")
             return
         self.result_payload = {
@@ -378,7 +379,7 @@ class ForceClocks(QWidget):
     def _on_add_override(self) -> None:
         clocks = [dict(c) for c in self._db.get_all_clocks()]
         if not clocks:
-            QMessageBox.information(self, "No clocks",
+            dialogs.info(self, "No clocks",
                                     "Create a clock first via Clock Editor.")
             return
         dlg = _AddOverrideDialog(clocks, parent=self)
@@ -396,21 +397,17 @@ class ForceClocks(QWidget):
             self._selected_id = new_id
         except Exception as exc:
             log.warning(f"add_force_clock failed: {exc}")
-            QMessageBox.warning(self, "Add failed", str(exc))
+            dialogs.warning(self, "Add failed", str(exc))
             return
         self._refresh()
 
     def _on_delete_override(self) -> None:
         if self._selected_id is None:
             return
-        box = QMessageBox(self)
-        box.setWindowTitle("Delete override?")
-        box.setText("Delete this force_clock override?")
-        box.setIcon(QMessageBox.Icon.Warning)
-        box.setStandardButtons(
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
-        box.setDefaultButton(QMessageBox.StandardButton.Cancel)
-        if box.exec() != QMessageBox.StandardButton.Yes:
+        if not dialogs.confirm(
+                self, "Delete override?",
+                "Delete this force_clock override?",
+                danger=True, yes_label="Delete"):
             return
         try:
             self._db.delete_force_clock(self._selected_id)

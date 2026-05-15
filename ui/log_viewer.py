@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QCursor, QFont
+from core import dialogs
 from PyQt6.QtWidgets import (
     QWidget, QFrame, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
     QListWidget, QListWidgetItem, QMessageBox,
@@ -199,6 +200,6 @@ class LogViewer(QWidget):
             f"border-radius: 4px; padding: 0 14px; }}"
             f"QPushButton:hover {{ background: {rgba(color, 0.28)}; }}"
         )
-        b.clicked.connect(lambda: QMessageBox.information(
+        b.clicked.connect(lambda: dialogs.info(
             self, label, f"{label} — Phase F polish."))
         return b

@@ -23,6 +23,7 @@ from typing import List
 import pytest
 
 from core.database import Database
+from core import dialogs as _dialogs
 from ui.jingles_library import (
     JinglesLibrary, CATEGORY_FILTER_OPTIONS, PROPERTIES_FILTER_OPTIONS,
     DURATION_FILTER_OPTIONS, DETAIL_TABS,
@@ -226,8 +227,8 @@ def test_add_jingle_signal_fires_on_add_new(qapp, db, monkeypatch):
     """Stub QMessageBox so the test isn't gated on a modal dialog —
     the signal still has to fire when the button is clicked."""
     from PyQt6.QtWidgets import QMessageBox
-    monkeypatch.setattr(QMessageBox, "information",
-                        lambda *a, **k: QMessageBox.StandardButton.Ok)
+    monkeypatch.setattr(_dialogs, "info",
+                        lambda *a, **k: None)
     s = JinglesLibrary(db)
     captured: list[bool] = []
     s.add_jingle_clicked.connect(lambda: captured.append(True))

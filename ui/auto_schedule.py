@@ -58,6 +58,7 @@ from __future__ import annotations
 
 import logging
 from typing import Optional, Literal
+from core import dialogs
 
 from PyQt6.QtCore import (
     Qt, QRect, QRectF, QPoint, QTimer, pyqtSignal,
@@ -1228,14 +1229,11 @@ class AutoSchedule(QWidget):
             f"wrote {ok}/{len(targets)} (mode={self._card.mode()})")
 
     def _on_clear_clicked(self) -> None:
-        box = QMessageBox(self)
-        box.setWindowTitle("Clear schedule?")
-        box.setText("Clear the entire weekly schedule? Every cell will "
-                    "be unset.\n\nThis cannot be undone.")
-        box.setStandardButtons(
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
-        box.setDefaultButton(QMessageBox.StandardButton.Cancel)
-        if box.exec() != QMessageBox.StandardButton.Yes:
+        if not dialogs.confirm(
+                self, "Clear schedule?",
+                "Clear the entire weekly schedule? Every cell will "
+                "be unset.\n\nThis cannot be undone.",
+                danger=True, yes_label="Clear"):
             return
         try:
             n = self._db.clear_all_auto_schedule()
@@ -1266,18 +1264,16 @@ class AutoSchedule(QWidget):
             return
         meta = self._card.grid._clock_meta.get(int(cid)) or {}
         name = meta.get("name") or f"clock #{cid}"
-        box = QMessageBox(self)
-        box.setWindowTitle("Delete clock?")
-        box.setText(f"Delete '{name}'? Every cell using it will be cleared.")
-        box.setStandardButtons(
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
-        box.setDefaultButton(QMessageBox.StandardButton.Cancel)
-        if box.exec() != QMessageBox.StandardButton.Yes:
+        if not dialogs.confirm(
+                self, "Delete clock?",
+                f"Delete '{name}'? Every cell using it will be "
+                f"cleared.",
+                danger=True, yes_label="Delete Clock"):
             return
         try:
             self._delete_clock_with_cells(int(cid))
         except ValueError as exc:
-            QMessageBox.information(self, "Cannot delete", str(exc)); return
+            dialogs.info(self, "Cannot delete", str(exc)); return
         except Exception as exc:
             log.warning(f"delete_clock failed: {exc}"); return
         self._clocks_panel.select_clock(None)

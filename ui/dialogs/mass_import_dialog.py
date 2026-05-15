@@ -16,6 +16,7 @@ import logging
 import os
 from pathlib import Path
 from typing import List, Optional
+from core import dialogs
 
 from PyQt6.QtCore import (
     Qt, QRectF, QThread, pyqtSignal,
@@ -1060,7 +1061,7 @@ class MassImportDialog(BaseDialog):
     def _on_scan(self):
         folder = self._path_input.text().strip()
         if not folder or not os.path.isdir(folder):
-            QMessageBox.information(self, "No folder",
+            dialogs.info(self, "No folder",
                                     "Click Browse first to select a folder, then Scan.")
             return
 
@@ -1075,7 +1076,7 @@ class MassImportDialog(BaseDialog):
         if self._filter_wav.isChecked():  formats.append(".wav")
         if self._filter_flac.isChecked(): formats.append(".flac")
         if not formats:
-            QMessageBox.information(self, "No formats",
+            dialogs.info(self, "No formats",
                                     "Tick at least one audio format (MP3 / WAV / FLAC).")
             return
 
@@ -1104,7 +1105,7 @@ class MassImportDialog(BaseDialog):
     def _on_scan_finished(self, total: int):
         self._update_counters()
         if total == 0:
-            QMessageBox.information(self, "No files",
+            dialogs.info(self, "No files",
                                     "No matching audio files found in that folder.")
 
     def _clear_table(self):
@@ -1213,7 +1214,7 @@ class MassImportDialog(BaseDialog):
             f"  • {skipped} duplicate{'s' if skipped != 1 else ''} skipped\n"
             f"  • {errors} error{'s' if errors != 1 else ''}"
         )
-        QMessageBox.information(self, "Import complete", msg)
+        dialogs.info(self, "Import complete", msg)
         self.accept()
 
     def _on_close(self):

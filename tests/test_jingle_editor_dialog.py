@@ -27,6 +27,7 @@ from typing import List
 import pytest
 
 from core.database import Database
+from core import dialogs as _dialogs
 
 
 # ── Fixtures ────────────────────────────────────────────────────────────────
@@ -185,8 +186,8 @@ def test_dialog_save_with_empty_title_is_blocked(qapp, db, monkeypatch):
     """Empty title triggers QMessageBox.warning + suppresses the save —
     no DB row appears, no signal fires."""
     from PyQt6.QtWidgets import QMessageBox
-    monkeypatch.setattr(QMessageBox, "warning",
-                        lambda *a, **k: QMessageBox.StandardButton.Ok)
+    monkeypatch.setattr(_dialogs, "warning",
+                        lambda *a, **k: None)
     from ui.dialogs.jingle_editor_dialog import JingleEditorDialog
     d = JingleEditorDialog(db, jingle_id=None)
     fired: list[int] = []

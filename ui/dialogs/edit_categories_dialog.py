@@ -14,6 +14,7 @@ import logging
 from typing import List, Optional
 
 from PyQt6.QtCore import Qt, QRectF, pyqtSignal
+from core import dialogs
 from PyQt6.QtGui import (
     QPainter, QColor, QPen, QPainterPath, QFont, QCursor, QLinearGradient,
 )
@@ -698,8 +699,9 @@ class EditCategoriesDialog(BaseDialog):
     # ── Actions ───────────────────────────────────────────────────────────
 
     def _on_add(self):
-        name, ok = QInputDialog.getText(self, "Add category", "Category name:")
-        if not (ok and name.strip()):
+        name = dialogs.text_input(self, "Add category", "Category name:",
+                          placeholder="My Category")
+        if not name or not name.strip():
             return
         try:
             new_id = self._db.add_category({
@@ -711,7 +713,7 @@ class EditCategoriesDialog(BaseDialog):
             self._select_category(new_id)
             self.categories_changed.emit()
         except Exception as exc:
-            QMessageBox.critical(self, "Add failed", f"Could not add category:\n\n{exc}")
+            dialogs.error(self, "Add failed", f"Could not add category:\n\n{exc}")
 
     def _on_rename(self):
         if not self._selected_id:
@@ -719,10 +721,10 @@ class EditCategoriesDialog(BaseDialog):
         cat = next((c for c in self._categories if c["id"] == self._selected_id), None)
         if not cat:
             return
-        new_name, ok = QInputDialog.getText(
-            self, "Rename category", "New name:", text=cat.get("name", "")
-        )
-        if not (ok and new_name.strip()):
+        new_name = dialogs.text_input(
+            self, "Rename category", "New name:",
+            default=cat.get("name", ""))
+        if not new_name or not new_name.strip():
             return
         try:
             self._db.update_category(self._selected_id, {"name": new_name.strip()})
@@ -730,7 +732,7 @@ class EditCategoriesDialog(BaseDialog):
             self._select_category(self._selected_id)
             self.categories_changed.emit()
         except Exception as exc:
-            QMessageBox.critical(self, "Rename failed", f"Could not rename:\n\n{exc}")
+            dialogs.error(self, "Rename failed", f"Could not rename:\n\n{exc}")
 
     def _on_delete(self):
         if not self._selected_id:
@@ -739,7 +741,7 @@ class EditCategoriesDialog(BaseDialog):
         if not cat:
             return
         if len(self._categories) <= 1:
-            QMessageBox.information(
+            dialogs.info(
                 self, "Cannot delete",
                 "You must keep at least one category. Add another one first.",
             )
@@ -748,18 +750,15 @@ class EditCategoriesDialog(BaseDialog):
         msg = f"Delete the '{cat['name']}' category?"
         if count > 0:
             msg += f"\n\n{count} song{'s' if count != 1 else ''} currently in this category will be unassigned."
-        ans = QMessageBox.question(
-            self, "Delete category", msg,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if ans != QMessageBox.StandardButton.Yes:
+        if not dialogs.confirm(self, "Delete category", msg,
+                       danger=True, yes_label="Delete"):
             return
         try:
             self._db.delete_category(self._selected_id, reassign_to=None)
             self._load_categories()
             self.categories_changed.emit()
         except Exception as exc:
-            QMessageBox.critical(self, "Delete failed", f"Could not delete:\n\n{exc}")
+            dialogs.error(self, "Delete failed", f"Could not delete:\n\n{exc}")
 
     def _on_save(self):
         log.info("=" * 50)
@@ -768,7 +767,7 @@ class EditCategoriesDialog(BaseDialog):
 
         if not self._selected_id:
             log.warning("[SAVE] FAIL: no category selected")
-            QMessageBox.information(self, "No category selected",
+            dialogs.info(self, "No category selected",
                                      "Click a category in the list first.")
             return
 
@@ -780,7 +779,7 @@ class EditCategoriesDialog(BaseDialog):
 
         if not name:
             log.warning("[SAVE] FAIL: empty name")
-            QMessageBox.warning(self, "Required field", "Category name cannot be empty.")
+            dialogs.warning(self, "Required field", "Category name cannot be empty.")
             self._name_input.setFocus()
             return
 
@@ -788,7 +787,7 @@ class EditCategoriesDialog(BaseDialog):
         for c in self._categories:
             if c["id"] != self._selected_id and c["name"].lower() == name.lower():
                 log.warning(f"[SAVE] FAIL: duplicate name '{name}'")
-                QMessageBox.warning(self, "Duplicate name",
+                dialogs.warning(self, "Duplicate name",
                                     f"Another category called '{name}' already exists.")
                 return
 
@@ -802,7 +801,7 @@ class EditCategoriesDialog(BaseDialog):
             log.info("[SAVE] db.update_category() returned OK")
         except Exception as exc:
             log.error(f"[SAVE] EXCEPTION: {exc}", exc_info=True)
-            QMessageBox.critical(self, "Save failed", f"Could not save:\n\n{exc}")
+            dialogs.error(self, "Save failed", f"Could not save:\n\n{exc}")
             return
 
         # Reload — _load_categories now preserves current selection

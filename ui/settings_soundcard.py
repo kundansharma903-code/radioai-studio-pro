@@ -36,6 +36,7 @@ from datetime import datetime
 from typing import List, Optional, Tuple
 
 from PyQt6.QtCore import Qt, QRectF, QTimer, pyqtSignal
+from core import dialogs
 from PyQt6.QtGui import (
     QPainter, QColor, QPen, QBrush, QLinearGradient, QFont, QCursor,
 )
@@ -799,12 +800,12 @@ class SettingsSoundcard(QWidget):
         try:
             self._save_all()
         except Exception as exc:
-            QMessageBox.warning(
+            dialogs.warning(
                 self, "Save failed",
                 f"Could not save soundcard routing:\n{exc}")
             return
         self.settings_saved.emit()
-        QMessageBox.information(
+        dialogs.info(
             self, "Saved",
             "Routing saved.\n\nAudio driver changes take effect after "
             "RadioAI restart. Use Test Tone to verify output before "
@@ -813,14 +814,14 @@ class SettingsSoundcard(QWidget):
     def _on_test_clicked(self, channel_key: str) -> None:
         is_input = channel_key.startswith("input")
         label = "Monitor Channel" if is_input else "Test Tone Channel"
-        QMessageBox.information(
+        dialogs.info(
             self, label,
             f"{label} — coming in v1.1.\n\nChannel: {channel_key}\n\n"
             "Real tone playback wires through AudioEngine and is part "
             "of the next session's roadmap. Routing save works today.")
 
     def _on_test_all(self) -> None:
-        QMessageBox.information(
+        dialogs.info(
             self, "Test ALL",
             "Test ALL — coming in v1.1.\n\nWill cycle a 1kHz test tone "
             "through every assigned output sequentially.")

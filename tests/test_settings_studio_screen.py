@@ -17,6 +17,7 @@ import pytest
 
 from core.database import Database
 from core.settings import Settings
+from core import dialogs as _dialogs
 
 
 LEFT_KEYS = (
@@ -90,7 +91,7 @@ def test_save_left_writes_only_left_keys(
         qapp, db, studio_snapshot, monkeypatch):
     from ui.settings_studio import SettingsStudio
     from PyQt6.QtWidgets import QMessageBox
-    monkeypatch.setattr(QMessageBox, "information",
+    monkeypatch.setattr(_dialogs, "info",
                          staticmethod(lambda *a, **k: 0))
 
     # Capture right-column key before
@@ -121,7 +122,7 @@ def test_save_center_writes_only_center_keys(
         qapp, db, studio_snapshot, monkeypatch):
     from ui.settings_studio import SettingsStudio
     from PyQt6.QtWidgets import QMessageBox
-    monkeypatch.setattr(QMessageBox, "information",
+    monkeypatch.setattr(_dialogs, "info",
                          staticmethod(lambda *a, **k: 0))
 
     sett = Settings()
@@ -146,7 +147,7 @@ def test_save_right_writes_only_right_keys(
         qapp, db, studio_snapshot, monkeypatch):
     from ui.settings_studio import SettingsStudio
     from PyQt6.QtWidgets import QMessageBox
-    monkeypatch.setattr(QMessageBox, "information",
+    monkeypatch.setattr(_dialogs, "info",
                          staticmethod(lambda *a, **k: 0))
 
     sett = Settings()

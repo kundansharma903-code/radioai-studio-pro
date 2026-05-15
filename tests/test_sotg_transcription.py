@@ -30,6 +30,7 @@ from typing import Optional
 import pytest
 
 from core.database import Database
+from core import dialogs as _dialogs
 
 
 # Quiet logs during tests
@@ -611,13 +612,13 @@ def test_assign_api_key_save_persists_settings(qapp, db, qtbot):
         qtbot.addWidget(s)
         s._key_input.setText("AIzaSy_FRESH_KEY_FOR_TESTING")
         # Suppress the success toast
-        original_info = QMessageBox.information
-        QMessageBox.information = staticmethod(
+        original_info = _dialogs.info
+        _dialogs.info = staticmethod(
             lambda *a, **kw: None)
         try:
             s._on_save_clicked()
         finally:
-            QMessageBox.information = original_info
+            _dialogs.info = original_info
         assert Settings().get(KEY_GEMINI_API_KEY) == "AIzaSy_FRESH_KEY_FOR_TESTING"
         assert Settings().get(KEY_ENGINE_ENABLED) == "1"
         s.deleteLater()

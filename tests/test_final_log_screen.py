@@ -30,6 +30,7 @@ from pathlib import Path
 import pytest
 
 from core.database import Database
+from core import dialogs as _dialogs
 
 
 # ── Helpers ────────────────────────────────────────────────────────────
@@ -233,8 +234,7 @@ def test_print_shows_coming_soon_dialog(qapp, db, monkeypatch):
     from PyQt6.QtWidgets import QMessageBox
 
     calls: list = []
-    monkeypatch.setattr(
-        QMessageBox, "information",
+    monkeypatch.setattr(_dialogs, "info",
         staticmethod(
             lambda *args, **kwargs: calls.append((args, kwargs)) or 0))
 

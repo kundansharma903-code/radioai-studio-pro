@@ -26,6 +26,7 @@ import logging
 import os
 from typing import Optional
 from datetime import datetime
+from core import dialogs
 
 from PyQt6.QtCore import (
     Qt, QRectF, QTimer, QPropertyAnimation, pyqtProperty, pyqtSignal,
@@ -1736,12 +1737,12 @@ class SpotsCommercials(QWidget):
                 out = generate_spot_play_report(
                     int(cur_id), mode_val, sd_py, ed_py, db=self._db)
             except SpotPlayReportError as exc:
-                QMessageBox.warning(
+                dialogs.warning(
                     self, "Report failed", str(exc))
                 return
             except Exception as exc:
                 log.error(f"report generation failed: {exc}", exc_info=True)
-                QMessageBox.critical(
+                dialogs.error(
                     self, "Report failed",
                     f"Could not generate report:\n\n{exc}")
                 return
@@ -1759,7 +1760,7 @@ class SpotsCommercials(QWidget):
                 size = 0
             log.info(f"[reports] generated {out} ({size} bytes)")
             if size == 0:
-                QMessageBox.warning(
+                dialogs.warning(
                     self, "Report empty",
                     f"PDF was created but is 0 bytes:\n\n{out}\n\n"
                     f"Check the log for details.")
@@ -2124,7 +2125,7 @@ class SpotsCommercials(QWidget):
         or for `campaign_id` if passed (used by table double-click)."""
         target_id = int(campaign_id) if campaign_id else (self._selected_id or 0)
         if not target_id:
-            QMessageBox.information(
+            dialogs.info(
                 self, "No campaign",
                 "Select a campaign first, then click ✎ Edit Campaign.")
             return
@@ -2139,7 +2140,7 @@ class SpotsCommercials(QWidget):
 
     def _on_edit_breaks(self):
         if not self._selected_id:
-            QMessageBox.information(self, "No campaign",
+            dialogs.info(self, "No campaign",
                                     "Select a campaign first.")
             return
         from ui.dialogs.spot_programming_dialog import SpotProgrammingDialog
@@ -2168,20 +2169,19 @@ class SpotsCommercials(QWidget):
 
     def _on_delete_campaign(self):
         if not self._selected_id:
-            QMessageBox.information(self, "No campaign",
+            dialogs.info(self, "No campaign",
                                     "Select a campaign first.")
             return
         cur = next((c for c in self._campaigns
                     if c["id"] == self._selected_id), None)
         if not cur:
             return
-        ans = QMessageBox.question(
-            self, "Delete campaign",
-            f"Delete '{cur['name']}'?\n\nAttached spot files and schedule "
-            f"entries will be removed. Past airtime history is preserved.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if ans != QMessageBox.StandardButton.Yes:
+        if not dialogs.confirm(
+                self, "Delete campaign",
+                f"Delete '{cur['name']}'?\n\nAttached spot files and "
+                f"schedule entries will be removed. Past airtime "
+                f"history is preserved.",
+                danger=True, yes_label="Delete Campaign"):
             return
         try:
             self._db.delete_campaign(self._selected_id)
@@ -2189,7 +2189,7 @@ class SpotsCommercials(QWidget):
             self._load_campaigns()
         except Exception as exc:
             log.error(f"delete_campaign failed: {exc}")
-            QMessageBox.critical(self, "Delete failed", str(exc))
+            dialogs.error(self, "Delete failed", str(exc))
 
     def _on_add_file(self):
         if not self._selected_id:
@@ -2216,7 +2216,7 @@ class SpotsCommercials(QWidget):
             self._select_campaign(self._selected_id)
         except Exception as exc:
             log.error(f"add_spot_file failed: {exc}")
-            QMessageBox.critical(self, "Add file failed", str(exc))
+            dialogs.error(self, "Add file failed", str(exc))
 
     def _on_status_filter_changed(self, idx: int):
         self._filter = ["active", "expired", "all"][idx]

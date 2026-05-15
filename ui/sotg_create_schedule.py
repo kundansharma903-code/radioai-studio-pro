@@ -36,6 +36,7 @@ from datetime import datetime
 from typing import Optional
 
 from PyQt6.QtCore import Qt, QRectF, QTimer, pyqtSignal
+from core import dialogs
 from PyQt6.QtGui import (
     QPainter, QColor, QPen, QBrush, QLinearGradient, QRadialGradient,
     QFont, QCursor,
@@ -903,17 +904,17 @@ class SOTGCreateSchedule(QWidget):
         link_names = self._link_row.link_names()
 
         if not rj:
-            QMessageBox.warning(self, "Missing RJ name",
+            dialogs.warning(self, "Missing RJ name",
                                   "RJ Name is required.")
             self._rj_name.setFocus()
             return
         if not sn:
-            QMessageBox.warning(self, "Missing show name",
+            dialogs.warning(self, "Missing show name",
                                   "Show Name is required.")
             self._show_name.setFocus()
             return
         if self._envelope_minutes() is None:
-            QMessageBox.warning(
+            dialogs.warning(
                 self, "Invalid time slot",
                 "Time Start and Time End must both be HH:MM "
                 "(24-hour). Example: 04:00 to 07:00.")
@@ -935,7 +936,7 @@ class SOTGCreateSchedule(QWidget):
                 log.info(
                     f"SOTG show updated — id={self._editing_id} '{sn}'")
         except Exception as exc:
-            QMessageBox.critical(
+            dialogs.error(
                 self, "Save failed",
                 f"Could not save show:\n\n{exc}")
             return
@@ -1155,20 +1156,17 @@ class SOTGCreateSchedule(QWidget):
             pass
 
     def _on_delete(self, show_id: int, name: str) -> None:
-        ans = QMessageBox.question(
-            self, "Delete show?",
-            f"Delete the show '{name}'?\n\n"
-            "This removes the show and all its link templates. "
-            "Files uploaded in Assign for past plays are unaffected.",
-            QMessageBox.StandardButton.Yes
-            | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No)
-        if ans != QMessageBox.StandardButton.Yes:
+        if not dialogs.confirm(
+                self, "Delete show?",
+                f"Delete the show '{name}'?\n\n"
+                "This removes the show and all its link templates. "
+                "Files uploaded in Assign for past plays are unaffected.",
+                danger=True, yes_label="Delete Show"):
             return
         try:
             self._db.delete_sotg_show(int(show_id))
         except Exception as exc:
-            QMessageBox.critical(
+            dialogs.error(
                 self, "Delete failed",
                 f"Could not delete:\n\n{exc}")
             return

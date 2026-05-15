@@ -20,6 +20,7 @@ from datetime import datetime
 from typing import Optional
 
 from PyQt6.QtCore import Qt, QRectF, QTimer, pyqtSignal
+from core import dialogs
 from PyQt6.QtGui import (
     QPainter, QColor, QPen, QBrush, QLinearGradient,
     QFont, QCursor,
@@ -1146,7 +1147,7 @@ class SOTGAssignAPIKey(QWidget):
     def _on_test_connection(self) -> None:
         key = self._key_input.text().strip()
         if not key:
-            QMessageBox.information(
+            dialogs.info(
                 self, "Test Connection",
                 "Paste an API key first, then click Test Connection.")
             return
@@ -1155,18 +1156,18 @@ class SOTGAssignAPIKey(QWidget):
             adapter = build_adapter(self._active_provider, key, model)
             res = adapter.test_connection()
         except Exception as exc:
-            QMessageBox.warning(
+            dialogs.warning(
                 self, "Test Connection",
                 f"Couldn't reach {self._active_provider.title()}: {exc}")
             return
         if res.ok:
-            QMessageBox.information(
+            dialogs.info(
                 self, "Test Connection",
                 f"{self._active_provider.title()} reachable ✓\n\n"
                 f"{res.detail}\n\n"
                 "Hit Save & Activate to wire this key to the engine.")
         else:
-            QMessageBox.warning(
+            dialogs.warning(
                 self, "Test Connection",
                 f"{self._active_provider.title()} test failed:\n\n"
                 f"{res.detail}\n\n"
@@ -1176,7 +1177,7 @@ class SOTGAssignAPIKey(QWidget):
         key = self._key_input.text().strip()
         model = self._model_combo.currentText().strip()
         if not key:
-            QMessageBox.information(
+            dialogs.info(
                 self, "Save & Activate",
                 "API key cannot be empty.\n\n"
                 "Get a key first:\n"
@@ -1200,7 +1201,7 @@ class SOTGAssignAPIKey(QWidget):
 
         self._refresh_provider_cards()
         self._refresh_action_bar()
-        QMessageBox.information(
+        dialogs.info(
             self, "Save & Activate",
             f"{self._active_provider.title()} key saved.\n\n"
             "Engine is live — the next fired SOTG drop will pick it up "
@@ -1209,19 +1210,19 @@ class SOTGAssignAPIKey(QWidget):
 
     def _on_backfill(self) -> None:
         if not self._engine.is_enabled():
-            QMessageBox.information(
+            dialogs.info(
                 self, "Backfill",
                 "Engine is off or no API key is set. Save a key first, "
                 "then click Backfill again.")
             return
         n = self._engine.enqueue_backfill(limit=50)
         if n == 0:
-            QMessageBox.information(
+            dialogs.info(
                 self, "Backfill",
                 "Nothing to backfill — every FIRED drop already has a "
                 "summary or is queued.")
         else:
-            QMessageBox.information(
+            dialogs.info(
                 self, "Backfill",
                 f"Queued {n} drop{'s' if n != 1 else ''} for "
                 "transcription. Progress shows in the activity log "

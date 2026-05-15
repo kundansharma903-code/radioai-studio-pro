@@ -29,6 +29,7 @@ Step status (incremental build):
 
 import logging
 from typing import Optional
+from core import dialogs
 
 from PyQt6.QtCore import (
     Qt, QRectF, QTimer, QPropertyAnimation, pyqtProperty, pyqtSignal,
@@ -1792,10 +1793,10 @@ class InstantJingles(QWidget):
     # ── PALLET ACTIONS (sidebar) ─────────────────────────────────────────
 
     def _on_add_pallet(self):
-        from PyQt6.QtWidgets import QInputDialog
-        name, ok = QInputDialog.getText(
-            self, "Add pallet", "Pallet name:")
-        if not (ok and name.strip()):
+        name = dialogs.text_input(
+            self, "Add pallet", "Pallet name:",
+            placeholder="My Pallet")
+        if not name or not name.strip():
             return
         try:
             new_id = self._db.add_pallet({
@@ -1816,19 +1817,19 @@ class InstantJingles(QWidget):
             self._emit_pads_changed()
         except Exception as exc:
             log.error(f"add pallet failed: {exc}")
-            QMessageBox.critical(self, "Add failed", str(exc))
+            dialogs.error(self, "Add failed", str(exc))
 
     def _on_rename_pallet(self):
         if not self._selected_pallet_id:
             return
-        from PyQt6.QtWidgets import QInputDialog
         cur = next((p for p in self._pallets
                     if p["id"] == self._selected_pallet_id), None)
         if not cur:
             return
-        new_name, ok = QInputDialog.getText(
-            self, "Rename pallet", "New name:", text=cur["name"])
-        if not (ok and new_name.strip()):
+        new_name = dialogs.text_input(
+            self, "Rename pallet", "New name:",
+            default=cur["name"])
+        if not new_name or not new_name.strip():
             return
         try:
             self._db.update_pallet(self._selected_pallet_id,
@@ -1838,7 +1839,7 @@ class InstantJingles(QWidget):
             self._emit_pads_changed()
         except Exception as exc:
             log.error(f"rename pallet failed: {exc}")
-            QMessageBox.critical(self, "Rename failed", str(exc))
+            dialogs.error(self, "Rename failed", str(exc))
 
     def _on_edit_grid(self):
         # TODO: open a dialog to edit grid_cols × grid_rows. For now just log.
@@ -1855,7 +1856,7 @@ class InstantJingles(QWidget):
         if not self._selected_pallet_id:
             return
         if len(self._pallets) <= 1:
-            QMessageBox.information(
+            dialogs.info(
                 self, "Cannot delete",
                 "You must keep at least one pallet.")
             return
@@ -1863,13 +1864,12 @@ class InstantJingles(QWidget):
                     if p["id"] == self._selected_pallet_id), None)
         if not cur:
             return
-        ans = QMessageBox.question(
-            self, "Delete pallet",
-            f"Delete the '{cur['name']}' pallet?\n\n"
-            f"All {cur.get('pad_count', 0)} pad slots will be removed.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if ans != QMessageBox.StandardButton.Yes:
+        if not dialogs.confirm(
+                self, "Delete pallet",
+                f"Delete the '{cur['name']}' pallet?\n\n"
+                f"All {cur.get('pad_count', 0)} pad slots will be "
+                f"removed.",
+                danger=True, yes_label="Delete"):
             return
         try:
             self._db.delete_pallet(self._selected_pallet_id)
@@ -1878,7 +1878,7 @@ class InstantJingles(QWidget):
             self._emit_pads_changed()
         except Exception as exc:
             log.error(f"delete pallet failed: {exc}")
-            QMessageBox.critical(self, "Delete failed", str(exc))
+            dialogs.error(self, "Delete failed", str(exc))
 
     def _on_output_changed(self, idx: int):
         if not self._selected_pallet_id:
@@ -2009,7 +2009,7 @@ class InstantJingles(QWidget):
             )
         except Exception as exc:
             log.error(f"assign_audio_to_pad failed: {exc}")
-            QMessageBox.critical(self, "Assign failed", str(exc))
+            dialogs.error(self, "Assign failed", str(exc))
             return
         # Refresh data + UI
         self._load_pads(self._selected_pallet_id)
@@ -2018,13 +2018,12 @@ class InstantJingles(QWidget):
         self._emit_pads_changed()
 
     def _on_clear_pad(self, pad_id: int):
-        ans = QMessageBox.question(
-            self, "Clear pad",
-            "Remove the audio assignment from this pad?\n\n"
-            "The slot itself stays — color and behaviour are preserved.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if ans != QMessageBox.StandardButton.Yes:
+        if not dialogs.confirm(
+                self, "Clear pad",
+                "Remove the audio assignment from this pad?\n\n"
+                "The slot itself stays — color and behaviour are "
+                "preserved.",
+                yes_label="Clear"):
             return
         try:
             self._db.clear_pad(pad_id)

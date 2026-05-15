@@ -25,6 +25,7 @@ import pytest
 
 from core.database import Database
 from core.settings import Settings
+from core import dialogs as _dialogs
 
 
 # Keys this screen touches — used by the snapshot/restore fixture.
@@ -100,7 +101,7 @@ def test_save_station_writes_left_column_keys(
         qapp, db, settings_snapshot, monkeypatch):
     from ui.settings_general import SettingsGeneral
     from PyQt6.QtWidgets import QMessageBox
-    monkeypatch.setattr(QMessageBox, "information",
+    monkeypatch.setattr(_dialogs, "info",
                          staticmethod(lambda *a, **k: 0))
 
     s = SettingsGeneral(db)
@@ -121,7 +122,7 @@ def test_save_station_does_not_touch_right_column(
         qapp, db, settings_snapshot, monkeypatch):
     from ui.settings_general import SettingsGeneral
     from PyQt6.QtWidgets import QMessageBox
-    monkeypatch.setattr(QMessageBox, "information",
+    monkeypatch.setattr(_dialogs, "info",
                          staticmethod(lambda *a, **k: 0))
 
     sett = Settings()
@@ -146,7 +147,7 @@ def test_save_all_writes_every_key(
         qapp, db, settings_snapshot, monkeypatch):
     from ui.settings_general import SettingsGeneral
     from PyQt6.QtWidgets import QMessageBox
-    monkeypatch.setattr(QMessageBox, "information",
+    monkeypatch.setattr(_dialogs, "info",
                          staticmethod(lambda *a, **k: 0))
 
     s = SettingsGeneral(db)
@@ -169,7 +170,7 @@ def test_toggle_persists_as_bool_string(
         qapp, db, settings_snapshot, monkeypatch):
     from ui.settings_general import SettingsGeneral
     from PyQt6.QtWidgets import QMessageBox
-    monkeypatch.setattr(QMessageBox, "information",
+    monkeypatch.setattr(_dialogs, "info",
                          staticmethod(lambda *a, **k: 0))
 
     s = SettingsGeneral(db)
@@ -190,7 +191,7 @@ def test_time_format_shorthand_round_trip(
         qapp, db, settings_snapshot, monkeypatch):
     from ui.settings_general import SettingsGeneral
     from PyQt6.QtWidgets import QMessageBox
-    monkeypatch.setattr(QMessageBox, "information",
+    monkeypatch.setattr(_dialogs, "info",
                          staticmethod(lambda *a, **k: 0))
 
     sett = Settings()
@@ -214,7 +215,7 @@ def test_backup_now_shows_coming_soon(qapp, db, monkeypatch):
     from ui.settings_general import SettingsGeneral
     from PyQt6.QtWidgets import QMessageBox
     calls = []
-    monkeypatch.setattr(QMessageBox, "information",
+    monkeypatch.setattr(_dialogs, "info",
                          staticmethod(
                              lambda *a, **k: calls.append(a) or 0))
     s = SettingsGeneral(db)
@@ -228,7 +229,7 @@ def test_restore_backup_shows_coming_soon(qapp, db, monkeypatch):
     from ui.settings_general import SettingsGeneral
     from PyQt6.QtWidgets import QMessageBox
     calls = []
-    monkeypatch.setattr(QMessageBox, "information",
+    monkeypatch.setattr(_dialogs, "info",
                          staticmethod(
                              lambda *a, **k: calls.append(a) or 0))
     s = SettingsGeneral(db)

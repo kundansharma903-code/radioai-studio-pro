@@ -50,6 +50,7 @@ from __future__ import annotations
 import logging
 import time
 from typing import Optional
+from core import dialogs
 
 from PyQt6.QtCore import (
     Qt, QRect, QRectF, QPointF, QTimer, pyqtSignal,
@@ -1206,17 +1207,15 @@ class Playlists(QWidget):
         # Confirm if Studio is on-air
         if (self._studio is not None
                 and getattr(self._studio, "_current_track", None) is not None):
-            box = QMessageBox(self)
-            box.setWindowTitle("Preview while on air?")
-            box.setText("Studio is currently on air.\n\n"
-                        "Preview will not affect the on-air output, but "
-                        "make sure you're routing preview to monitors.")
-            box.setStandardButtons(
-                QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
-            if box.exec() != QMessageBox.StandardButton.Ok:
+            if not dialogs.confirm(
+                    self, "Preview while on air?",
+                    "Studio is currently on air.\n\n"
+                    "Preview will not affect the on-air output, but "
+                    "make sure you're routing preview to monitors.",
+                    yes_label="Preview Anyway"):
                 return
         if self._engine is None:
-            QMessageBox.information(
+            dialogs.info(
                 self, "Preview unavailable",
                 "AudioEngine reference not wired into Playlists screen.")
             return
@@ -1225,12 +1224,12 @@ class Playlists(QWidget):
         except Exception as exc:
             log.warning(f"preview track lookup failed: {exc}"); return
         if not tracks:
-            QMessageBox.information(self, "Preview",
+            dialogs.info(self, "Preview",
                                     "Playlist has no tracks.")
             return
         path = tracks[0].get("file_path")
         if not path:
-            QMessageBox.information(self, "Preview",
+            dialogs.info(self, "Preview",
                                     "Track file path missing.")
             return
         # Stop any prior preview
@@ -1253,29 +1252,29 @@ class Playlists(QWidget):
     def _on_add_to_schedule(self, playlist_id: int) -> None:
         if self._scheduler is None or not hasattr(
                 self._scheduler, "add_playlist_to_schedule"):
-            QMessageBox.information(
+            dialogs.info(
                 self, "Add to Schedule",
                 "Scheduler engine reference not wired into Playlists.")
             return
         ok = bool(self._scheduler.add_playlist_to_schedule(int(playlist_id)))
         if ok:
-            QMessageBox.information(
+            dialogs.info(
                 self, "Added to Schedule",
                 "Playlist queued for today's schedule.")
         else:
-            QMessageBox.warning(
+            dialogs.warning(
                 self, "Add to Schedule",
                 "Could not add playlist — see log for details.")
         self._reload_playlists()
 
     def _on_import_stub(self) -> None:
-        QMessageBox.information(
+        dialogs.info(
             self, "Import",
             "Import — coming soon.\n\nOpens a file picker for M3U / CSV / "
             "JSON playlist imports.")
 
     def _on_overflow_stub(self, playlist_id: int) -> None:
-        QMessageBox.information(
+        dialogs.info(
             self, "More",
             "Overflow menu — coming soon (Duplicate / Delete / Export).")
 

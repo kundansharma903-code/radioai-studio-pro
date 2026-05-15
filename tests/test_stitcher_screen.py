@@ -27,6 +27,7 @@ import uuid
 import pytest
 
 from core.database import Database
+from core import dialogs as _dialogs
 
 
 # ── Test doubles ────────────────────────────────────────────────────────
@@ -185,8 +186,8 @@ def test_tab_switch_hides_left_center_right_panels(qapp, db):
 
 def test_save_config_writes_to_db(qapp, db, cfg_snapshot, monkeypatch):
     from PyQt6.QtWidgets import QMessageBox
-    monkeypatch.setattr(QMessageBox, "information",
-                        lambda *a, **k: QMessageBox.StandardButton.Ok)
+    monkeypatch.setattr(_dialogs, "info",
+                        lambda *a, **k: None)
     from ui.stitcher import Stitcher
     s = Stitcher(db)
     s._inp_min_hooks.setText("3")
@@ -208,11 +209,11 @@ def test_save_config_writes_to_db(qapp, db, cfg_snapshot, monkeypatch):
 def test_save_config_blocks_invalid_min_max(qapp, db, cfg_snapshot, monkeypatch):
     from PyQt6.QtWidgets import QMessageBox
     seen: list[str] = []
-    monkeypatch.setattr(QMessageBox, "warning",
+    monkeypatch.setattr(_dialogs, "warning",
                         lambda *a, **k: seen.append("warn") or
                         QMessageBox.StandardButton.Ok)
-    monkeypatch.setattr(QMessageBox, "information",
-                        lambda *a, **k: QMessageBox.StandardButton.Ok)
+    monkeypatch.setattr(_dialogs, "info",
+                        lambda *a, **k: None)
     from ui.stitcher import Stitcher
     s = Stitcher(db)
     before = db.get_stitcher_config()
@@ -235,10 +236,10 @@ def test_preview_full_routes_sequence_to_stitcher_engine(qapp, db, monkeypatch):
     play_block called with a sequence containing opening + hooks +
     separators + closing."""
     from PyQt6.QtWidgets import QMessageBox
-    monkeypatch.setattr(QMessageBox, "information",
-                        lambda *a, **k: QMessageBox.StandardButton.Ok)
-    monkeypatch.setattr(QMessageBox, "warning",
-                        lambda *a, **k: QMessageBox.StandardButton.Ok)
+    monkeypatch.setattr(_dialogs, "info",
+                        lambda *a, **k: None)
+    monkeypatch.setattr(_dialogs, "warning",
+                        lambda *a, **k: None)
     monkeypatch.setattr(
         "os.path.exists", lambda _p: True)   # bypass file checks
     fake_engine = _FakeStitcherEngine()
@@ -286,8 +287,8 @@ def test_preview_full_blocked_when_module_disabled(qapp, db, monkeypatch):
     is configured. Saves the operator from accidentally previewing
     a module they've intentionally taken offline."""
     from PyQt6.QtWidgets import QMessageBox
-    monkeypatch.setattr(QMessageBox, "information",
-                        lambda *a, **k: QMessageBox.StandardButton.Ok)
+    monkeypatch.setattr(_dialogs, "info",
+                        lambda *a, **k: None)
     fake_engine = _FakeStitcherEngine()
     from ui.stitcher import Stitcher
     s = Stitcher(db, stitcher_engine=fake_engine)

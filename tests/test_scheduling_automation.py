@@ -43,6 +43,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QLabel, QPushButton
 
 from core.database import Database
+from core import dialogs as _dialogs
 
 
 @pytest.fixture
@@ -437,8 +438,7 @@ def test_main_window_mounts_and_routes_to_both_screens(
     # the "coming soon" placeholder
     toast_calls: list[tuple] = []
     from PyQt6.QtWidgets import QMessageBox
-    monkeypatch.setattr(
-        QMessageBox, "information",
+    monkeypatch.setattr(_dialogs, "info",
         lambda parent, title, text: toast_calls.append((title, text)))
 
     # scheduling_automation route → hub (was a toast pre-Phase-B)

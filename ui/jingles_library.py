@@ -33,6 +33,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 from datetime import datetime
+from core import dialogs
 
 from PyQt6.QtCore import (
     Qt, QRectF, QTimer, pyqtSignal,
@@ -1363,7 +1364,7 @@ class JinglesLibrary(QWidget):
         try:
             from ui.dialogs.jingle_editor_dialog import JingleEditorDialog
         except ImportError:
-            QMessageBox.information(
+            dialogs.info(
                 self, "Coming soon",
                 "The Jingle editor dialog (Figma 106:2) lands in the "
                 "next commit. For now you can browse + filter jingles.")
@@ -1381,37 +1382,37 @@ class JinglesLibrary(QWidget):
 
     def _on_mass_import(self):
         log.info("[jingles] Mass Import — TODO")
-        QMessageBox.information(
+        dialogs.info(
             self, "Coming soon",
             "Mass Import will let you bulk-add jingles from a folder.")
 
     def _on_edit_categories(self):
         log.info("[jingles] Edit Categories — TODO")
-        QMessageBox.information(
+        dialogs.info(
             self, "Coming soon",
             "Edit Categories will let you manage jingle category labels.")
 
     def _on_delete(self):
         log.info("[jingles] Delete — TODO (waiting for confirm flow)")
         if self._selected_id is None:
-            QMessageBox.information(
+            dialogs.info(
                 self, "No selection", "Select a jingle row first.")
             return
-        QMessageBox.information(
+        dialogs.info(
             self, "Coming soon",
             "Jingle delete will land alongside the editor dialog so "
             "the destructive confirmation matches the rest of the app.")
 
     def _on_export_playlister(self):
         log.info("[jingles] Export to Playlister — TODO")
-        QMessageBox.information(
+        dialogs.info(
             self, "Coming soon",
             "Export to Playlister will write the active jingles list "
             "to the Playlister integration file.")
 
     def _on_playlister_prefix(self):
         log.info("[jingles] Playlister Code Prefix — TODO")
-        QMessageBox.information(
+        dialogs.info(
             self, "Coming soon",
             "Playlister Code Prefix lets you set the JI-### code "
             "template used when exporting.")

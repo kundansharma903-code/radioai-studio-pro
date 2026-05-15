@@ -31,6 +31,7 @@ import pytest
 from PyQt6.QtWidgets import QMessageBox
 
 from core.database import Database
+from core import dialogs as _dialogs
 from ui.playlist_edit import PlaylistEdit
 
 
@@ -202,9 +203,8 @@ def test_preview_offair_plays_directly(screen, monkeypatch):
     # If a confirm dialog were to fire it'd block — track that.
     dialog_fired = []
     monkeypatch.setattr(
-        QMessageBox, "exec",
-        lambda self_box: (dialog_fired.append(True),
-                          QMessageBox.StandardButton.Cancel)[1])
+        _dialogs, "confirm",
+        lambda *a, **k: (dialog_fired.append(True), False)[1])
     s._on_preview_track()
     method_calls = [c[0] for c in eng.calls]
     assert "load_file" in method_calls, \
@@ -221,10 +221,10 @@ def test_preview_onair_cancel_blocks_preview(screen, monkeypatch):
     s, eng, _env = screen
     s.set_studio(_StudioOnAir())
     dialog_fired = []
-    def _exec_cancel(self_box):
+    def _confirm_cancel(*a, **k):
         dialog_fired.append(True)
-        return QMessageBox.StandardButton.Cancel
-    monkeypatch.setattr(QMessageBox, "exec", _exec_cancel)
+        return False
+    monkeypatch.setattr(_dialogs, "confirm", _confirm_cancel)
     calls_before = list(eng.calls)
     s._on_preview_track()
     assert dialog_fired, \
@@ -241,8 +241,8 @@ def test_preview_onair_ok_plays_through_cue(screen, monkeypatch):
     s, eng, _env = screen
     studio = _StudioOnAir(channel_id=50)
     s.set_studio(studio)
-    monkeypatch.setattr(QMessageBox, "exec",
-                        lambda self_box: QMessageBox.StandardButton.Ok)
+    monkeypatch.setattr(_dialogs, "confirm",
+                        lambda *a, **k: True)
     s._on_preview_track()
     load_calls = [c for c in eng.calls if c[0] == "load_file"]
     assert load_calls, "on-air OK must call engine.load_file"
@@ -267,8 +267,8 @@ def test_studio_onair_audio_uninterrupted_during_preview(
     s, eng, _env = screen
     studio = _StudioOnAir(channel_id=50)
     s.set_studio(studio)
-    monkeypatch.setattr(QMessageBox, "exec",
-                        lambda self_box: QMessageBox.StandardButton.Ok)
+    monkeypatch.setattr(_dialogs, "confirm",
+                        lambda *a, **k: True)
     s._on_preview_track()
     disruptions = eng.disruption_calls_for(studio._playback_cid)
     assert disruptions == [], (
@@ -288,8 +288,8 @@ def test_second_preview_cleans_up_first(screen, monkeypatch):
     clicks."""
     s, eng, _env = screen
     s.set_studio(_StudioOffAir())
-    monkeypatch.setattr(QMessageBox, "exec",
-                        lambda self_box: QMessageBox.StandardButton.Ok)
+    monkeypatch.setattr(_dialogs, "confirm",
+                        lambda *a, **k: True)
     s._on_preview_track()
     first_cid = s._preview_cid
     s._on_preview_track()

@@ -38,6 +38,7 @@ from datetime import datetime
 from typing import Optional
 
 from PyQt6.QtCore import Qt, QRectF, pyqtSignal
+from core import dialogs
 from PyQt6.QtGui import (
     QPainter, QColor, QPen, QBrush, QPainterPath, QFont, QCursor,
     QFontMetrics, QIntValidator, QDoubleValidator,
@@ -1178,14 +1179,14 @@ class SweeperEditorDialog(BaseDialog):
 
     def _on_edit_audio_clicked(self):
         # AudioCueEditorDialog hookup deferred — explicit toast.
-        QMessageBox.information(
+        dialogs.info(
             self, "Coming soon",
             "Audio cue editor for sweepers is being wired in a follow-up "
             "session — for now, set the file path here and adjust cue points "
             "via the Songs Library audio editor on the source file.")
 
     def _on_ai_autofill(self):
-        QMessageBox.information(
+        dialogs.info(
             self, "Coming soon",
             "AI Auto-fill Metadata will detect the natural sweeper position "
             "from the audio file. Hookup deferred — populate fields manually "
@@ -1195,7 +1196,7 @@ class SweeperEditorDialog(BaseDialog):
         data = self._collect_values()
         # Required: title
         if not data["name"]:
-            QMessageBox.warning(
+            dialogs.warning(
                 self, "Missing required field",
                 "Sweeper Title is required.")
             if self._title_input:
@@ -1209,7 +1210,7 @@ class SweeperEditorDialog(BaseDialog):
                 new_id = self._db.add_sweeper(data)
         except Exception as exc:
             log.error(f"save failed: {exc}", exc_info=True)
-            QMessageBox.critical(
+            dialogs.error(
                 self, "Save failed",
                 f"Could not save sweeper:\n\n{exc}")
             return

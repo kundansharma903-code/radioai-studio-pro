@@ -29,6 +29,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 from datetime import datetime
+from core import dialogs
 
 from PyQt6.QtCore import (
     Qt, QRectF, QTimer, QPropertyAnimation, pyqtProperty, pyqtSignal,
@@ -1355,37 +1356,37 @@ class SweepersLibrary(QWidget):
 
     def _on_mass_import(self):
         log.info("[sweepers] Mass Import — TODO")
-        QMessageBox.information(
+        dialogs.info(
             self, "Coming soon",
             "Mass Import will let you bulk-add sweepers from a folder.")
 
     def _on_edit_categories(self):
         log.info("[sweepers] Edit Categories — TODO")
-        QMessageBox.information(
+        dialogs.info(
             self, "Coming soon",
             "Edit Categories will let you manage sweeper category labels.")
 
     def _on_delete(self):
         log.info("[sweepers] Delete — TODO (waiting for confirm flow)")
         if self._selected_id is None:
-            QMessageBox.information(
+            dialogs.info(
                 self, "No selection", "Select a sweeper row first.")
             return
-        QMessageBox.information(
+        dialogs.info(
             self, "Coming soon",
             "Sweeper delete will land alongside the editor dialog "
             "so the destructive confirmation matches the rest of the app.")
 
     def _on_export_playlister(self):
         log.info("[sweepers] Export to Playlister — TODO")
-        QMessageBox.information(
+        dialogs.info(
             self, "Coming soon",
             "Export to Playlister will write the active sweepers list to "
             "the Playlister integration file.")
 
     def _on_playlister_prefix(self):
         log.info("[sweepers] Playlister Prefix — TODO")
-        QMessageBox.information(
+        dialogs.info(
             self, "Coming soon",
             "Playlister Prefix lets you set the SS-### code template used "
             "when exporting.")

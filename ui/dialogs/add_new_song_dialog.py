@@ -20,6 +20,7 @@ from datetime import datetime
 from typing import Optional
 
 from PyQt6.QtCore import Qt, QRectF, pyqtSignal
+from core import dialogs
 from PyQt6.QtGui import (
     QPainter, QColor, QPen, QBrush, QLinearGradient, QPainterPath, QFont,
     QCursor,
@@ -809,7 +810,7 @@ class AddNewSongDialog(BaseDialog):
             self._filename_input.setText(f)
 
     def _on_ai_autofill(self):
-        QMessageBox.information(
+        dialogs.info(
             self, "AI Auto-fill",
             "AI metadata auto-fill is not yet wired to Claude — coming in a future phase.",
         )
@@ -819,7 +820,7 @@ class AddNewSongDialog(BaseDialog):
         title  = self._title_input.text().strip()
         missing = [name for name, ok in [("Artist", artist), ("Song Title", title)] if not ok]
         if missing:
-            QMessageBox.warning(self, "Required fields missing",
+            dialogs.warning(self, "Required fields missing",
                                 f"Please fill in: {', '.join(missing)}")
             (self._artist_input if not artist else self._title_input).setFocus()
             return
@@ -875,7 +876,7 @@ class AddNewSongDialog(BaseDialog):
             new_id = self._db.add_song(song)
             song["id"] = new_id
         except Exception as exc:
-            QMessageBox.critical(self, "Save failed",
+            dialogs.error(self, "Save failed",
                                  f"Could not save song to database:\n\n{exc}")
             return
 

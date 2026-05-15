@@ -45,6 +45,7 @@ from __future__ import annotations
 import logging
 import time
 from typing import Optional
+from core import dialogs
 
 from PyQt6.QtCore import (
     Qt, QRect, QRectF, QPointF, QSize, QTimer, QModelIndex,
@@ -1750,7 +1751,7 @@ class PlaylistNew(QWidget):
             self._db.commit_playlist_draft(int(self._draft_id))
         except Exception as exc:
             log.warning(f"commit_playlist_draft failed: {exc}")
-            QMessageBox.warning(self, "Save failed", str(exc))
+            dialogs.warning(self, "Save failed", str(exc))
             return
         # Optionally register with scheduler engine
         if (self._builder.auto_schedule_enabled()
@@ -1766,16 +1767,11 @@ class PlaylistNew(QWidget):
 
     def _on_cancel(self) -> None:
         if self._dirty or self._draft_id is not None:
-            box = QMessageBox(self)
-            box.setWindowTitle("Discard playlist?")
-            box.setText("This playlist hasn't been saved.\n\n"
-                        "Discard changes and go back?")
-            box.setIcon(QMessageBox.Icon.Warning)
-            box.setStandardButtons(
-                QMessageBox.StandardButton.Discard
-                | QMessageBox.StandardButton.Cancel)
-            box.setDefaultButton(QMessageBox.StandardButton.Cancel)
-            if box.exec() != QMessageBox.StandardButton.Discard:
+            if not dialogs.confirm(
+                    self, "Discard playlist?",
+                    "This playlist hasn't been saved.\n\n"
+                    "Discard changes and go back?",
+                    danger=True, yes_label="Discard"):
                 return
             if self._draft_id is not None:
                 try:

@@ -16,6 +16,7 @@ from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import QMainWindow, QStackedWidget, QApplication
 
 from core.constants import APP_NAME, APP_VERSION, WINDOW_W, WINDOW_H
+from core import dialogs
 
 log = logging.getLogger("MainWindow")
 
@@ -765,7 +766,7 @@ class MainWindow(QMainWindow):
             return
         if screen == "auto_program_settings":
             from PyQt6.QtWidgets import QMessageBox
-            QMessageBox.information(
+            dialogs.info(
                 self, "Auto Program Settings",
                 "Auto Program Settings — coming soon.")
             return
@@ -894,7 +895,7 @@ class MainWindow(QMainWindow):
             "log_viewer":         "Log Viewer",
         }
         title = labels.get(screen, screen)
-        QMessageBox.information(
+        dialogs.info(
             self, title,
             f"{title} — coming soon.\n\nThis screen will be ported to "
             "the premium theme in a follow-up commit.")
@@ -916,7 +917,7 @@ class MainWindow(QMainWindow):
             if not sid:
                 # No song selected — toast a friendly nudge.
                 from PyQt6.QtWidgets import QMessageBox
-                QMessageBox.information(
+                dialogs.info(
                     self, "Play History",
                     "Select a song from the list first, "
                     "then click Play History.")
@@ -943,7 +944,7 @@ class MainWindow(QMainWindow):
                     cid = None
             if not cid:
                 from PyQt6.QtWidgets import QMessageBox
-                QMessageBox.information(
+                dialogs.info(
                     self, "Category Performance",
                     "Pick a specific category from the Filters "
                     "dropdown first, then click "
@@ -1110,7 +1111,7 @@ class MainWindow(QMainWindow):
                 self._rotation_engine.tick()
             except Exception as exc:
                 from PyQt6.QtWidgets import QMessageBox
-                QMessageBox.warning(
+                dialogs.warning(
                     self, "Refresh failed",
                     f"Rotation engine tick raised: {exc}")
                 return
@@ -1120,13 +1121,13 @@ class MainWindow(QMainWindow):
         """Toggle the engine OFF — Settings sentinel flipped, engine
         thread keeps running (cheap heartbeat) but _on_tick exits
         early on is_enabled()=False."""
-        from PyQt6.QtWidgets import QMessageBox
-        ok = QMessageBox.question(
-            self, "Stop AI Engine",
-            "Stopping the engine reverts Studio to random + separation "
-            "rotation for any song picks not yet decided. Re-enable "
-            "anytime from Scheduling Automation.\n\nContinue?")
-        if ok != QMessageBox.StandardButton.Yes:
+        if not confirm(
+                self, "Stop AI Engine",
+                "Stopping the engine reverts Studio to random + "
+                "separation rotation for any song picks not yet "
+                "decided. Re-enable anytime from Scheduling "
+                "Automation.\n\nContinue?",
+                yes_label="Stop Engine"):
             return
         from core.settings import Settings
         from core.rotation_ai_engine import KEY_ENGINE_ENABLED
@@ -1138,7 +1139,7 @@ class MainWindow(QMainWindow):
                 self._rotation_engine._set_state("OFF")
             except Exception:
                 pass
-        QMessageBox.information(
+        dialogs.info(
             self, "Engine stopped",
             "Rotation AI is OFF. Studio is back on manual rotation.")
 
@@ -1171,19 +1172,18 @@ class MainWindow(QMainWindow):
     def _on_sched_ai_ungroup(self, group_id: int) -> None:
         """Delete a sister group. Confirmation gate — destructive op
         per CLAUDE.md."""
-        from PyQt6.QtWidgets import QMessageBox
-        ok = QMessageBox.question(
-            self, "Delete Sister Group",
-            f"Delete Sister Group {group_id}? Member categories "
-            f"revert to standalone rotation (no sister pooling). "
-            f"This does NOT delete the categories or their songs."
-            f"\n\nContinue?")
-        if ok != QMessageBox.StandardButton.Yes:
+        if not confirm(
+                self, "Delete Sister Group",
+                f"Delete Sister Group {group_id}? Member categories "
+                f"revert to standalone rotation (no sister pooling). "
+                f"This does NOT delete the categories or their songs."
+                f"\n\nContinue?",
+                danger=True, yes_label="Delete Group"):
             return
         try:
             self._db.delete_sister_group(int(group_id))
         except Exception as exc:
-            QMessageBox.warning(
+            dialogs.warning(
                 self, "Delete failed",
                 f"Couldn't delete the group: {exc}")
             return
@@ -1204,18 +1204,18 @@ class MainWindow(QMainWindow):
         try:
             plan = self._db.get_ai_rotation_plan(plan_date)
             if not plan:
-                QMessageBox.information(
+                dialogs.info(
                     self, "Approve",
                     "No plan computed yet for today. Wait for the "
                     "engine's first tick (within an hour).")
                 return
             self._db.mark_ai_rotation_plan_approved(plan_date)
         except Exception as exc:
-            QMessageBox.warning(
+            dialogs.warning(
                 self, "Approve failed",
                 f"DB write failed: {exc}")
             return
-        QMessageBox.information(
+        dialogs.info(
             self, "Plan approved",
             "Today's AI rotation plan is now live. Studio's next song "
             "picks will use AI's decisions.")
@@ -1225,21 +1225,20 @@ class MainWindow(QMainWindow):
     def _on_sched_ai_discard(self) -> None:
         """Discard today's plan — wipes decisions + flips status to
         'discarded'. Engine will compute again on next tick."""
-        from PyQt6.QtWidgets import QMessageBox
         from datetime import date as _date
-        ok = QMessageBox.question(
-            self, "Discard Plan",
-            "Discard today's AI plan? Decisions will be wiped. "
-            "The engine will compute a fresh plan on its next "
-            "hourly tick. Studio reverts to random + separation "
-            "in the meantime.\n\nContinue?")
-        if ok != QMessageBox.StandardButton.Yes:
+        if not confirm(
+                self, "Discard Plan",
+                "Discard today's AI plan? Decisions will be wiped. "
+                "The engine will compute a fresh plan on its next "
+                "hourly tick. Studio reverts to random + separation "
+                "in the meantime.\n\nContinue?",
+                danger=True, yes_label="Discard Plan"):
             return
         plan_date = _date.today().isoformat()
         try:
             self._db.mark_ai_rotation_plan_discarded(plan_date)
         except Exception as exc:
-            QMessageBox.warning(
+            dialogs.warning(
                 self, "Discard failed",
                 f"DB write failed: {exc}")
             return

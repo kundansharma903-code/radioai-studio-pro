@@ -19,6 +19,7 @@ import logging
 import os
 from datetime import datetime
 from typing import Optional
+from core import dialogs
 
 from PyQt6.QtCore import (
     Qt, QRectF, QTimer, QPropertyAnimation, pyqtProperty, pyqtSignal, QSize,
@@ -1223,7 +1224,7 @@ class SongsLibrary(QWidget):
     def _open_cue_editor(self):
         if not self._selected_id:
             from PyQt6.QtWidgets import QMessageBox
-            QMessageBox.information(
+            dialogs.info(
                 self, "No song selected",
                 "Click a song in the table first, then ✎ Edit Cues.")
             return
@@ -1290,7 +1291,7 @@ class SongsLibrary(QWidget):
         if key == "play_history":
             if not self._selected_id:
                 from PyQt6.QtWidgets import QMessageBox
-                QMessageBox.information(
+                dialogs.info(
                     self, "No song selected",
                     "Click a song in the table first, "
                     "then Play History.")
@@ -1755,7 +1756,7 @@ class SongsLibrary(QWidget):
             ids = []
 
         if not ids:
-            QMessageBox.information(
+            dialogs.info(
                 self,
                 "No song selected",
                 "Click a song in the list first (or drag-select "
@@ -1801,7 +1802,7 @@ class SongsLibrary(QWidget):
             songs_data.append(song_data)
 
         if not songs_data:
-            QMessageBox.warning(
+            dialogs.warning(
                 self, "Songs not found",
                 "Could not load the selected song(s). Please refresh "
                 "and try again.",
@@ -1839,7 +1840,7 @@ class SongsLibrary(QWidget):
                     f"delete_song({sid}) failed: {exc}", exc_info=True)
                 failed.append(int(sid))
         if failed:
-            QMessageBox.warning(
+            dialogs.warning(
                 self, "Delete partial",
                 f"Could not delete {len(failed)} of {len(song_ids)} "
                 f"selected song(s). See log for details.")

@@ -60,6 +60,7 @@ import logging
 from typing import Optional
 
 from PyQt6.QtCore import Qt, QRect, QRectF, pyqtSignal, QPoint
+from core import dialogs
 from PyQt6.QtGui import (
     QPainter, QColor, QPen, QPainterPath, QFont, QCursor, QLinearGradient,
     QBrush, QAction,
@@ -1123,7 +1124,7 @@ class SpotProgrammingDialog(BaseDialog):
         if not self._grid:
             return
         if self._grid.selected_count() == 0:
-            QMessageBox.information(
+            dialogs.info(
                 self, "No selection",
                 "Click cells to select (or drag a rectangle), "
                 "then click + Add. Esc clears selection.")
@@ -1134,7 +1135,7 @@ class SpotProgrammingDialog(BaseDialog):
         if not self._grid:
             return
         if self._grid.selected_count() == 0:
-            QMessageBox.information(
+            dialogs.info(
                 self, "No selection",
                 "Click cells to select (or drag a rectangle), "
                 "then click − Remove. Esc clears selection.")
@@ -1146,7 +1147,7 @@ class SpotProgrammingDialog(BaseDialog):
             return
         ok = self._grid.paste_to_all_days()
         if not ok:
-            QMessageBox.information(
+            dialogs.info(
                 self, "Nothing to paste",
                 "No breaks scheduled yet — schedule some first, then paste.")
         else:
@@ -1158,7 +1159,7 @@ class SpotProgrammingDialog(BaseDialog):
             return
         ok = self._grid.paste_to_selected_day()
         if not ok:
-            QMessageBox.information(
+            dialogs.info(
                 self, "Nothing to paste",
                 "Select target cells in another day first, "
                 "then click Paste to Selected Day.\n\n"
@@ -1169,12 +1170,9 @@ class SpotProgrammingDialog(BaseDialog):
             return
         if not self._grid.get_breaks():
             return
-        ans = QMessageBox.question(
-            self, "Clear all breaks",
-            "Remove every scheduled break across all 7 days?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if ans == QMessageBox.StandardButton.Yes:
+        if dialogs.confirm(self, "Clear all breaks",
+                   "Remove every scheduled break across all 7 days?",
+                   danger=True, yes_label="Clear All"):
             self._grid.clear_all()
 
     def _on_set_mode(self):
@@ -1214,7 +1212,7 @@ class SpotProgrammingDialog(BaseDialog):
             except Exception as exc:
                 log.error(f"update_break_schedule failed: {exc}",
                           exc_info=True)
-                QMessageBox.critical(
+                dialogs.error(
                     self, "Save failed",
                     f"Could not save schedule:\n\n{exc}")
                 return

@@ -21,6 +21,7 @@ import pytest
 
 from core.database import Database
 from core.settings import Settings
+from core import dialogs as _dialogs
 
 
 TOUCHED_KEYS = (
@@ -98,7 +99,7 @@ def test_save_all_writes_every_channel(
         qapp, db, soundcard_snapshot, monkeypatch):
     from ui.settings_soundcard import SettingsSoundcard
     from PyQt6.QtWidgets import QMessageBox
-    monkeypatch.setattr(QMessageBox, "information",
+    monkeypatch.setattr(_dialogs, "info",
                          staticmethod(lambda *a, **k: 0))
 
     s = SettingsSoundcard(db)
@@ -126,7 +127,7 @@ def test_test_tone_shows_coming_soon(qapp, db, monkeypatch):
     from ui.settings_soundcard import SettingsSoundcard
     from PyQt6.QtWidgets import QMessageBox
     calls: list = []
-    monkeypatch.setattr(QMessageBox, "information",
+    monkeypatch.setattr(_dialogs, "info",
                          staticmethod(
                              lambda *a, **k: calls.append(a) or 0))
     s = SettingsSoundcard(db)
@@ -144,7 +145,7 @@ def test_test_all_shows_coming_soon(qapp, db, monkeypatch):
     from ui.settings_soundcard import SettingsSoundcard
     from PyQt6.QtWidgets import QMessageBox
     calls: list = []
-    monkeypatch.setattr(QMessageBox, "information",
+    monkeypatch.setattr(_dialogs, "info",
                          staticmethod(
                              lambda *a, **k: calls.append(a) or 0))
     s = SettingsSoundcard(db)

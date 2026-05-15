@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from PyQt6.QtCore import Qt, QRectF, QTimer, pyqtSignal
+from core import dialogs
 from PyQt6.QtGui import (
     QPainter, QColor, QPen, QPainterPath, QFont, QCursor, QLinearGradient,
     QBrush,
@@ -1112,14 +1113,14 @@ class AddCampaignDialog(BaseDialog):
 
     def _stub_toast(self, title: str, msg: str):
         log.info(f"[STUB] {title}: {msg}")
-        QMessageBox.information(self, title, msg)
+        dialogs.info(self, title, msg)
 
     # ── Save ──────────────────────────────────────────────────────────────
 
     def _on_save(self):
         title = (self._title_input.text() or "").strip()
         if not title:
-            QMessageBox.warning(self, "Required field",
+            dialogs.warning(self, "Required field",
                                 "Spot General Title cannot be empty.")
             self._title_input.setFocus()
             return
@@ -1193,7 +1194,7 @@ class AddCampaignDialog(BaseDialog):
             log.error(
                 f"{'update' if is_edit else 'add'}_campaign failed: {exc}",
                 exc_info=True)
-            QMessageBox.critical(
+            dialogs.error(
                 self,
                 "Update failed" if is_edit else "Save failed",
                 f"Could not save campaign:\n\n{exc}")

@@ -38,6 +38,7 @@ from datetime import datetime
 from typing import List, Optional
 
 from PyQt6.QtCore import Qt, QRectF, QTimer, pyqtSignal
+from core import dialogs
 from PyQt6.QtGui import (
     QPainter, QColor, QPen, QBrush, QLinearGradient, QFont, QCursor,
 )
@@ -1195,10 +1196,10 @@ class SettingsStudio(QWidget):
         try:
             self._save_left()
         except Exception as exc:
-            QMessageBox.warning(self, "Save failed", str(exc))
+            dialogs.warning(self, "Save failed", str(exc))
             return
         self.settings_saved.emit()
-        QMessageBox.information(
+        dialogs.info(
             self, "Saved",
             "Transition + fade settings saved.")
 
@@ -1206,10 +1207,10 @@ class SettingsStudio(QWidget):
         try:
             self._save_center()
         except Exception as exc:
-            QMessageBox.warning(self, "Save failed", str(exc))
+            dialogs.warning(self, "Save failed", str(exc))
             return
         self.settings_saved.emit()
-        QMessageBox.information(
+        dialogs.info(
             self, "Saved",
             "Audio levels + VU + AutoCue settings saved.")
 
@@ -1217,10 +1218,10 @@ class SettingsStudio(QWidget):
         try:
             self._save_right()
         except Exception as exc:
-            QMessageBox.warning(self, "Save failed", str(exc))
+            dialogs.warning(self, "Save failed", str(exc))
             return
         self.settings_saved.emit()
-        QMessageBox.information(
+        dialogs.info(
             self, "Saved",
             "Cue split + preview + audio engine preferences saved.\n\n"
             "Audio engine changes take effect after RadioAI restart.")

@@ -48,6 +48,7 @@ import logging
 import os
 from typing import Optional, Callable
 from datetime import datetime
+from core import dialogs
 
 from PyQt6.QtCore import (
     Qt, QRectF, QTimer, pyqtSignal,
@@ -1369,7 +1370,7 @@ class Stitcher(QWidget):
         except Exception:
             dur_s = 8
         if min_h > max_h:
-            QMessageBox.warning(
+            dialogs.warning(
                 self, "Invalid range",
                 "Min songs with hooks required cannot exceed Max songs "
                 "to announce.")
@@ -1403,7 +1404,7 @@ class Stitcher(QWidget):
             self._db.update_stitcher_config(data)
         except Exception as exc:
             log.error(f"[stitcher] save failed: {exc}", exc_info=True)
-            QMessageBox.critical(
+            dialogs.error(
                 self, "Save failed",
                 f"Could not save stitcher config:\n\n{exc}")
             return
@@ -1414,7 +1415,7 @@ class Stitcher(QWidget):
         # Refresh in-memory cache + assembly flow visual.
         self._load_config()
         self._refresh_assembly_flow()
-        QMessageBox.information(
+        dialogs.info(
             self, "Saved", "Stitcher configuration saved.")
 
     @staticmethod
@@ -1546,7 +1547,7 @@ class Stitcher(QWidget):
             return
         if not os.path.exists(path):
             log.warning(f"[stitcher] preview file missing: {path}")
-            QMessageBox.warning(
+            dialogs.warning(
                 self, "File missing",
                 f"Could not preview — file not found:\n\n{path}")
             return
@@ -1573,7 +1574,7 @@ class Stitcher(QWidget):
         opening + N hook clips + closing into one tempfile WAV and
         plays through BASS."""
         if self._stitcher_engine is None:
-            QMessageBox.information(
+            dialogs.info(
                 self, "Engine not wired",
                 "The Stitcher engine isn't attached to this Studio "
                 "session. Restart the app — MainWindow injects the "
@@ -1581,7 +1582,7 @@ class Stitcher(QWidget):
             return
         cfg = self._cfg
         if not cfg.get("module_enabled"):
-            QMessageBox.information(
+            dialogs.info(
                 self, "Module disabled",
                 "Enable the module first (toggle the green card) "
                 "before previewing the assembly.")
@@ -1609,7 +1610,7 @@ class Stitcher(QWidget):
                 sequence = [{"file_path": fb, "play_full": True,
                              "label": "FALLBACK"}]
             else:
-                QMessageBox.warning(
+                dialogs.warning(
                     self, "Not enough hooks",
                     f"Only {len(hooked)} song(s) have hooks set — "
                     f"min required is "
@@ -1643,7 +1644,7 @@ class Stitcher(QWidget):
                 {"file_path": closing, "play_full": True,
                  "label": "CLOSING"})
         if not sequence:
-            QMessageBox.warning(
+            dialogs.warning(
                 self, "Nothing to play",
                 "Could not assemble a stitcher sequence — no audio "
                 "paths configured or no hooks resolvable to playable "
@@ -1658,18 +1659,16 @@ class Stitcher(QWidget):
         except Exception as exc:
             log.error(f"[stitcher] play_block failed: {exc}",
                       exc_info=True)
-            QMessageBox.critical(
+            dialogs.error(
                 self, "Preview failed", str(exc))
 
     def _on_reset_defaults(self) -> None:
-        ans = QMessageBox.question(
-            self, "Reset to defaults?",
-            "This will reset Hook Settings (min / max / duration / "
-            "trigger mode) to the factory defaults. Audio file paths "
-            "stay untouched.\n\nContinue?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if ans != QMessageBox.StandardButton.Yes:
+        if not dialogs.confirm(
+                self, "Reset to defaults?",
+                "This will reset Hook Settings (min / max / duration / "
+                "trigger mode) to the factory defaults. Audio file paths "
+                "stay untouched.\n\nContinue?",
+                yes_label="Reset"):
             return
         try:
             self._db.update_stitcher_config({
@@ -1691,7 +1690,7 @@ class Stitcher(QWidget):
         log.info(
             f"[stitcher] Set Hook clicked for song id={song_id} "
             f"(deep-link to Audio Cue Editor — TODO)")
-        QMessageBox.information(
+        dialogs.info(
             self, "Set Hook",
             "Hook editing happens in the Audio Cue Editor in Songs "
             "Library. Open Songs Library → pick the row → CUE EDIT to "
@@ -1701,7 +1700,7 @@ class Stitcher(QWidget):
 
     def _on_other_module_configure(self, name: str) -> None:
         log.info(f"[stitcher] Configure → {name}")
-        QMessageBox.information(
+        dialogs.info(
             self, "Coming soon",
             f"{name} module configuration lands in a separate "
             f"session.")

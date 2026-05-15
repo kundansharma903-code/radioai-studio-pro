@@ -33,6 +33,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QLabel
 
 from core.database import Database
+from core import dialogs as _dialogs
 
 
 @pytest.fixture
@@ -300,8 +301,7 @@ def test_both_generate_report_and_assign_api_key_land_real(
     qtbot.addWidget(w)
     toast_calls: list[tuple] = []
     from PyQt6.QtWidgets import QMessageBox
-    monkeypatch.setattr(
-        QMessageBox, "information",
+    monkeypatch.setattr(_dialogs, "info",
         lambda parent, title, text: toast_calls.append((title, text)))
     w._on_hub_screen_requested("generate_report")
     assert toast_calls == []

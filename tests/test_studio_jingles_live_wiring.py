@@ -33,6 +33,7 @@ import pytest
 
 from core.database import Database
 from ui.studio import Studio
+from core import dialogs as _dialogs
 
 
 # ── Test doubles ────────────────────────────────────────────────────────
@@ -234,13 +235,13 @@ def test_pads_changed_emits_after_clear_pad(qtbot, db_seeded, engine):
 
     # Bypass the confirmation QMessageBox.
     from PyQt6.QtWidgets import QMessageBox
-    orig = QMessageBox.question
-    QMessageBox.question = staticmethod(
-        lambda *a, **kw: QMessageBox.StandardButton.Yes)
+    orig = _dialogs.confirm
+    _dialogs.confirm = staticmethod(
+        lambda *a, **kw: True)
     try:
         screen._on_clear_pad(seeded["pad_ids"][0])
     finally:
-        QMessageBox.question = orig
+        _dialogs.confirm = orig
 
     assert len(fired) == 1, "pads_changed must fire after clear-pad"
 

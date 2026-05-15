@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import QMessageBox
 
 from core.database import Database
 from ui.dialogs.sweeper_editor_dialog import SweeperEditorDialog
+from core import dialogs as _dialogs
 
 
 # ── Fixtures ────────────────────────────────────────────────────────────────
@@ -211,8 +212,7 @@ def test_position_chip_selection_updates_state(qapp, db):
 def test_save_with_empty_title_is_blocked(qapp, db, monkeypatch):
     """Empty title → QMessageBox.warning, no DB insert, dialog stays open."""
     warnings: list[str] = []
-    monkeypatch.setattr(
-        QMessageBox, "warning",
+    monkeypatch.setattr(_dialogs, "warning",
         lambda *a, **k: warnings.append(a[2] if len(a) > 2 else ""))
     dlg = SweeperEditorDialog(db, sweeper_id=None)
     # Title is empty by default in NEW mode

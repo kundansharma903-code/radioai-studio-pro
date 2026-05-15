@@ -46,6 +46,7 @@ from datetime import datetime
 from typing import Optional
 
 from PyQt6.QtCore import Qt, QRectF, pyqtSignal
+from core import dialogs
 from PyQt6.QtGui import (
     QPainter, QColor, QPen, QBrush, QPainterPath, QFont, QCursor,
     QIntValidator,
@@ -810,14 +811,14 @@ class JingleEditorDialog(BaseDialog):
             self._file_input.setText(path)
 
     def _on_edit_audio_clicked(self):
-        QMessageBox.information(
+        dialogs.info(
             self, "Coming soon",
             "Audio cue editor for jingles is being wired in a follow-up "
             "session — for now, set the file path here and adjust cue "
             "points via the Songs Library audio editor on the source file.")
 
     def _on_ai_autofill(self):
-        QMessageBox.information(
+        dialogs.info(
             self, "Coming soon",
             "AI Auto-fill Metadata will detect category + duration from "
             "the audio file. Hookup deferred — populate fields manually "
@@ -826,7 +827,7 @@ class JingleEditorDialog(BaseDialog):
     def _on_linked_spot_add(self):
         # The campaign-picker dialog is a separate follow-up. Toast for
         # now so the +/- buttons are obviously stubbed without crashing.
-        QMessageBox.information(
+        dialogs.info(
             self, "Coming soon",
             "Linking spots opens a campaign picker — that dialog lands "
             "in a follow-up session. For now, linked-spot edits made "
@@ -840,7 +841,7 @@ class JingleEditorDialog(BaseDialog):
         self._linked_spots.remove_highlighted()
         after = self._linked_spots.linked_campaign_ids()
         if before == after:
-            QMessageBox.information(
+            dialogs.info(
                 self, "No selection",
                 "Click a linked-spot row first, then press −.")
 
@@ -848,7 +849,7 @@ class JingleEditorDialog(BaseDialog):
         data = self._collect_values()
         # Required: title
         if not data["name"]:
-            QMessageBox.warning(
+            dialogs.warning(
                 self, "Missing required field",
                 "Jingle Title is required.")
             if self._title_input:
@@ -862,7 +863,7 @@ class JingleEditorDialog(BaseDialog):
                 new_id = self._db.add_jingle(data)
         except Exception as exc:
             log.error(f"save failed: {exc}", exc_info=True)
-            QMessageBox.critical(
+            dialogs.error(
                 self, "Save failed",
                 f"Could not save jingle:\n\n{exc}")
             return

@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import QLabel
 
 from core.database import Database
 from ui.ai_magic_hub import AIMagicHub, _AIOptionCard
+from core import dialogs as _dialogs
 
 
 @pytest.fixture
@@ -199,8 +200,7 @@ def test_both_ai_magic_modules_land_on_real_screens(qapp, db, qtbot,
     qtbot.addWidget(w)
     toast_calls: list[tuple] = []
     from PyQt6.QtWidgets import QMessageBox
-    monkeypatch.setattr(
-        QMessageBox, "information",
+    monkeypatch.setattr(_dialogs, "info",
         lambda parent, title, text: toast_calls.append((title, text)))
     w._on_hub_screen_requested("spot_on_the_go")
     assert w._stack.currentWidget() is w.spot_on_the_go_shell

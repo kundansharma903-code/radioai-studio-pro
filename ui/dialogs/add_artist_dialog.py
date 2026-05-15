@@ -10,6 +10,7 @@ import logging
 from typing import Optional
 
 from PyQt6.QtCore import Qt, QRectF, pyqtSignal
+from core import dialogs
 from PyQt6.QtGui import (
     QPainter, QColor, QPen, QPainterPath, QFont, QCursor,
 )
@@ -353,7 +354,7 @@ class AddArtistDialog(BaseDialog):
     # ── Behavior ──────────────────────────────────────────────────────────
 
     def _on_ai_autofill(self):
-        QMessageBox.information(
+        dialogs.info(
             self, "AI Auto-fill",
             "AI metadata auto-fill is not yet wired to Claude — coming in a future phase.\n\n"
             "When wired, this will analyze the artist name and auto-detect "
@@ -363,7 +364,7 @@ class AddArtistDialog(BaseDialog):
     def _on_save(self):
         name = self._name_input.text().strip()
         if not name:
-            QMessageBox.warning(self, "Required field", "Please enter the artist name.")
+            dialogs.warning(self, "Required field", "Please enter the artist name.")
             self._name_input.setFocus()
             return
 
@@ -391,12 +392,12 @@ class AddArtistDialog(BaseDialog):
         except Exception as exc:
             # Likely UNIQUE constraint failure
             if "UNIQUE" in str(exc):
-                QMessageBox.warning(
+                dialogs.warning(
                     self, "Artist already exists",
                     f"An artist named '{name}' already exists in the library.",
                 )
             else:
-                QMessageBox.critical(self, "Save failed", f"Could not save artist:\n\n{exc}")
+                dialogs.error(self, "Save failed", f"Could not save artist:\n\n{exc}")
             return
 
         log.info(f"Artist saved: id={artist_id} name='{name}'")

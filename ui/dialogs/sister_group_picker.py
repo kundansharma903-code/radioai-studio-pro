@@ -25,6 +25,7 @@ from typing import Optional
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QCursor, QFont
+from core import dialogs
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QScrollArea, QWidget, QMessageBox,
@@ -355,7 +356,7 @@ class SisterGroupPickerDialog(QDialog):
                     if r.category_id() == cid:
                         r.set_checked(False)
                         break
-                QMessageBox.information(
+                dialogs.info(
                     self, "Maximum reached",
                     f"A sister group can hold at most {GROUP_CAP} "
                     "categories. Uncheck one before selecting another.")
@@ -411,12 +412,12 @@ class SisterGroupPickerDialog(QDialog):
                     self._db.add_category_to_sister_group(
                         self._edit_group_id, cid)
         except ValueError as exc:
-            QMessageBox.warning(
+            dialogs.warning(
                 self, "Save failed", str(exc))
             return
         except Exception as exc:
             log.exception("save failed")
-            QMessageBox.warning(
+            dialogs.warning(
                 self, "Save failed",
                 f"Unexpected error: {exc}")
             return

@@ -33,6 +33,7 @@ import random
 from typing import Optional
 
 from PyQt6.QtCore import Qt, QRect, QRectF, QTimer, pyqtSignal
+from core import dialogs
 from PyQt6.QtGui import (
     QPainter, QColor, QPen, QPainterPath, QFont, QCursor, QLinearGradient,
     QBrush,
@@ -1891,7 +1892,7 @@ class AudioCueEditorDialog(BaseDialog):
                 f"({len(payload)} fields)")
         except Exception as exc:
             log.error(f"[cue-editor] save failed: {exc}")
-            QMessageBox.critical(
+            dialogs.error(
                 self, "Save failed",
                 f"Could not save cue data:\n\n{exc}")
             return

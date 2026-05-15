@@ -11,6 +11,7 @@ import logging
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QCursor, QFont
+from core import dialogs
 from PyQt6.QtWidgets import (
     QWidget, QFrame, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
     QMessageBox,
@@ -144,7 +145,7 @@ class Rebroadcast(QWidget):
             f"border: 1px solid {BORDER}; "
             f"border-radius: 6px; padding: 0 18px; }}"
         )
-        p.clicked.connect(lambda: QMessageBox.information(
+        p.clicked.connect(lambda: dialogs.info(
             self, "Preview", "Preview Recording — Phase F polish."))
         bot.addWidget(p)
         bot.addStretch()
@@ -236,12 +237,12 @@ class Rebroadcast(QWidget):
             f"border-radius: 5px; padding: 0 12px; text-align: left; }}"
             f"QPushButton:hover {{ background: {rgba(color, 0.30)}; }}"
         )
-        b.clicked.connect(lambda: QMessageBox.information(
+        b.clicked.connect(lambda: dialogs.info(
             self, label, f"{label} — Phase F polish."))
         return b
 
     def _on_schedule_stub(self):
-        QMessageBox.information(
+        dialogs.info(
             self, "Schedule Rebroadcast",
             "Schedule Rebroadcast — Phase F polish.\n\n"
             "Will record the live On-Air feed for the chosen window and "

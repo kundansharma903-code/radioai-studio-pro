@@ -47,6 +47,7 @@ from pathlib import Path
 from typing import Optional, List
 
 from PyQt6.QtCore import Qt, QRectF, QTimer, pyqtSignal
+from core import dialogs
 from PyQt6.QtGui import (
     QPainter, QColor, QPen, QBrush, QLinearGradient, QFont, QCursor,
 )
@@ -1060,7 +1061,7 @@ class FinalLog(QWidget):
         try:
             Path(path).write_text(text, encoding="utf-8")
         except Exception as exc:
-            QMessageBox.warning(self, "Save Failed",
+            dialogs.warning(self, "Save Failed",
                                 f"Could not write log file:\n{exc}")
             return
         self._status.set_status(
@@ -1100,7 +1101,7 @@ class FinalLog(QWidget):
         return "\n".join(lines)
 
     def _on_print_clicked(self) -> None:
-        QMessageBox.information(
+        dialogs.info(
             self, "Print Log",
             "Print Log — coming in v1.1.\n\n"
             "For now use DOWNLOAD .TXT and print the saved file from "

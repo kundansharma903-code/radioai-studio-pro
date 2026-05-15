@@ -25,6 +25,7 @@ from datetime import date as ddate, datetime, timedelta
 from typing import Optional
 
 from PyQt6.QtCore import Qt, QDate, QRectF, QTimer, pyqtSignal
+from core import dialogs
 from PyQt6.QtGui import (
     QPainter, QColor, QPen, QBrush, QLinearGradient, QRadialGradient,
     QFont, QCursor,
@@ -893,13 +894,13 @@ class SOTGGenerateReport(QWidget):
                 include_pending=self._include_pending,
             )
         except SOTGDailyReportError as exc:
-            QMessageBox.warning(
+            dialogs.warning(
                 self, "Generate Report",
                 f"Couldn't generate the report:\n\n{exc}")
             return
         except Exception as exc:
             log.exception("PDF generation failed")
-            QMessageBox.warning(
+            dialogs.warning(
                 self, "Generate Report",
                 f"Unexpected error while generating the report:\n\n{exc}")
             return
@@ -909,7 +910,7 @@ class SOTGGenerateReport(QWidget):
             os.startfile(str(path))   # type: ignore[attr-defined]
         except Exception as exc:
             log.warning(f"os.startfile failed: {exc}")
-            QMessageBox.information(
+            dialogs.info(
                 self, "Generate Report",
                 f"PDF generated:\n\n{path}\n\nCouldn't open viewer "
                 "automatically — open it from File Explorer.")

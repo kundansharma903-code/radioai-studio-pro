@@ -59,6 +59,7 @@ import json
 import logging
 import math
 from typing import Optional, Literal
+from core import dialogs
 
 from PyQt6.QtCore import (
     Qt, QRect, QRectF, QPoint, QPointF, QSize, QTimer, pyqtSignal, QEvent,
@@ -2076,7 +2077,7 @@ class ClockEditor(QWidget):
             pass
 
     def _on_backup_clicked(self) -> None:
-        QMessageBox.information(
+        dialogs.info(
             self, "Backup Song Filter",
             "Filter picker — coming soon.\n\n"
             "For now the clock's backup filter is recorded as "
@@ -2097,7 +2098,7 @@ class ClockEditor(QWidget):
         err = self._validate_for_save()
         if err:
             self._editor.set_status("error", err)
-            QMessageBox.warning(self, "Cannot save", err)
+            dialogs.warning(self, "Cannot save", err)
             return
         new_id = self._save()
         if new_id is None:
@@ -2123,7 +2124,7 @@ class ClockEditor(QWidget):
                 self._db.save_clock(target_id, meta_payload)
             except Exception as exc:
                 log.warning(f"save_clock failed: {exc}")
-                QMessageBox.warning(self, "Save failed", str(exc))
+                dialogs.warning(self, "Save failed", str(exc))
                 return None
         else:
             # NEW or DUPLICATE — create a fresh row, then save the rest.
@@ -2132,7 +2133,7 @@ class ClockEditor(QWidget):
                 self._db.save_clock(target_id, meta_payload)
             except Exception as exc:
                 log.warning(f"create_clock failed: {exc}")
-                QMessageBox.warning(self, "Save failed", str(exc))
+                dialogs.warning(self, "Save failed", str(exc))
                 return None
         # Slots — atomic replace
         slots = self._elements_to_slot_payload(self._elements)
@@ -2140,7 +2141,7 @@ class ClockEditor(QWidget):
             self._db.save_clock_slots(target_id, slots)
         except Exception as exc:
             log.warning(f"save_clock_slots failed: {exc}")
-            QMessageBox.warning(self, "Save failed",
+            dialogs.warning(self, "Save failed",
                                 f"Slot save failed: {exc}")
             return None
         log.info(f"[clock_editor] saved clock {target_id} "
@@ -2188,15 +2189,11 @@ class ClockEditor(QWidget):
 
     def _cancel_then_route(self, route: str) -> None:
         if self._dirty:
-            box = QMessageBox(self)
-            box.setWindowTitle("Discard changes?")
-            box.setText(
-                "You have unsaved changes. Discard and leave the editor?")
-            box.setStandardButtons(
-                QMessageBox.StandardButton.Yes
-                | QMessageBox.StandardButton.Cancel)
-            box.setDefaultButton(QMessageBox.StandardButton.Cancel)
-            if box.exec() != QMessageBox.StandardButton.Yes:
+            if not dialogs.confirm(
+                    self, "Discard changes?",
+                    "You have unsaved changes. Discard and leave "
+                    "the editor?",
+                    danger=True, yes_label="Discard"):
                 return
         self._dirty = False
         self.screen_requested.emit(route)
