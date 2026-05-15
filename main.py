@@ -135,45 +135,48 @@ def main():
     app.setApplicationName("RadioAI Studio Pro")
     app.setApplicationVersion("2.0.0")
     app.setOrganizationName("RadioAI")
+    # High-DPI: PyQt6 enables it by default — no extra flags needed.
 
-    # High-DPI
-    # (PyQt6 enables high-DPI by default — no extra flags needed)
+    # 4. Splash screen — shown immediately, before any heavy init.
+    # Stays visible through every init step below; status text +
+    # progress bar update as each step completes; fades out + closes
+    # when MainWindow.show() is called.
+    from ui.splash import RadioAISplash
+    splash = RadioAISplash(total_steps=8)
+    splash.show_animated()
 
-    # 4a. Fonts (must be loaded BEFORE stylesheet so fontDatabase is ready)
-    n_fonts = load_fonts()
-    log.info(f"Fonts registered: {n_fonts}")
-    verify_inter_weights()
+    # Per-step dwell — DB / Settings / BASS init each complete in
+    # <100ms on a modern machine, so without artificial dwell the
+    # splash flashes past in ~2s and the operator can't read any
+    # of the status messages. We target a ~10s total splash window,
+    # which gives the operator enough time to read each message +
+    # see the progress bar fill smoothly. Dwell uses a local
+    # QEventLoop — animations keep running, no thread block.
+    STEP_DWELL_MS = 1000
 
-    # 4b. Stylesheet
-    load_stylesheet(app)
-
-    # 5. BASS audio engine
-    if not bass_init():
-        log.warning("BASS audio init failed — playback will be unavailable")
-    else:
-        log.info("BASS audio ready")
-
-    # 6. Database
+    # ── Step 1: Connecting to database ───────────────────────────────
+    splash.set_status("Connecting to database...", step=1)
+    splash.dwell(STEP_DWELL_MS)
     db = Database()
     db_ok = db.verify()
     song_count = 0
     if db_ok:
         try:
-            rows = db._conn().execute("SELECT COUNT(*) FROM songs").fetchone()
+            rows = db._conn().execute(
+                "SELECT COUNT(*) FROM songs").fetchone()
             song_count = rows[0] if rows else 0
         except Exception:
             pass
-        # Auto-schedule persistence audit log — confirms the grid
-        # assignments survived the previous session. Operator can see
-        # at a glance how many cells are populated and which clock is
-        # assigned to the current (weekday, hour) cell.
+        # Auto-schedule audit log
         try:
             from datetime import datetime as _dt
             now = _dt.now()
             grid = db.get_auto_schedule_grid()
-            row = db.get_active_clock(int(now.weekday()), int(now.hour))
+            row = db.get_active_clock(int(now.weekday()),
+                                       int(now.hour))
             active = (f"clock id={row['id']} name={row['name']!r}"
-                      if row is not None else "(no clock assigned)")
+                      if row is not None
+                      else "(no clock assigned)")
             log.info(
                 f"Auto-schedule grid: {len(grid)} cells assigned · "
                 f"current cell (weekday={now.weekday()}, "
@@ -183,11 +186,69 @@ def main():
     else:
         log.error("Database verification failed — launching anyway")
 
-    # 7. Settings
+    # ── Step 2: Loading settings ─────────────────────────────────────
+    splash.set_status("Loading settings...", step=2)
+    splash.dwell(STEP_DWELL_MS)
     settings = Settings()
     settings.load(db)
+    # Fonts (must be loaded before stylesheet so fontDatabase is ready)
+    n_fonts = load_fonts()
+    log.info(f"Fonts registered: {n_fonts}")
+    verify_inter_weights()
+    load_stylesheet(app)
 
-    # 8. Main window
+    # ── Step 3: Initializing audio engine ────────────────────────────
+    splash.set_status("Initializing audio engine...", step=3)
+    splash.dwell(STEP_DWELL_MS)
+    if not bass_init():
+        log.warning(
+            "BASS audio init failed — playback will be unavailable")
+    else:
+        log.info("BASS audio ready")
+
+    # ── Step 4: Querying audio devices ───────────────────────────────
+    splash.set_status("Querying audio devices...", step=4)
+    splash.dwell(STEP_DWELL_MS)
+    # BASS itself handles device discovery during bass_init above.
+    # This step exists to acknowledge it on the splash UI for the
+    # operator + leaves a hook for richer device introspection later.
+    log.info("Audio device subsystem ready (handled by BASS)")
+
+    # ── Step 5: Loading clocks and schedules ─────────────────────────
+    splash.set_status("Loading clocks and schedules...", step=5)
+    splash.dwell(STEP_DWELL_MS)
+    try:
+        clock_count = db._conn().execute(
+            "SELECT COUNT(*) FROM clocks WHERE is_active=1"
+        ).fetchone()[0]
+        slot_count = db._conn().execute(
+            "SELECT COUNT(*) FROM clock_slots").fetchone()[0]
+        log.info(f"Clocks: {clock_count} active · "
+                 f"clock_slots: {slot_count}")
+    except Exception as exc:
+        log.warning(f"clock count preload failed: {exc}")
+
+    # ── Step 6: Loading songs library ────────────────────────────────
+    splash.set_status("Loading songs library...", step=6)
+    splash.dwell(STEP_DWELL_MS)
+    try:
+        cat_count = db._conn().execute(
+            "SELECT COUNT(*) FROM categories").fetchone()[0]
+        log.info(f"Songs library: {song_count} songs · "
+                 f"{cat_count} categories")
+    except Exception as exc:
+        log.warning(f"songs library preload failed: {exc}")
+
+    # ── Step 7: Preparing AI engine ──────────────────────────────────
+    splash.set_status("Preparing AI engine...", step=7)
+    splash.dwell(STEP_DWELL_MS)
+    # Rotation AI engine + SOTG transcription engine are constructed
+    # inside MainWindow's __init__ — splash text accurately reflects
+    # the work the next step is about to do.
+
+    # ── Step 8: Starting Studio ──────────────────────────────────────
+    splash.set_status("Starting Studio...", step=8)
+    splash.dwell(STEP_DWELL_MS)
     from ui.main_window import MainWindow
     window = MainWindow(db_ok=db_ok, song_count=song_count, db=db)
     if "--maximized" in sys.argv:
@@ -196,9 +257,12 @@ def main():
     else:
         window.show()
         log.info(
-            f"Window shown — outer={window.width()}x{window.height()}  "
-            f"client={window.centralWidget().width()}x{window.centralWidget().height()}"
-        )
+            f"Window shown — outer={window.width()}x{window.height()}"
+            f"  client={window.centralWidget().width()}x"
+            f"{window.centralWidget().height()}")
+
+    # Fade out the splash + transfer focus to the main window
+    splash.finish_animated(window)
 
     # 9. Event loop
     exit_code = app.exec()
