@@ -168,11 +168,29 @@ def test_mark_missed_stamps_status(db, seeded_show):
 
 @pytest.fixture
 def synthetic_assignment(tmp_path):
-    """A SOTG assignment dict with a sharp_time set to the current
-    minute + a real on-disk file the engine fake can 'load'."""
+    """A SOTG assignment dict with a sharp_time set within the
+    dispatcher's ±30s fire window + a real on-disk file the engine
+    fake can 'load'.
+
+    Phase H fix for a pre-existing wall-clock-timing flake: the
+    earlier version stamped ``sharp_time = "HH:MM"`` using the
+    fixture-construction minute. The dispatcher computes
+    ``delta_s = (target_m - now_m) * 60 - now.second`` and only fires
+    when ``abs(delta_s) <= 30``. If the fixture ran at second > 30 of
+    a minute, delta_s landed at -31..-59 — outside the fire window AND
+    short of the miss threshold (-60) — so the test silently failed
+    with ``eng.calls == []``. The bug presented as a heisenbug because
+    adding ``--log-cli-level=DEBUG`` shifted timings enough to land
+    inside the window.
+
+    The fix: pick a target minute guaranteed to be within ±30s by
+    rounding to ``now + 30s`` (so we're at most 30s in the past, at
+    most 30s in the future). Tests that need explicit past/far-future
+    times still override ``sharp_time`` directly."""
     f = tmp_path / "sotg_test.mp3"
     f.write_bytes(b"\x00" * 256)
     now = datetime.now()
+    target = now + timedelta(seconds=30)
     return {
         "assignment_id":   123,
         "show_id":         1,
@@ -181,7 +199,7 @@ def synthetic_assignment(tmp_path):
         "file_path":       str(f),
         "file_name":       f.name,
         "file_duration_ms": 60_000,
-        "sharp_time":      f"{now.hour:02d}:{now.minute:02d}",
+        "sharp_time":      f"{target.hour:02d}:{target.minute:02d}",
         "priority":        "High",
         "status":          "READY",
         "link_order":      1,

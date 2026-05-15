@@ -55,14 +55,33 @@ class _AutoScheduleEnv:
 
     def cleanup(self) -> None:
         # Clear any auto_schedule cells our clocks were assigned to —
-        # delete_clock cascades but be paranoid about partial-delete state
+        # delete_clock cascades but be paranoid about partial-delete state.
+        #
+        # Phase H fix: previously, if delete_clock raised ValueError
+        # ("cannot delete the last remaining clock"), the test clock
+        # leaked permanently into the live dev DB (we observed
+        # "_test_autosched_*_cascade" rows surviving prior runs). The
+        # business rule against deleting the LAST clock doesn't apply
+        # to test data — we know these are throwaway. Fall back to a
+        # direct SQL delete for that specific ValueError case.
+        conn = self.db._conn()
         for cid in list(self.created_clock_ids):
             try:
                 self.db.delete_clock(int(cid))
             except ValueError:
-                # "cannot delete the last remaining clock" — leave it,
-                # the next run's first clock CRUD will fix the count
-                pass
+                # "last remaining clock" guard — bypass for test data.
+                try:
+                    conn.execute(
+                        "DELETE FROM auto_schedule WHERE clock_id = ?",
+                        [int(cid)])
+                    conn.execute(
+                        "DELETE FROM clock_slots WHERE clock_id = ?",
+                        [int(cid)])
+                    conn.execute(
+                        "DELETE FROM clocks WHERE id = ?", [int(cid)])
+                    conn.commit()
+                except Exception:
+                    pass
             except Exception:
                 pass
         # Restore mode

@@ -192,16 +192,15 @@ def test_main_window_ai_magic_card_routes_to_shell(
     w.deleteLater()
 
 
-def test_only_assign_api_key_card_still_toasts(
+def test_all_four_step_cards_route_to_real_screens(
         qapp, db, qtbot, monkeypatch):
-    """Updated 2026-05-14 evening — three of four step cards are now
-    real screens (Create Schedule, Assign, Generate Report). Only
-    Assign API Key remains a placeholder toast until that screen
-    ships in a follow-up session.
+    """Updated 2026-05-15 — all four SOTG step cards now route to real
+    screens (Create Schedule, Assign, Generate Report, Assign API Key).
+    No card should produce a "coming soon" toast anymore.
 
-    Original assertion expected all four cards to toast — already
-    stale at HEAD `859ba7b` (Create Schedule + Assign had landed);
-    corrected together with the Generate Report build."""
+    Renamed from test_only_assign_api_key_card_still_toasts after
+    Phase F shipped the Assign API Key screen (Figma 503:3) +
+    Transcription Engine, closing the last placeholder."""
     from ui import main_window as mw_mod
     monkeypatch.setattr(mw_mod.MainWindow, "_apply_startup_auto_mode",
                          lambda self: None)
@@ -219,7 +218,7 @@ def test_only_assign_api_key_card_still_toasts(
     titles = [t for t, _ in toast_calls]
     assert "Create Schedule" not in titles    # real screen
     assert "Assign" not in titles              # real screen
-    assert "Generate Report" not in titles    # real screen (this build)
-    assert "Assign API Key" in titles          # still a toast
+    assert "Generate Report" not in titles    # real screen
+    assert "Assign API Key" not in titles      # real screen (Phase F)
     w.close()
     w.deleteLater()

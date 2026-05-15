@@ -628,6 +628,19 @@ class MainWindow(QMainWindow):
             # needs to be written).
             QTimer.singleShot(2000, self._check_sotg_midnight_save)
 
+            # Rotation AI · 5 PM auto-apply safety net (operator's Q7
+            # Phase 2 contract). If the operator never approves or
+            # discards today's rotation plan before 5 PM, the engine
+            # auto-applies it so Studio's afternoon broadcast still
+            # benefits from Time-Slot Freshness. Ticks every 60s,
+            # idempotent via Settings sentinel "last_rotation_auto_apply_date".
+            self._rotation_auto_apply_timer = QTimer(self)
+            self._rotation_auto_apply_timer.setInterval(60_000)
+            self._rotation_auto_apply_timer.timeout.connect(
+                self._check_ai_rotation_auto_apply)
+            self._rotation_auto_apply_timer.start()
+            QTimer.singleShot(3000, self._check_ai_rotation_auto_apply)
+
             # Start the Rotation AI engine — hourly tick continuous
             # rotation balancing. Wire the SchedulerEngine to consult
             # rotation decisions before its native random+separation
@@ -1237,6 +1250,55 @@ class MainWindow(QMainWindow):
                 pass
             self._stack.setCurrentWidget(
                 self.scheduling_automation_hub)
+
+    def _check_ai_rotation_auto_apply(self) -> None:
+        """60s tick — at or after 17:00 (5 PM), auto-apply today's
+        rotation plan if the operator hasn't yet approved or discarded
+        it. Operator's Q7 Phase 2 safety net: "walk away" path —
+        Daily Plan Review's preview gate doesn't block the afternoon
+        broadcast if the operator never opens the screen.
+
+        Idempotent via the Settings sentinel "last_rotation_auto_apply_date".
+        Only flips status from 'pending' → 'auto_applied' — never
+        overrides an already-approved or already-discarded plan."""
+        try:
+            from datetime import datetime as _dt, date as _ddate
+            from core.settings import Settings as _Settings
+            now = _dt.now()
+            if now.hour < 17:
+                return    # too early
+            today = _ddate.today().isoformat()
+            sent_key = "last_rotation_auto_apply_date"
+            stamped = _Settings().get(sent_key, "") or ""
+            if stamped == today:
+                return    # already auto-applied (or attempted) today
+            plan = self._db.get_ai_rotation_plan(today)
+            if not plan:
+                return    # engine hasn't ticked today
+            status = (plan.get("status") or "").lower()
+            if status != "pending":
+                # Operator already decided (approved/discarded) or
+                # auto-applied — stamp the sentinel so we don't poll
+                # forever today, then return.
+                _Settings().set(sent_key, today)
+                return
+            self._db.mark_ai_rotation_plan_auto_applied(today)
+            _Settings().set(sent_key, today)
+            log.info(
+                f"[rotation-ai] 5 PM auto-apply fired — plan {today} "
+                f"flipped pending → auto_applied")
+            # Refresh visible Rotation Health / Hub screens
+            for attr in ("rotation_health",
+                          "scheduling_automation_hub",
+                          "scheduling_daily_plan_review"):
+                screen = getattr(self, attr, None)
+                if screen is not None and hasattr(screen, "refresh"):
+                    try:
+                        screen.refresh()
+                    except Exception:
+                        pass
+        except Exception as exc:
+            log.warning(f"rotation auto-apply check failed: {exc}")
 
     def _check_sotg_midnight_save(self) -> None:
         """60s tick — at 23:59 (or any time on the morning after if we

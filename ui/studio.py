@@ -6228,8 +6228,11 @@ class Studio(QWidget):
     # ────────────────────────────────────────────────────────────────────
 
     def _on_control_panel(self) -> None:
-        # Premium pattern + legacy back-compat
-        self.screen_requested.emit("scheduling_hub")
+        # Routes back to ControlPanel via the MainWindow breadcrumb
+        # dispatcher (which already handles "control_panel"). The
+        # earlier dual emit of screen_requested("scheduling_hub") was
+        # a zombie — nothing on MainWindow listens for it — so we
+        # rely solely on breadcrumb_clicked.
         self.breadcrumb_clicked.emit("control_panel")
 
     def _on_settings(self) -> None:

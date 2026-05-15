@@ -214,11 +214,32 @@ class RotationAIEngine(QObject):
     def _on_thread_started(self) -> None:
         """Runs on the engine thread. Create the timer here so it
         lives on this thread + fires one initial tick after the boot
-        delay so the operator sees a plan quickly on first launch."""
-        self._timer = QTimer()
-        self._timer.setInterval(self._tick_interval_ms)
-        self._timer.timeout.connect(self._on_tick)
-        self._timer.start()
+        delay so the operator sees a plan quickly on first launch.
+
+        Phase H fix: previously a race could fire when the MainWindow
+        tore the engine down (via stop()) before this slot finished —
+        stop() set self._timer = None mid-flight, and our subsequent
+        self._timer.start() crashed with AttributeError. Now we build
+        the timer in a local variable, take the lock once to publish
+        + check the running flag, and use the local for .start() so
+        a concurrent stop() can no-op cleanly. Surfaces in test
+        environments where MainWindow + engine are stood up and torn
+        down rapidly; was theoretically possible during app shutdown."""
+        t = QTimer()
+        t.setInterval(self._tick_interval_ms)
+        t.timeout.connect(self._on_tick)
+        with self._lock:
+            if not self._running:
+                # stop() already ran — abandon the timer (it never
+                # got assigned to self, so it'll be GC'd) and skip
+                # the started signal so listeners don't see a stale ON
+                # state right after they asked for OFF.
+                log.debug(
+                    "rotation engine: _on_thread_started saw "
+                    "_running=False (stop() raced ahead) — bailing")
+                return
+            self._timer = t
+        t.start()
         # First tick fires on a short delay so engine has time to
         # initialize without blocking the UI
         QTimer.singleShot(self.BOOT_DELAY_MS, self._on_tick)

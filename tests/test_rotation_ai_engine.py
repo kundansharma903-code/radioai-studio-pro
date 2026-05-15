@@ -702,19 +702,34 @@ def test_engine_tick_handles_db_error_without_crashing(qapp, db,
                                                           monkeypatch):
     """Force compute_plan_for_date to raise — engine state must flip
     to ERROR, error_occurred signal must fire, but engine stays
-    instantiated (no exception escapes _on_tick)."""
-    from core.rotation_ai_engine import RotationAIEngine, STATE_ERROR
+    instantiated (no exception escapes _on_tick).
+
+    Phase H fix: the engine writes the error message into the
+    ``rotation_ai_last_error`` Settings sentinel. Previously this
+    test leaked "tick failed: RuntimeError: simulated DB hiccup"
+    into the live dev DB after teardown, which then made the Hub's
+    engine status pill render ERROR after any test run. We now
+    explicitly reset the sentinel on teardown."""
+    from core.rotation_ai_engine import (
+        RotationAIEngine, STATE_ERROR, KEY_LAST_ERROR,
+    )
+    from core.settings import Settings
     eng = RotationAIEngine(db=db)
     def boom(self_, plan_date):
         raise RuntimeError("simulated DB hiccup")
     monkeypatch.setattr(RotationAIEngine, "compute_plan_for_date", boom)
     errors: list[str] = []
     eng.error_occurred.connect(errors.append)
-    # _on_tick wraps in try/except — should not raise
-    eng._on_tick()
-    assert eng.state() == STATE_ERROR
-    assert errors, "error_occurred signal never fired"
-    assert "simulated" in errors[0].lower()
+    try:
+        # _on_tick wraps in try/except — should not raise
+        eng._on_tick()
+        assert eng.state() == STATE_ERROR
+        assert errors, "error_occurred signal never fired"
+        assert "simulated" in errors[0].lower()
+    finally:
+        # Reset the sentinel so we don't bleed test error state
+        # into the live dev DB.
+        Settings().set(KEY_LAST_ERROR, "")
 
 
 def test_engine_tick_skipped_when_disabled(qapp, db, monkeypatch):
