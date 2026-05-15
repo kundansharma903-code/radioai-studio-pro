@@ -92,20 +92,27 @@ def _ensure_fonts_loaded() -> None:
 # ── Public API ─────────────────────────────────────────────────────────────
 
 def _resolve_default_dir() -> Path:
-    """Project-root anchored:  E:\\RadioAI_v2\\reports\\sotg\\
+    """Resolve where the SOTG daily PDF reports are written.
 
-    Operator preference (2026-05-14 briefing): visible folder inside the
-    project root, not a hidden %LOCALAPPDATA% path. Falls back to
-    ~/Documents/RadioAI/sotg if the project root isn't writable for some
-    reason (read-only CD, permissions, etc.)."""
+    Order of preference:
+      1. Phase L professional folder:
+         %LOCALAPPDATA%\\RadioAI Studio Pro\\Reports\\sotg\\
+         — the canonical install-shipped location used in
+         production after Phase M packaging.
+      2. Project-root anchored ``<project>/reports/sotg/`` —
+         dev convenience so the operator can grab PDFs from the
+         project folder during development without digging into
+         AppData.
+      3. ``~/Documents/RadioAI/sotg/`` — last-ditch fallback if
+         the user has no write access elsewhere (read-only CD,
+         locked-down workstation)."""
+    from core.paths import REPORTS_DIR
     here = Path(__file__).resolve()
     project_root = here.parent.parent.parent     # core/reports/.. → project
     candidates = [
+        REPORTS_DIR / "sotg",
         project_root / "reports" / "sotg",
         Path(os.path.expanduser("~")) / "Documents" / "RadioAI" / "sotg",
-        Path(os.environ.get("LOCALAPPDATA",
-                            os.path.expanduser("~/AppData/Local"))
-             ) / "RadioAI" / "reports" / "sotg",
     ]
     for c in candidates:
         try:

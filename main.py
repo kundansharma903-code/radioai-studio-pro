@@ -186,6 +186,16 @@ def main():
     # ── Step 1: Connecting to database ───────────────────────────────
     splash.set_status("Connecting to database...", step=1)
     splash.dwell(STEP_DWELL_MS)
+    # Phase L: migrate legacy %LOCALAPPDATA%\RadioAI\radioai.db to
+    # the new professional %LOCALAPPDATA%\RadioAI Studio Pro\
+    # Database\radioai.db location if needed. No-op after the first
+    # successful run. Safe — uses copy (not move), so the legacy
+    # DB is preserved as a backup.
+    from core.paths import migrate_legacy_database
+    if migrate_legacy_database():
+        log.info(
+            "[boot] legacy database migrated to new professional "
+            "folder layout. Old file preserved as backup.")
     db = Database()
     db_ok = db.verify()
     song_count = 0

@@ -118,13 +118,16 @@ def _resolve_default_dir() -> Path:
     last resort (matches the legacy save location)."""
     # Windows: %USERPROFILE%\Downloads
     user = os.environ.get("USERPROFILE") or os.path.expanduser("~")
+    from core.paths import REPORTS_DIR as _CANON_REPORTS_DIR
     candidates = [
         Path(user) / "Downloads" / "RadioAI Reports",
         Path(user) / "Downloads",
         Path(user) / "Documents" / "RadioAI Reports",
-        Path(os.environ.get("LOCALAPPDATA",
-                            os.path.expanduser("~/AppData/Local"))
-             ) / "RadioAI" / "reports",
+        # Phase L: professional install layout — last in the
+        # fallback chain because the operator preference is
+        # Downloads (above); but a locked-down profile without
+        # a writable Downloads folder still resolves cleanly.
+        _CANON_REPORTS_DIR / "spot_play",
     ]
     for c in candidates:
         try:

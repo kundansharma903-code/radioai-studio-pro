@@ -71,9 +71,16 @@ SAME_SLOT_DAYS       = 3   # Song won't play same hour for 3 days
 AD_LIMIT_MINS        = 15  # Max ad minutes per hour
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-_appdata = os.environ.get("LOCALAPPDATA", os.path.expanduser("~"))
-DB_PATH  = os.path.join(_appdata, "RadioAI", "radioai.db")
-LOG_PATH = os.path.join(_appdata, "RadioAI", "logs")
+# Phase L (2026-05-15): paths centralised in core/paths.py. The
+# legacy %LOCALAPPDATA%\RadioAI\ flat layout migrated to the
+# professional %LOCALAPPDATA%\RadioAI Studio Pro\ hierarchy with
+# Database / Logs / Reports / Cache subfolders. Imports here are
+# re-exports — keeps every existing ``from core.constants import
+# DB_PATH'' callsite working without changes.
+from core.paths import DB_PATH as _DB_PATH, LOG_PATH as _LOG_PATH
+
+DB_PATH  = str(_DB_PATH)     # core/database.py expects a str path
+LOG_PATH = str(_LOG_PATH)    # core/logger.py joins with "radioai.log"
 
 # ── UI Geometry ───────────────────────────────────────────────────────────────
 HEADER_H    = 44
