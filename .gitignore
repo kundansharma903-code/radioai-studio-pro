@@ -78,3 +78,6 @@ design_refs/figma_*.png
 
 # SQLite journal (in addition to .db-wal / .db-shm above)
 *.db-journal
+
+# Inno Setup installer output
+/installer/
