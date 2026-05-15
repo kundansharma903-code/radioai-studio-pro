@@ -128,6 +128,23 @@ class SchedulerEngine(QObject):
         self._active_clock_id: Optional[int] = None
         self._active_clock_name: str = ""
 
+        # Phase E5: Rotation AI engine handle. Set via
+        # set_rotation_engine() from MainWindow at boot. When non-None
+        # AND today's plan is approved/auto_applied, _pick_song
+        # consults rotation_engine.pick_song_for_clock() BEFORE
+        # falling back to native random + separation logic (operator's
+        # Q4 = (b) safe fallback when AI off or rejected).
+        self._rotation_engine = None
+        # Per-pick context — set at the top of pick_next_item so
+        # _pick_song can read them without changing the picker signature
+        self._current_pick_clock_id: Optional[int] = None
+        self._current_pick_hour: Optional[int] = None
+
+    def set_rotation_engine(self, engine) -> None:
+        """Install a RotationAIEngine handle. Pass None to detach
+        (reverts to native random + separation pick)."""
+        self._rotation_engine = engine
+
     # ── Lifecycle ─────────────────────────────────────────────────────────
 
     def is_running(self) -> bool:
@@ -457,6 +474,12 @@ class SchedulerEngine(QObject):
         if not slots:
             return None
 
+        # Phase E5: stash per-pick context so _pick_song can consult
+        # the rotation engine (which needs clock_id + hour)
+        self._current_pick_clock_id = int(clock_id)
+        self._current_pick_hour     = int(hour)
+        self._current_pick_now      = now
+
         n = len(slots)
         cursor = int(getattr(self, "_clock_slot_cursor", 0)) % n
         for offset in range(n):
@@ -641,9 +664,43 @@ class SchedulerEngine(QObject):
         if fj:
             songs = self._songs_matching_filter_json(fj)
 
+        # 3.5) Phase E5 — Rotation AI consult. Only fires when:
+        #      • rotation_engine is set (MainWindow installed it)
+        #      • slot has a category_id (eligible for sister pooling)
+        #      • no filter_json + no specific_song / specific_artist (those
+        #        are operator pins — AI must not override)
+        #      • engine reports is_enabled (Settings toggle ON)
+        #      • today's plan is approved or auto_applied (operator
+        #        gave the green light, OR 5-PM safety net fired)
+        category_id = self._slot_category_id(slot)
+        if (not songs and category_id is not None
+                and self._rotation_engine is not None):
+            try:
+                if self._rotation_engine.is_enabled():
+                    from datetime import date as _date
+                    today = _date.today().isoformat()
+                    plan = self._db.get_ai_rotation_plan(today)
+                    if plan and plan.get("status") in (
+                            "approved", "auto_applied"):
+                        ai_pick = self._rotation_engine.pick_song_for_clock(
+                            clock_id=int(self._current_pick_clock_id or 0),
+                            hour=int(self._current_pick_hour or 0),
+                            primary_category_id=int(category_id),
+                            now=self._current_pick_now)
+                        if ai_pick:
+                            log.info(
+                                f"[scheduler] rotation AI pick "
+                                f"song_id={ai_pick.get('id')} "
+                                f"clock={self._current_pick_clock_id} "
+                                f"hour={self._current_pick_hour}")
+                            return self._song_row_to_item(dict(ai_pick))
+            except Exception as exc:
+                log.debug(
+                    f"_pick_song: rotation AI consult failed: {exc} "
+                    f"— falling back to random + separation")
+
         # 4) legacy category-based path
         if not songs:
-            category_id = self._slot_category_id(slot)
             energy = slot["energy_pref"] if "energy_pref" in slot.keys() else None
             vocal  = slot["vocal_pref"]  if "vocal_pref"  in slot.keys() else None
             try:

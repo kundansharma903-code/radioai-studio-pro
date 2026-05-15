@@ -78,6 +78,17 @@ class MainWindow(QMainWindow):
         self._transcription_engine = SOTGTranscriptionEngine(
             db=self._db, parent=self)
 
+        # AI Magic · Rotation AI Engine — QThread worker implementing
+        # Time-Slot Freshness. Ticks every hour, pre-computes today's
+        # song-rotation plan into ai_rotation_decisions. SchedulerEngine
+        # consults its pick_song_for_clock() before falling back to
+        # native random + separation (Phase E.5 wiring below). Engine
+        # auto-starts but obeys Settings KEY_ENGINE_ENABLED — operator
+        # can flip OFF from the Hub's Stop button anytime.
+        from core.rotation_ai_engine import RotationAIEngine
+        self._rotation_engine = RotationAIEngine(
+            db=self._db, parent=self)
+
         # Phase B5: aboutToQuit safety net. Fires on app force-quit, OS
         # shutdown, or any path that bypasses closeEvent. cleanup_all is
         # idempotent so the dual-hook is cheap.
@@ -454,6 +465,48 @@ class MainWindow(QMainWindow):
                 self._on_studio_clicked)
             self._stack.addWidget(self.sotg_assign_api_key)
 
+            # AI Magic · Scheduling Automation Hub (Figma 511:3).
+            # Phase E live wiring — passes the RotationAIEngine handle
+            # so the hub renders live engine state + reacts to
+            # tick_completed / engine_state_changed signals.
+            from ui.scheduling_automation_hub import SchedulingAutomationHub
+            self.scheduling_automation_hub = SchedulingAutomationHub(
+                db=self._db, engine=self._rotation_engine)
+            self.scheduling_automation_hub.screen_requested.connect(
+                self._on_hub_screen_requested)
+            self.scheduling_automation_hub.studio_clicked.connect(
+                self._on_studio_clicked)
+            self.scheduling_automation_hub.review_plan_clicked.connect(
+                lambda: self._on_hub_screen_requested(
+                    "review_daily_plan"))
+            # Phase B mocks for button clicks (toast on action)
+            self.scheduling_automation_hub.refresh_engine_clicked.connect(
+                self._on_sched_ai_refresh)
+            self.scheduling_automation_hub.stop_engine_clicked.connect(
+                self._on_sched_ai_stop)
+            self.scheduling_automation_hub.create_group_clicked.connect(
+                self._on_sched_ai_create_group)
+            self.scheduling_automation_hub.edit_group_clicked.connect(
+                self._on_sched_ai_edit_group)
+            self.scheduling_automation_hub.ungroup_clicked.connect(
+                self._on_sched_ai_ungroup)
+            self._stack.addWidget(self.scheduling_automation_hub)
+
+            # AI Magic · Scheduling Daily Plan Review (Figma 512:2).
+            # Approval gate for rotation AI's daily plan.
+            from ui.scheduling_daily_plan_review import SchedulingDailyPlanReview
+            self.scheduling_daily_plan_review = SchedulingDailyPlanReview(
+                db=self._db)
+            self.scheduling_daily_plan_review.screen_requested.connect(
+                self._on_hub_screen_requested)
+            self.scheduling_daily_plan_review.studio_clicked.connect(
+                self._on_studio_clicked)
+            self.scheduling_daily_plan_review.approve_clicked.connect(
+                self._on_sched_ai_approve)
+            self.scheduling_daily_plan_review.discard_clicked.connect(
+                self._on_sched_ai_discard)
+            self._stack.addWidget(self.scheduling_daily_plan_review)
+
             # Studio Single Deck — broadcast operator workstation (Figma 182:2)
             # Phase D1: skeleton; D2 wires manual audio; D3 passes scheduler.
             from ui.studio import Studio
@@ -557,6 +610,22 @@ class MainWindow(QMainWindow):
             # the app starts at, say, 00:02 (yesterday's report still
             # needs to be written).
             QTimer.singleShot(2000, self._check_sotg_midnight_save)
+
+            # Start the Rotation AI engine — hourly tick continuous
+            # rotation balancing. Wire the SchedulerEngine to consult
+            # rotation decisions before its native random+separation
+            # pick (operator's Q4 = (b) safe fallback when AI off).
+            try:
+                self._scheduler.set_rotation_engine(self._rotation_engine)
+            except (AttributeError, Exception) as exc:
+                log.debug(
+                    f"scheduler.set_rotation_engine wiring: {exc}")
+            try:
+                self._rotation_engine.start()
+                log.info("RotationAIEngine started")
+            except Exception as exc:
+                log.warning(
+                    f"RotationAIEngine start failed: {exc}")
         except Exception as exc:
             import traceback
             log.error(f"Mount failed: {exc}\n{traceback.format_exc()}")
@@ -721,16 +790,25 @@ class MainWindow(QMainWindow):
                 and hasattr(self, "spot_on_the_go_shell")):
             self._stack.setCurrentWidget(self.spot_on_the_go_shell)
             return
-        if screen == "scheduling_automation":
-            # Still a placeholder — the Scheduling Automation submodule
-            # gets its shell + sub-screens in a later session.
-            from PyQt6.QtWidgets import QMessageBox
-            QMessageBox.information(
-                self, "Scheduling Automation",
-                "Scheduling Automation — coming soon.\n\n"
-                "The AI Magic hub design has landed; this module's "
-                "dedicated configuration screen ships in a follow-up "
-                "session once the workflow is finalized.")
+        if (screen == "scheduling_automation"
+                and hasattr(self, "scheduling_automation_hub")):
+            # AI Magic submodule 2 — rotation engine hub. Phase B mock
+            # UI; engine wires in Phase D+E.
+            try:
+                self.scheduling_automation_hub.refresh()
+            except Exception as exc:
+                log.warning(
+                    f"scheduling_automation_hub refresh failed: {exc}")
+            self._stack.setCurrentWidget(self.scheduling_automation_hub)
+            return
+        if (screen == "review_daily_plan"
+                and hasattr(self, "scheduling_daily_plan_review")):
+            try:
+                self.scheduling_daily_plan_review.refresh()
+            except Exception as exc:
+                log.warning(
+                    f"scheduling_daily_plan_review refresh failed: {exc}")
+            self._stack.setCurrentWidget(self.scheduling_daily_plan_review)
             return
         if (screen == "create_schedule"
                 and hasattr(self, "sotg_create_schedule")):
@@ -978,6 +1056,159 @@ class MainWindow(QMainWindow):
                 log.warning(
                     f"studio settings live-apply failed: {exc}")
 
+    # ── Scheduling Automation handlers (Phase E live wiring) ──────────
+
+    def _on_sched_ai_refresh(self) -> None:
+        """Manual re-tick — operator hit the Refresh button. Engine
+        fires its compute_plan synchronously so the hub's stats +
+        decisions repaint immediately via tick_completed signal."""
+        if (hasattr(self, "_rotation_engine")
+                and self._rotation_engine is not None):
+            try:
+                self._rotation_engine.tick()
+            except Exception as exc:
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.warning(
+                    self, "Refresh failed",
+                    f"Rotation engine tick raised: {exc}")
+                return
+            # Hub's tick_completed handler already repaints
+
+    def _on_sched_ai_stop(self) -> None:
+        """Toggle the engine OFF — Settings sentinel flipped, engine
+        thread keeps running (cheap heartbeat) but _on_tick exits
+        early on is_enabled()=False."""
+        from PyQt6.QtWidgets import QMessageBox
+        ok = QMessageBox.question(
+            self, "Stop AI Engine",
+            "Stopping the engine reverts Studio to random + separation "
+            "rotation for any song picks not yet decided. Re-enable "
+            "anytime from Scheduling Automation.\n\nContinue?")
+        if ok != QMessageBox.StandardButton.Yes:
+            return
+        from core.settings import Settings
+        from core.rotation_ai_engine import KEY_ENGINE_ENABLED
+        Settings().set(KEY_ENGINE_ENABLED, "0")
+        if (hasattr(self, "_rotation_engine")
+                and self._rotation_engine is not None):
+            try:
+                # Cycle state to OFF immediately so UI updates
+                self._rotation_engine._set_state("OFF")
+            except Exception:
+                pass
+        QMessageBox.information(
+            self, "Engine stopped",
+            "Rotation AI is OFF. Studio is back on manual rotation.")
+
+    def _on_sched_ai_create_group(self) -> None:
+        """Open the Sister Group Picker — fresh group, no preselection."""
+        from ui.dialogs.sister_group_picker import SisterGroupPickerDialog
+        dlg = SisterGroupPickerDialog(self._db, parent=self)
+        if dlg.exec() == dlg.DialogCode.Accepted:
+            # Refresh hub's group section so the new group appears
+            if hasattr(self, "scheduling_automation_hub"):
+                try:
+                    self.scheduling_automation_hub.reload_groups()
+                except Exception as exc:
+                    log.warning(
+                        f"hub reload_groups failed: {exc}")
+
+    def _on_sched_ai_edit_group(self, group_id: int) -> None:
+        """Open the picker pre-loaded with this group's current members."""
+        from ui.dialogs.sister_group_picker import SisterGroupPickerDialog
+        dlg = SisterGroupPickerDialog(
+            self._db, edit_group_id=int(group_id), parent=self)
+        if dlg.exec() == dlg.DialogCode.Accepted:
+            if hasattr(self, "scheduling_automation_hub"):
+                try:
+                    self.scheduling_automation_hub.reload_groups()
+                except Exception as exc:
+                    log.warning(
+                        f"hub reload_groups failed: {exc}")
+
+    def _on_sched_ai_ungroup(self, group_id: int) -> None:
+        """Delete a sister group. Confirmation gate — destructive op
+        per CLAUDE.md."""
+        from PyQt6.QtWidgets import QMessageBox
+        ok = QMessageBox.question(
+            self, "Delete Sister Group",
+            f"Delete Sister Group {group_id}? Member categories "
+            f"revert to standalone rotation (no sister pooling). "
+            f"This does NOT delete the categories or their songs."
+            f"\n\nContinue?")
+        if ok != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self._db.delete_sister_group(int(group_id))
+        except Exception as exc:
+            QMessageBox.warning(
+                self, "Delete failed",
+                f"Couldn't delete the group: {exc}")
+            return
+        if hasattr(self, "scheduling_automation_hub"):
+            try:
+                self.scheduling_automation_hub.reload_groups()
+            except Exception as exc:
+                log.warning(
+                    f"hub reload_groups failed: {exc}")
+
+    def _on_sched_ai_approve(self) -> None:
+        """Approve today's plan — flip plan envelope to status=approved.
+        Scheduler now treats today's decisions as authoritative (Phase
+        E.5 hook reads this flag)."""
+        from PyQt6.QtWidgets import QMessageBox
+        from datetime import date as _date
+        plan_date = _date.today().isoformat()
+        try:
+            plan = self._db.get_ai_rotation_plan(plan_date)
+            if not plan:
+                QMessageBox.information(
+                    self, "Approve",
+                    "No plan computed yet for today. Wait for the "
+                    "engine's first tick (within an hour).")
+                return
+            self._db.mark_ai_rotation_plan_approved(plan_date)
+        except Exception as exc:
+            QMessageBox.warning(
+                self, "Approve failed",
+                f"DB write failed: {exc}")
+            return
+        QMessageBox.information(
+            self, "Plan approved",
+            "Today's AI rotation plan is now live. Studio's next song "
+            "picks will use AI's decisions.")
+        if hasattr(self, "scheduling_automation_hub"):
+            self._stack.setCurrentWidget(self.scheduling_automation_hub)
+
+    def _on_sched_ai_discard(self) -> None:
+        """Discard today's plan — wipes decisions + flips status to
+        'discarded'. Engine will compute again on next tick."""
+        from PyQt6.QtWidgets import QMessageBox
+        from datetime import date as _date
+        ok = QMessageBox.question(
+            self, "Discard Plan",
+            "Discard today's AI plan? Decisions will be wiped. "
+            "The engine will compute a fresh plan on its next "
+            "hourly tick. Studio reverts to random + separation "
+            "in the meantime.\n\nContinue?")
+        if ok != QMessageBox.StandardButton.Yes:
+            return
+        plan_date = _date.today().isoformat()
+        try:
+            self._db.mark_ai_rotation_plan_discarded(plan_date)
+        except Exception as exc:
+            QMessageBox.warning(
+                self, "Discard failed",
+                f"DB write failed: {exc}")
+            return
+        if hasattr(self, "scheduling_automation_hub"):
+            try:
+                self.scheduling_automation_hub.refresh()
+            except Exception:
+                pass
+            self._stack.setCurrentWidget(
+                self.scheduling_automation_hub)
+
     def _check_sotg_midnight_save(self) -> None:
         """60s tick — at 23:59 (or any time on the morning after if we
         missed it), persist the previous broadcast day's SOTG daily
@@ -1046,6 +1277,7 @@ class MainWindow(QMainWindow):
             "spot_on_the_go_shell", "sotg_create_schedule",
             "sotg_assign", "sotg_generate_report",
             "sotg_assign_api_key",
+            "scheduling_automation_hub", "scheduling_daily_plan_review",
         )
         for attr in qlabel_screens:
             screen = getattr(self, attr, None)
@@ -1093,7 +1325,18 @@ class MainWindow(QMainWindow):
         ORDER MATTERS: scheduler stops FIRST so it can't fire any more
         spot_due / song_auto_advance signals into a tearing-down audio
         engine. Then audio cleanup."""
-        # 0. Stop the transcription engine's QThread worker so it
+        # 0a. Stop the Rotation AI engine — QThread worker must not
+        # outlive the QApplication.
+        if (hasattr(self, "_rotation_engine")
+                and self._rotation_engine is not None):
+            try:
+                self._rotation_engine.shutdown()
+                log.info("RotationAIEngine shutdown done")
+            except Exception as exc:
+                log.warning(
+                    f"rotation engine shutdown failed: {exc}")
+
+        # 0b. Stop the transcription engine's QThread worker so it
         # doesn't outlive the QApplication. Idempotent; safe to call
         # even if it was never started.
         if (hasattr(self, "_transcription_engine")

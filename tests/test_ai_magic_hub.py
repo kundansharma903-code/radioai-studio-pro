@@ -178,16 +178,19 @@ def test_main_window_nav_ai_magic_routes_to_hub(qapp, db, qtbot,
     w.deleteLater()
 
 
-def test_only_scheduling_automation_module_still_toasts(qapp, db, qtbot,
-                                                          monkeypatch):
-    """Updated 2026-05-14 evening — Spot on the Go shipped as a real
-    screen + sub-screens; only Scheduling Automation (the second AI
-    Magic module) remains a placeholder toast until that submodule
-    ships in a follow-up session.
+def test_both_ai_magic_modules_land_on_real_screens(qapp, db, qtbot,
+                                                       monkeypatch):
+    """Updated 2026-05-15 — Scheduling Automation hub shipped (Phase B
+    mock UI). Both AI Magic submodules now route to real screens; no
+    toast remains. Per-module regression coverage lives in the
+    submodule's own test file.
 
-    Original assertion expected 'Spot on the Go' to toast — already
-    stale at HEAD `859ba7b` when the shell shipped; corrected
-    together with the Generate Report landing."""
+    History:
+      • 2026-05-14 (morning) — Both modules toasted.
+      • 2026-05-14 (evening) — Spot on the Go shipped; only Scheduling
+        Automation toasted.
+      • 2026-05-15 — Scheduling Automation Phase B mock UI shipped;
+        both modules now real screens."""
     from ui import main_window as mw_mod
     monkeypatch.setattr(mw_mod.MainWindow, "_apply_startup_auto_mode",
                          lambda self: None)
@@ -200,12 +203,12 @@ def test_only_scheduling_automation_module_still_toasts(qapp, db, qtbot,
         QMessageBox, "information",
         lambda parent, title, text: toast_calls.append((title, text)))
     w._on_hub_screen_requested("spot_on_the_go")
-    w._on_hub_screen_requested("scheduling_automation")
-    titles = [t for t, _ in toast_calls]
-    assert "Spot on the Go" not in titles      # real screen now
-    assert "Scheduling Automation" in titles   # still a toast
-    # And the spot_on_the_go route landed on the actual screen
     assert w._stack.currentWidget() is w.spot_on_the_go_shell
+    w._on_hub_screen_requested("scheduling_automation")
+    assert w._stack.currentWidget() is w.scheduling_automation_hub
+    titles = [t for t, _ in toast_calls]
+    assert "Spot on the Go" not in titles
+    assert "Scheduling Automation" not in titles
     w.close()
     w.deleteLater()
 

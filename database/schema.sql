@@ -611,5 +611,91 @@ CREATE INDEX IF NOT EXISTS idx_sotg_assignments_date
 CREATE INDEX IF NOT EXISTS idx_sotg_assignments_show_date
     ON sotg_assignments(show_id, scheduled_date);
 
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- AI Magic · Scheduling Automation — rotation engine tables (Phase C)
+-- ═══════════════════════════════════════════════════════════════════════════
+--
+-- Sister Category Groups — operator-curated pools of 2-5 categories whose
+-- songs the rotation AI may freely cross-pool for variety. Each category
+-- can belong to AT MOST one group (UNIQUE constraint on category_id).
+-- A 1-member group is meaningless; helpers auto-delete groups whose
+-- membership falls below 2.
+
+CREATE TABLE IF NOT EXISTS sister_groups (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at  TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS sister_group_members (
+    group_id    INTEGER NOT NULL
+                REFERENCES sister_groups(id) ON DELETE CASCADE,
+    category_id INTEGER NOT NULL
+                REFERENCES categories(id) ON DELETE CASCADE,
+    created_at  TEXT DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (group_id, category_id),
+    UNIQUE (category_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sister_members_group
+    ON sister_group_members(group_id);
+CREATE INDEX IF NOT EXISTS idx_sister_members_category
+    ON sister_group_members(category_id);
+
+
+-- AI Rotation Plans — one envelope per day. The engine writes 'pending'
+-- on first computation, operator approve/discard flips status, and the
+-- 5-PM safety net writes 'auto_applied' if no decision.
+
+CREATE TABLE IF NOT EXISTS ai_rotation_plans (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    plan_date       TEXT NOT NULL UNIQUE,           -- YYYY-MM-DD
+    status          TEXT NOT NULL DEFAULT 'pending',
+                                                    -- pending/approved/discarded/auto_applied
+    total_changes   INTEGER DEFAULT 0,
+    rested_count    INTEGER DEFAULT 0,
+    promoted_count  INTEGER DEFAULT 0,
+    clocks_balanced INTEGER DEFAULT 0,
+    error_count     INTEGER DEFAULT 0,
+    created_at      TEXT DEFAULT CURRENT_TIMESTAMP,
+    approved_at     TEXT,
+    discarded_at    TEXT
+);
+
+
+-- AI Rotation Decisions — granular row per (clock, hour, song, action).
+-- Action enum: 'rest' (skip in dispatch) / 'promote' (force include).
+-- For promote rows, target_category_id is the clock's primary category
+-- (where the song is being inserted) and source_category_id is the sister
+-- category the song originally lives in. For rest rows, source_category_id
+-- is the song's category and target is null.
+
+CREATE TABLE IF NOT EXISTS ai_rotation_decisions (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    plan_id             INTEGER NOT NULL
+                        REFERENCES ai_rotation_plans(id) ON DELETE CASCADE,
+    decision_date       TEXT NOT NULL,             -- YYYY-MM-DD (denormed for index)
+    clock_id            INTEGER NOT NULL
+                        REFERENCES clocks(id) ON DELETE CASCADE,
+    hour                INTEGER NOT NULL,           -- 0..23
+    slot_idx            INTEGER,                    -- optional slot-level marker
+    song_id             INTEGER REFERENCES songs(id),
+    action              TEXT NOT NULL,              -- 'rest' / 'promote'
+    source_category_id  INTEGER REFERENCES categories(id),
+    target_category_id  INTEGER REFERENCES categories(id),
+    reason              TEXT,
+    created_at          TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_rotation_decisions_date
+    ON ai_rotation_decisions(decision_date);
+CREATE INDEX IF NOT EXISTS idx_rotation_decisions_clock_date
+    ON ai_rotation_decisions(clock_id, decision_date);
+CREATE INDEX IF NOT EXISTS idx_rotation_decisions_song
+    ON ai_rotation_decisions(song_id);
+CREATE INDEX IF NOT EXISTS idx_rotation_decisions_plan
+    ON ai_rotation_decisions(plan_id);
+
+
 -- Record this schema version
 INSERT OR IGNORE INTO schema_migrations (name) VALUES ('v2.0.0_foundation');

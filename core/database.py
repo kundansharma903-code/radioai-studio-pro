@@ -1255,6 +1255,614 @@ class Database:
                 out["pending"] += int(r["n"] or 0)
         return out
 
+    # ══════════════════════════════════════════════════════════════════
+    # AI Magic · Scheduling Automation — rotation engine (Phase C)
+    # ══════════════════════════════════════════════════════════════════
+    #
+    # 4 tables: sister_groups, sister_group_members, ai_rotation_plans,
+    # ai_rotation_decisions. All migrations idempotent via PRAGMA
+    # table_info checks so dev DBs that pre-date Phase C migrate on
+    # first call.
+
+    _SISTER_GROUP_MAX = 5    # operator's Q-A cap
+
+    def _ensure_ai_rotation_tables(self) -> None:
+        """Idempotent CREATE for the rotation AI tables. Called by every
+        helper below so the schema lands on first use even on a dev DB
+        that hasn't run db_manager.py --initialize. Mirrors the schema
+        in database/schema.sql."""
+        conn = self._conn()
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS sister_groups (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at  TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS sister_group_members (
+                group_id    INTEGER NOT NULL
+                            REFERENCES sister_groups(id) ON DELETE CASCADE,
+                category_id INTEGER NOT NULL
+                            REFERENCES categories(id) ON DELETE CASCADE,
+                created_at  TEXT DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (group_id, category_id),
+                UNIQUE (category_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_sister_members_group
+                ON sister_group_members(group_id);
+            CREATE INDEX IF NOT EXISTS idx_sister_members_category
+                ON sister_group_members(category_id);
+
+            CREATE TABLE IF NOT EXISTS ai_rotation_plans (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                plan_date       TEXT NOT NULL UNIQUE,
+                status          TEXT NOT NULL DEFAULT 'pending',
+                total_changes   INTEGER DEFAULT 0,
+                rested_count    INTEGER DEFAULT 0,
+                promoted_count  INTEGER DEFAULT 0,
+                clocks_balanced INTEGER DEFAULT 0,
+                error_count     INTEGER DEFAULT 0,
+                created_at      TEXT DEFAULT CURRENT_TIMESTAMP,
+                approved_at     TEXT,
+                discarded_at    TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS ai_rotation_decisions (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                plan_id             INTEGER NOT NULL
+                                    REFERENCES ai_rotation_plans(id)
+                                    ON DELETE CASCADE,
+                decision_date       TEXT NOT NULL,
+                clock_id            INTEGER NOT NULL
+                                    REFERENCES clocks(id) ON DELETE CASCADE,
+                hour                INTEGER NOT NULL,
+                slot_idx            INTEGER,
+                song_id             INTEGER REFERENCES songs(id),
+                action              TEXT NOT NULL,
+                source_category_id  INTEGER REFERENCES categories(id),
+                target_category_id  INTEGER REFERENCES categories(id),
+                reason              TEXT,
+                created_at          TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_rotation_decisions_date
+                ON ai_rotation_decisions(decision_date);
+            CREATE INDEX IF NOT EXISTS idx_rotation_decisions_clock_date
+                ON ai_rotation_decisions(clock_id, decision_date);
+            CREATE INDEX IF NOT EXISTS idx_rotation_decisions_song
+                ON ai_rotation_decisions(song_id);
+            CREATE INDEX IF NOT EXISTS idx_rotation_decisions_plan
+                ON ai_rotation_decisions(plan_id);
+            """
+        )
+        conn.commit()
+
+    # ── Sister Group helpers ───────────────────────────────────────────
+
+    def create_sister_group(self, category_ids: list[int]) -> int:
+        """Create a new sister group containing the listed categories.
+
+        Validates:
+          • 2 ≤ len(category_ids) ≤ 5  (operator's cap)
+          • All ids are unique within the input list
+          • All ids reference real categories
+          • No id is already a member of another group
+
+        Returns the new group id. Atomic — the whole insertion either
+        succeeds or rolls back."""
+        self._ensure_ai_rotation_tables()
+        if not isinstance(category_ids, (list, tuple)):
+            raise ValueError(
+                f"category_ids must be a list/tuple, got "
+                f"{type(category_ids).__name__}")
+        # Normalize + dedupe-aware validation
+        try:
+            ids = [int(c) for c in category_ids]
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"category_ids must be all ints, got {category_ids!r}")
+        if len(ids) < 2:
+            raise ValueError(
+                f"sister group needs at least 2 categories, "
+                f"got {len(ids)}")
+        if len(ids) > self._SISTER_GROUP_MAX:
+            raise ValueError(
+                f"sister group capped at {self._SISTER_GROUP_MAX} "
+                f"categories, got {len(ids)}")
+        if len(set(ids)) != len(ids):
+            raise ValueError(
+                f"duplicate category ids in input: {ids!r}")
+
+        conn = self._conn()
+        # All ids must reference real categories
+        found_rows = conn.execute(
+            "SELECT id FROM categories WHERE id IN ("
+            + ",".join("?" * len(ids)) + ")",
+            ids).fetchall()
+        found_ids = {int(r["id"]) for r in found_rows}
+        missing = [c for c in ids if c not in found_ids]
+        if missing:
+            raise ValueError(
+                f"unknown category id(s): {missing!r}")
+
+        # No id should be in another group already
+        existing = conn.execute(
+            "SELECT category_id, group_id FROM sister_group_members "
+            "WHERE category_id IN ("
+            + ",".join("?" * len(ids)) + ")",
+            ids).fetchall()
+        if existing:
+            collisions = [
+                f"category {int(r['category_id'])} already in group "
+                f"{int(r['group_id'])}"
+                for r in existing
+            ]
+            raise ValueError(
+                "sister group create failed — " + "; ".join(collisions))
+
+        # Atomic insert
+        try:
+            cur = conn.execute(
+                "INSERT INTO sister_groups DEFAULT VALUES")
+            group_id = int(cur.lastrowid)
+            conn.executemany(
+                "INSERT INTO sister_group_members (group_id, category_id) "
+                "VALUES (?, ?)",
+                [(group_id, c) for c in ids])
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        return group_id
+
+    def delete_sister_group(self, group_id: int) -> None:
+        """Drop a group + cascade-delete its members. Idempotent —
+        deleting a non-existent group is a no-op."""
+        self._ensure_ai_rotation_tables()
+        conn = self._conn()
+        conn.execute("DELETE FROM sister_groups WHERE id = ?",
+                      [int(group_id)])
+        conn.commit()
+
+    def add_category_to_sister_group(self, group_id: int,
+                                       category_id: int) -> None:
+        """Add a category to an existing group. Enforces the 5-cap +
+        per-category uniqueness."""
+        self._ensure_ai_rotation_tables()
+        gid = int(group_id); cid = int(category_id)
+        conn = self._conn()
+        # Group must exist
+        row = conn.execute(
+            "SELECT id FROM sister_groups WHERE id = ?",
+            [gid]).fetchone()
+        if row is None:
+            raise ValueError(f"sister group {gid} does not exist")
+        # Category must exist
+        row = conn.execute(
+            "SELECT id FROM categories WHERE id = ?",
+            [cid]).fetchone()
+        if row is None:
+            raise ValueError(f"category {cid} does not exist")
+        # Cap check
+        count = int(conn.execute(
+            "SELECT COUNT(*) FROM sister_group_members "
+            "WHERE group_id = ?", [gid]).fetchone()[0])
+        if count >= self._SISTER_GROUP_MAX:
+            raise ValueError(
+                f"sister group {gid} is full "
+                f"({self._SISTER_GROUP_MAX} categories)")
+        # Already in some group? (UNIQUE constraint would also catch
+        # this, but we want a clean error message)
+        in_group = conn.execute(
+            "SELECT group_id FROM sister_group_members "
+            "WHERE category_id = ?", [cid]).fetchone()
+        if in_group is not None:
+            other = int(in_group["group_id"])
+            if other == gid:
+                return    # idempotent — already in this group
+            raise ValueError(
+                f"category {cid} already in sister group {other}")
+        conn.execute(
+            "INSERT INTO sister_group_members (group_id, category_id) "
+            "VALUES (?, ?)", [gid, cid])
+        conn.commit()
+
+    def remove_category_from_sister_group(self, group_id: int,
+                                            category_id: int) -> None:
+        """Remove a category from a group. If membership drops below 2,
+        the group is auto-deleted (1-member groups are meaningless)."""
+        self._ensure_ai_rotation_tables()
+        gid = int(group_id); cid = int(category_id)
+        conn = self._conn()
+        conn.execute(
+            "DELETE FROM sister_group_members "
+            "WHERE group_id = ? AND category_id = ?",
+            [gid, cid])
+        remaining = int(conn.execute(
+            "SELECT COUNT(*) FROM sister_group_members "
+            "WHERE group_id = ?", [gid]).fetchone()[0])
+        if remaining < 2:
+            conn.execute(
+                "DELETE FROM sister_groups WHERE id = ?", [gid])
+        conn.commit()
+
+    def get_sister_groups(self) -> list:
+        """All sister groups with their category details + per-group
+        total-song count. Each entry:
+          {
+            'id': int,
+            'categories': [{'id', 'name', 'color'}, ...],
+            'total_songs': int,
+            'created_at': str,
+          }
+        Sorted by created_at ASC (oldest first)."""
+        self._ensure_ai_rotation_tables()
+        conn = self._conn()
+        group_rows = conn.execute(
+            "SELECT id, created_at FROM sister_groups "
+            "ORDER BY created_at ASC, id ASC").fetchall()
+        out: list = []
+        for g in group_rows:
+            gid = int(g["id"])
+            members = conn.execute(
+                "SELECT c.id, c.name, c.color "
+                "FROM sister_group_members m "
+                "JOIN categories c ON c.id = m.category_id "
+                "WHERE m.group_id = ? "
+                "ORDER BY c.display_order ASC, c.name ASC",
+                [gid]).fetchall()
+            cats = [{"id": int(r["id"]),
+                      "name": r["name"] or "",
+                      "color": r["color"] or "#06b6d4"}
+                     for r in members]
+            # Aggregate song count across all member categories
+            total = 0
+            if cats:
+                placeholders = ",".join("?" * len(cats))
+                total_row = conn.execute(
+                    f"SELECT COUNT(*) FROM songs "
+                    f"WHERE is_enabled = 1 AND category_id IN ({placeholders})",
+                    [c["id"] for c in cats]).fetchone()
+                total = int(total_row[0] or 0)
+            out.append({
+                "id":           gid,
+                "categories":   cats,
+                "total_songs":  total,
+                "created_at":   g["created_at"] or "",
+            })
+        return out
+
+    def get_sister_group_for_category(self, category_id: int):
+        """Return the group_id this category belongs to, or None if
+        ungrouped."""
+        self._ensure_ai_rotation_tables()
+        row = self._conn().execute(
+            "SELECT group_id FROM sister_group_members "
+            "WHERE category_id = ?",
+            [int(category_id)]).fetchone()
+        return int(row["group_id"]) if row else None
+
+    def get_sister_pool_for_category(self, category_id: int) -> list:
+        """Return all category ids in the same sister group as the
+        given category — including the category itself. If the category
+        is ungrouped, returns ``[category_id]`` (pool of 1).
+
+        Used by the rotation engine: when a clock's primary category
+        is X, the eligible-song pool is union(X + sisters)."""
+        self._ensure_ai_rotation_tables()
+        cid = int(category_id)
+        gid = self.get_sister_group_for_category(cid)
+        if gid is None:
+            return [cid]
+        rows = self._conn().execute(
+            "SELECT category_id FROM sister_group_members "
+            "WHERE group_id = ? ORDER BY category_id ASC",
+            [gid]).fetchall()
+        ids = [int(r["category_id"]) for r in rows]
+        if cid not in ids:
+            ids.append(cid)
+        return sorted(ids)
+
+    # ── AI Rotation Plan helpers ───────────────────────────────────────
+
+    def get_or_create_ai_rotation_plan(self, plan_date: str) -> int:
+        """Get-or-create the daily plan envelope. Returns plan_id.
+        Fresh plans default to status='pending' + zero counters."""
+        self._ensure_ai_rotation_tables()
+        pd = (plan_date or "").strip()
+        if len(pd) != 10 or pd[4] != "-" or pd[7] != "-":
+            raise ValueError(
+                f"plan_date must be YYYY-MM-DD, got {pd!r}")
+        conn = self._conn()
+        row = conn.execute(
+            "SELECT id FROM ai_rotation_plans WHERE plan_date = ?",
+            [pd]).fetchone()
+        if row is not None:
+            return int(row["id"])
+        cur = conn.execute(
+            "INSERT INTO ai_rotation_plans (plan_date) VALUES (?)",
+            [pd])
+        conn.commit()
+        return int(cur.lastrowid)
+
+    def reset_ai_rotation_plan(self, plan_date: str) -> int:
+        """Wipe today's decisions + reset envelope to status='pending'.
+        Called by the engine before re-computing a plan from scratch.
+        Returns the (refreshed) plan_id."""
+        self._ensure_ai_rotation_tables()
+        plan_id = self.get_or_create_ai_rotation_plan(plan_date)
+        conn = self._conn()
+        conn.execute(
+            "DELETE FROM ai_rotation_decisions WHERE plan_id = ?",
+            [plan_id])
+        conn.execute(
+            "UPDATE ai_rotation_plans SET "
+            "  status = 'pending', total_changes = 0, "
+            "  rested_count = 0, promoted_count = 0, "
+            "  clocks_balanced = 0, error_count = 0, "
+            "  approved_at = NULL, discarded_at = NULL "
+            "WHERE id = ?", [plan_id])
+        conn.commit()
+        return plan_id
+
+    def add_rotation_decision(self, *, plan_id: int,
+                                 decision_date: str,
+                                 clock_id: int,
+                                 hour: int,
+                                 song_id,
+                                 action: str,
+                                 slot_idx=None,
+                                 source_category_id=None,
+                                 target_category_id=None,
+                                 reason: str = "") -> int:
+        """Insert one rotation decision row. ``action`` must be
+        'rest' or 'promote'. Returns the new row id."""
+        self._ensure_ai_rotation_tables()
+        if action not in ("rest", "promote", "pick"):
+            raise ValueError(
+                f"action must be 'rest', 'promote', or 'pick', "
+                f"got {action!r}")
+        h = int(hour)
+        if h < 0 or h > 23:
+            raise ValueError(f"hour must be 0-23, got {hour!r}")
+        conn = self._conn()
+        cur = conn.execute(
+            "INSERT INTO ai_rotation_decisions "
+            "(plan_id, decision_date, clock_id, hour, slot_idx, "
+            " song_id, action, source_category_id, "
+            " target_category_id, reason) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [int(plan_id), (decision_date or "").strip(),
+             int(clock_id), h,
+             None if slot_idx is None else int(slot_idx),
+             None if song_id is None else int(song_id),
+             action,
+             None if source_category_id is None
+                 else int(source_category_id),
+             None if target_category_id is None
+                 else int(target_category_id),
+             reason or ""])
+        conn.commit()
+        return int(cur.lastrowid)
+
+    def update_ai_rotation_plan_stats(self, plan_id: int, *,
+                                        rested: int = 0,
+                                        promoted: int = 0,
+                                        clocks_balanced: int = 0,
+                                        errors: int = 0) -> None:
+        """Refresh the plan envelope's aggregate counters after the
+        engine writes a batch of decisions."""
+        self._ensure_ai_rotation_tables()
+        conn = self._conn()
+        conn.execute(
+            "UPDATE ai_rotation_plans SET "
+            "  rested_count = ?, promoted_count = ?, "
+            "  clocks_balanced = ?, error_count = ?, "
+            "  total_changes = ? "
+            "WHERE id = ?",
+            [int(rested), int(promoted), int(clocks_balanced),
+             int(errors), int(rested) + int(promoted),
+             int(plan_id)])
+        conn.commit()
+
+    def get_ai_rotation_plan(self, plan_date: str):
+        """Return the plan envelope for a date as a dict, or None if
+        no plan computed yet."""
+        self._ensure_ai_rotation_tables()
+        row = self._conn().execute(
+            "SELECT * FROM ai_rotation_plans WHERE plan_date = ?",
+            [(plan_date or "").strip()]).fetchone()
+        return {k: row[k] for k in row.keys()} if row else None
+
+    def mark_ai_rotation_plan_approved(self, plan_date: str) -> None:
+        """Stamp status='approved' + approved_at timestamp."""
+        self._ensure_ai_rotation_tables()
+        from datetime import datetime as _dt
+        ts = _dt.now().isoformat(timespec="seconds")
+        conn = self._conn()
+        conn.execute(
+            "UPDATE ai_rotation_plans SET "
+            "  status = 'approved', approved_at = ? "
+            "WHERE plan_date = ?",
+            [ts, (plan_date or "").strip()])
+        conn.commit()
+
+    def mark_ai_rotation_plan_discarded(self, plan_date: str) -> None:
+        """Stamp status='discarded' + discarded_at + WIPE the decision
+        rows (the engine will compute again on next tick)."""
+        self._ensure_ai_rotation_tables()
+        from datetime import datetime as _dt
+        ts = _dt.now().isoformat(timespec="seconds")
+        conn = self._conn()
+        # Stamp envelope
+        conn.execute(
+            "UPDATE ai_rotation_plans SET "
+            "  status = 'discarded', discarded_at = ? "
+            "WHERE plan_date = ?",
+            [ts, (plan_date or "").strip()])
+        # Wipe associated decisions
+        plan = self.get_ai_rotation_plan(plan_date)
+        if plan:
+            conn.execute(
+                "DELETE FROM ai_rotation_decisions WHERE plan_id = ?",
+                [int(plan["id"])])
+        conn.commit()
+
+    def mark_ai_rotation_plan_auto_applied(self, plan_date: str) -> None:
+        """Stamp status='auto_applied' (5-PM safety net path). Decisions
+        stay in place so dispatcher consults them."""
+        self._ensure_ai_rotation_tables()
+        from datetime import datetime as _dt
+        ts = _dt.now().isoformat(timespec="seconds")
+        conn = self._conn()
+        conn.execute(
+            "UPDATE ai_rotation_plans SET "
+            "  status = 'auto_applied', approved_at = ? "
+            "WHERE plan_date = ?",
+            [ts, (plan_date or "").strip()])
+        conn.commit()
+
+    def get_rotation_decisions_for_date(self, plan_date: str) -> list:
+        """All decisions for a date joined with song / clock / category
+        metadata for the Daily Plan Review screen. Sorted by hour ASC,
+        then clock_id, then created_at."""
+        self._ensure_ai_rotation_tables()
+        rows = self._conn().execute(
+            """
+            SELECT  d.*,
+                    s.title         AS song_title,
+                    s.artist        AS song_artist,
+                    c.name          AS clock_name,
+                    cs.name         AS source_category_name,
+                    cs.color        AS source_category_color,
+                    ct.name         AS target_category_name,
+                    ct.color        AS target_category_color
+            FROM    ai_rotation_decisions d
+            LEFT JOIN songs s       ON s.id  = d.song_id
+            LEFT JOIN clocks c      ON c.id  = d.clock_id
+            LEFT JOIN categories cs ON cs.id = d.source_category_id
+            LEFT JOIN categories ct ON ct.id = d.target_category_id
+            WHERE   d.decision_date = ?
+            ORDER BY d.hour ASC, d.clock_id ASC, d.created_at ASC
+            """, [(plan_date or "").strip()]).fetchall()
+        return [{k: r[k] for k in r.keys()} for r in rows]
+
+    def get_rotation_decisions_for_clock(self, clock_id: int,
+                                            plan_date: str) -> list:
+        """All decisions for one (clock, date) tuple — drives the
+        per-card view in Daily Plan Review."""
+        self._ensure_ai_rotation_tables()
+        rows = self._conn().execute(
+            """
+            SELECT  d.*,
+                    s.title         AS song_title,
+                    s.artist        AS song_artist,
+                    cs.name         AS source_category_name,
+                    cs.color        AS source_category_color,
+                    ct.name         AS target_category_name,
+                    ct.color        AS target_category_color
+            FROM    ai_rotation_decisions d
+            LEFT JOIN songs s       ON s.id  = d.song_id
+            LEFT JOIN categories cs ON cs.id = d.source_category_id
+            LEFT JOIN categories ct ON ct.id = d.target_category_id
+            WHERE   d.clock_id = ? AND d.decision_date = ?
+            ORDER BY d.created_at ASC
+            """, [int(clock_id), (plan_date or "").strip()]).fetchall()
+        return [{k: r[k] for k in r.keys()} for r in rows]
+
+    def purge_old_rotation_decisions(self, retention_days: int = 14) -> int:
+        """Delete plan envelopes + cascade-delete decisions older than
+        ``retention_days``. Returns count of plans deleted. Run by the
+        engine's nightly maintenance tick."""
+        self._ensure_ai_rotation_tables()
+        from datetime import date as _date, timedelta as _td
+        cutoff = (_date.today() - _td(days=int(retention_days))).isoformat()
+        conn = self._conn()
+        cur = conn.execute(
+            "DELETE FROM ai_rotation_plans WHERE plan_date < ?",
+            [cutoff])
+        conn.commit()
+        return cur.rowcount or 0
+
+    # ── Time-Slot Freshness input ──────────────────────────────────────
+
+    def get_songs_in_categories(self, category_ids: list,
+                                   enabled_only: bool = True) -> list:
+        """Return enabled songs whose category_id is in the given list.
+        Used by RotationAIEngine to build the sister-category-aware
+        candidate pool for a clock's primary category. Returns plain
+        dicts (sqlite3.Row dicts get flaky on Py 3.14)."""
+        if not category_ids:
+            return []
+        ids = [int(c) for c in category_ids]
+        placeholders = ",".join("?" * len(ids))
+        sql = (
+            f"SELECT s.id, s.title, s.artist, s.category_id, "
+            f"  s.file_path, s.duration_ms, s.year, s.bpm, "
+            f"  s.energy, s.vocal "
+            f"FROM songs s "
+            f"WHERE s.category_id IN ({placeholders}) "
+            f"{'AND s.is_enabled = 1' if enabled_only else ''} "
+            f"AND s.file_path IS NOT NULL AND s.file_path != '' "
+            f"ORDER BY s.id ASC"
+        )
+        rows = self._conn().execute(sql, ids).fetchall()
+        return [{k: r[k] for k in r.keys()} for r in rows]
+
+    def get_song_last_played_at(self, song_id: int):
+        """Return ISO timestamp of the last time this song played
+        anywhere, or None if never. Used by RotationAIEngine for the
+        overall-recency veto (4hr same-song / 1hr same-artist)."""
+        row = self._conn().execute(
+            "SELECT MAX(played_at) AS last_at FROM broadcast_log "
+            "WHERE song_id = ? AND entry_type = 'song' "
+            "AND played_at IS NOT NULL", [int(song_id)]).fetchone()
+        if row is None or row["last_at"] is None:
+            return None
+        return str(row["last_at"])
+
+    def get_artist_last_played_at(self, artist: str):
+        """ISO timestamp of the last time any song by this artist
+        played, or None. Used for the 1-hour same-artist rule."""
+        if not artist:
+            return None
+        row = self._conn().execute(
+            "SELECT MAX(bl.played_at) AS last_at "
+            "FROM broadcast_log bl "
+            "JOIN songs s ON s.id = bl.song_id "
+            "WHERE s.artist = ? AND bl.entry_type = 'song' "
+            "AND bl.played_at IS NOT NULL", [artist]).fetchone()
+        if row is None or row["last_at"] is None:
+            return None
+        return str(row["last_at"])
+
+    def get_song_last_played_in_hour(self, song_id: int, hour: int):
+        """Return the ISO date (YYYY-MM-DD) of the last time this song
+        was played in the given hour-of-day slot. Returns None if the
+        song has never been logged in this hour.
+
+        Per operator's D2 = (b) — weekday is NOT a discriminator;
+        Monday 10 AM and Friday 10 AM share the same slot history. The
+        rotation engine's slot_age computation feeds off this method."""
+        h = int(hour)
+        if h < 0 or h > 23:
+            raise ValueError(f"hour must be 0-23, got {hour!r}")
+        try:
+            row = self._conn().execute(
+                "SELECT MAX(DATE(played_at)) AS last_date "
+                "FROM broadcast_log "
+                "WHERE song_id = ? "
+                "AND entry_type = 'song' "
+                "AND played_at IS NOT NULL "
+                "AND CAST(strftime('%H', played_at) AS INT) = ?",
+                [int(song_id), h]).fetchone()
+        except Exception:
+            return None
+        if row is None or row["last_date"] is None:
+            return None
+        return str(row["last_date"])
+
     def get_category_songs_ranked(self, category_id: int) -> list:
         """Every song in this category with its total / week / month /
         last-played stats — ordered by total plays desc, then title.
