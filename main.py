@@ -17,11 +17,19 @@ import sys
 import os
 import logging
 
-# Force UTF-8 on Windows terminals
+# Force UTF-8 on Windows terminals (dev mode). In PyInstaller's
+# console=False GUI build, sys.stdout / sys.stderr are None (no
+# console attached), so the .buffer access would crash on launch
+# from Windows Explorer. Guard accordingly — this code only does
+# meaningful work when an interactive console is actually attached.
 if sys.platform == "win32":
     import io
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+    if sys.stdout is not None and hasattr(sys.stdout, "buffer"):
+        sys.stdout = io.TextIOWrapper(
+            sys.stdout.buffer, encoding="utf-8", errors="replace")
+    if sys.stderr is not None and hasattr(sys.stderr, "buffer"):
+        sys.stderr = io.TextIOWrapper(
+            sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 from PyQt6.QtWidgets import QApplication, QMessageBox
 from PyQt6.QtCore import Qt
@@ -193,11 +201,23 @@ def main():
     # Database\radioai.db location if needed. No-op after the first
     # successful run. Safe — uses copy (not move), so the legacy
     # DB is preserved as a backup.
-    from core.paths import migrate_legacy_database
+    from core.paths import (
+        migrate_legacy_database, bootstrap_fresh_database,
+    )
     if migrate_legacy_database():
         log.info(
             "[boot] legacy database migrated to new professional "
             "folder layout. Old file preserved as backup.")
+    # Phase N+: fresh-install bootstrap — if the migration was a
+    # no-op (no legacy DB exists, which is the case on every
+    # brand-new Windows machine), check whether the DB at the new
+    # path has any tables. If not, apply schema.sql + seeds.sql so
+    # Database() finds a properly-initialised structure when it
+    # opens its connection moments later.
+    if bootstrap_fresh_database():
+        log.info(
+            "[boot] fresh database bootstrapped from schema + "
+            "seeds (no legacy DB found — first-launch path).")
     db = Database()
     db_ok = db.verify()
     song_count = 0

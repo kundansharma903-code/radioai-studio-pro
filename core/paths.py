@@ -183,6 +183,89 @@ def migrate_legacy_database() -> bool:
         return False
 
 
+def bootstrap_fresh_database() -> bool:
+    """Fresh-install DB bootstrap — runs ``database/schema.sql`` +
+    ``database/seeds.sql`` if the database has no tables yet.
+
+    Use case: a clean Windows machine where someone just ran the
+    Inno Setup installer. There's no legacy ``%LA%\\RadioAI\\``
+    DB to migrate from, and the new ``%LA%\\RadioAI Studio Pro\\
+    Database\\radioai.db`` doesn't exist either. Without this, the
+    app would launch into a structurally-empty SQLite file and
+    crash on the first query (no songs / clocks / categories
+    tables exist).
+
+    Resolution order:
+      1. ``migrate_legacy_database()`` runs first (called from
+         main.py). If a legacy DB exists, it gets copied and this
+         bootstrap helper becomes a no-op.
+      2. If the file at DB_PATH already has user tables, no-op.
+      3. Otherwise, run schema.sql (41 CREATE TABLE IF NOT EXISTS
+         statements) and seeds.sql (13 INSERT OR IGNORE statements
+         for default categories, settings, etc.). The file at
+         DB_PATH is created cleanly if it didn't already exist.
+
+    Returns True if bootstrap actually ran; False if no-op (DB
+    already had tables). Never raises — any IO failure is logged
+    and returns False so the boot path doesn't crash."""
+    import sqlite3
+    try:
+        schema_path = resource_path("database", "schema.sql")
+        seeds_path = resource_path("database", "seeds.sql")
+        if not schema_path.exists():
+            log.warning(
+                f"[paths] schema.sql not found at {schema_path} — "
+                f"cannot bootstrap fresh DB")
+            return False
+
+        ensure_dirs()
+
+        # Quick check: does the DB already have user tables?
+        # sqlite_master lists every CREATE'd object; if any
+        # non-sqlite_ table exists, the DB is already populated.
+        conn = sqlite3.connect(str(DB_PATH))
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM sqlite_master "
+                "WHERE type='table' "
+                "AND name NOT LIKE 'sqlite_%'").fetchone()
+            existing_tables = int(row[0] or 0) if row else 0
+        finally:
+            conn.close()
+
+        if existing_tables > 0:
+            return False    # DB already has tables — no bootstrap
+
+        # Empty DB — apply schema + seeds
+        log.info(
+            f"[paths] empty database detected at {DB_PATH} — "
+            f"bootstrapping fresh schema + seeds (first launch on "
+            f"this machine, no legacy DB to migrate)")
+        conn = sqlite3.connect(str(DB_PATH))
+        try:
+            with open(schema_path, "r", encoding="utf-8") as f:
+                conn.executescript(f.read())
+            n_tables = int(conn.execute(
+                "SELECT COUNT(*) FROM sqlite_master "
+                "WHERE type='table'").fetchone()[0] or 0)
+            log.info(
+                f"[paths] schema applied ({n_tables} tables created)")
+            if seeds_path.exists():
+                with open(seeds_path, "r", encoding="utf-8") as f:
+                    conn.executescript(f.read())
+                log.info(f"[paths] seeds applied ({seeds_path.name})")
+            else:
+                log.warning(
+                    f"[paths] seeds.sql not bundled at {seeds_path}")
+            conn.commit()
+        finally:
+            conn.close()
+        return True
+    except Exception as exc:
+        log.warning(f"[paths] fresh-DB bootstrap failed: {exc}")
+        return False
+
+
 # Create folders on first import so any caller that just reads
 # DB_PATH / LOGS_DIR can trust them to exist.
 ensure_dirs()

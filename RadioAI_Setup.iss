@@ -108,13 +108,18 @@ Source: "dist\{#MyAppName}\*"; DestDir: "{app}"; \
 Source: "LICENSE.txt"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-; Start Menu shortcut — always created
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; \
-    IconFilename: "{app}\assets\icon.ico"
+; Start Menu shortcut — always created. We deliberately do NOT set
+; IconFilename so Windows extracts the icon directly from the .exe
+; (PyInstaller embedded the multi-res .ico into the binary). This
+; is more reliable than IconFilename: the explicit path approach
+; sometimes shows a generic blank-page icon if Windows' shell
+; icon cache hasn't refreshed or the assets folder isn't readable
+; under UAC.
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
 ; Optional desktop shortcut (controlled by Tasks above)
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; \
-    IconFilename: "{app}\assets\icon.ico"; Tasks: desktopicon
+    Tasks: desktopicon
 
 [Run]
 ; Optional auto-launch at the end of install ("Launch RadioAI now?"
