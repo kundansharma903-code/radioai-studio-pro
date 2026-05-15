@@ -39,10 +39,21 @@ def cats(db):
 
     All Phase C tests need real category ids because sister_group_members
     FK-references categories.id. Using uuid suffixes avoids collisions
-    with other tests' fixtures."""
+    with other tests' fixtures.
+
+    Teardown: deleting categories cascades sister_group_members rows,
+    but the sister_groups parent envelope is NOT auto-cascaded (it's
+    the parent side of the FK). Without an explicit orphan wipe these
+    tests leaked ~14 sister_groups rows per run into the live dev DB.
+    Phase G fix: snapshot existing group ids before the test, then on
+    teardown delete any NEW groups that now have zero members."""
+    conn = db._conn()
+    # Snapshot pre-test sister_groups so we never touch foreign rows
+    pre_group_ids = {int(r[0]) for r in conn.execute(
+        "SELECT id FROM sister_groups").fetchall()}
+
     names = [f"phaseC-{uuid.uuid4().hex[:8]}" for _ in range(5)]
     ids = []
-    conn = db._conn()
     for n in names:
         cur = conn.execute(
             "INSERT INTO categories (name, color) VALUES (?, ?)",
@@ -53,6 +64,18 @@ def cats(db):
     # Cleanup — cascade wipes sister_group_members + ungroups via CASCADE
     for cid in ids:
         conn.execute("DELETE FROM categories WHERE id = ?", [cid])
+    # Wipe any sister_groups created during THIS test that now have
+    # zero members (cascade orphans). Skip any group that pre-dated
+    # the test so we don't touch concurrent fixtures.
+    orphans = conn.execute(
+        "SELECT id FROM sister_groups WHERE id NOT IN ("
+        "SELECT DISTINCT group_id FROM sister_group_members)"
+    ).fetchall()
+    for r in orphans:
+        gid = int(r[0])
+        if gid not in pre_group_ids:
+            conn.execute(
+                "DELETE FROM sister_groups WHERE id = ?", [gid])
     conn.commit()
 
 

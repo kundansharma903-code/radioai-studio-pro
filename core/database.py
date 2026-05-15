@@ -1496,11 +1496,23 @@ class Database:
             'total_songs': int,
             'created_at': str,
           }
-        Sorted by created_at ASC (oldest first)."""
+        Sorted by created_at ASC (oldest first).
+
+        Only groups with ≥1 member are returned — orphan envelopes
+        (e.g. created by a partial test teardown where members
+        cascaded out but the parent row remained) are filtered out
+        at the SQL level. Operator's 2-min rule says any valid group
+        must have at least 2 members; the engine also auto-deletes
+        groups that drop below 2 via remove_category_from_sister_group.
+        Filtering at read-time is the defensive belt to that braces."""
         self._ensure_ai_rotation_tables()
         conn = self._conn()
         group_rows = conn.execute(
             "SELECT id, created_at FROM sister_groups "
+            "WHERE EXISTS ("
+            "  SELECT 1 FROM sister_group_members "
+            "  WHERE group_id = sister_groups.id"
+            ") "
             "ORDER BY created_at ASC, id ASC").fetchall()
         out: list = []
         for g in group_rows:
@@ -1862,6 +1874,95 @@ class Database:
         if row is None or row["last_date"] is None:
             return None
         return str(row["last_date"])
+
+    # ── Rotation Health screen aggregators ─────────────────────────────
+
+    def get_rotation_summary_for_date(self, plan_date: str) -> dict:
+        """Aggregate AI rotation decisions for one date, grouped per
+        category. Drives the Rotation Health screen (Songs Library
+        reports tile).
+
+        Returns:
+            {
+              "plan":  None | plan envelope row dict,
+              "categories": [
+                {"category_id", "category_name", "category_color",
+                 "rested":        [decision dicts],
+                 "promoted_out":  [decision dicts],
+                 "promoted_in":   [decision dicts]},
+                ...
+              ]
+            }
+
+        Bucket semantics (per operator's Q6 "both cards" decision):
+          • RESTED        = action='rest'    AND source_category_id == category
+          • PROMOTED OUT  = action='promote' AND source_category_id == category
+          • PROMOTED IN   = action='promote' AND target_category_id == category
+        A single promote decision therefore surfaces in BOTH the source
+        category's PROMOTED OUT list and the target category's
+        PROMOTED IN list — that's intentional (full audit trail).
+
+        Empty categories are still included so the screen's "hide empty
+        cards" toggle has data to work with."""
+        self._ensure_ai_rotation_tables()
+        date_iso = (plan_date or "").strip()
+
+        plan = self.get_ai_rotation_plan(date_iso)
+        decisions = self.get_rotation_decisions_for_date(date_iso)
+
+        cats = self._conn().execute(
+            "SELECT id, name, color FROM categories "
+            "ORDER BY name COLLATE NOCASE ASC").fetchall()
+
+        by_id: dict = {}
+        for c in cats:
+            by_id[int(c["id"])] = {
+                "category_id":    int(c["id"]),
+                "category_name":  c["name"] or "",
+                "category_color": c["color"] or "#8891b8",
+                "rested":         [],
+                "promoted_out":   [],
+                "promoted_in":    [],
+            }
+
+        for d in decisions:
+            action = (d.get("action") or "").lower()
+            src = d.get("source_category_id")
+            tgt = d.get("target_category_id")
+            if action == "rest" and src is not None and int(src) in by_id:
+                by_id[int(src)]["rested"].append(d)
+            elif action == "promote":
+                if src is not None and int(src) in by_id:
+                    by_id[int(src)]["promoted_out"].append(d)
+                if tgt is not None and int(tgt) in by_id:
+                    by_id[int(tgt)]["promoted_in"].append(d)
+
+        return {
+            "plan":       plan,
+            "categories": list(by_id.values()),
+        }
+
+    def get_song_recent_plays_count(self, song_id: int,
+                                       days: int = 7) -> int:
+        """Count of broadcast_log 'song' entries for this song in the
+        last `days` calendar days (rolling window from now). Used by
+        Rotation Health screen's hover tooltip for the "last 7d plays"
+        figure. Returns 0 if the song has never played in the window."""
+        try:
+            sid = int(song_id)
+            d = max(int(days), 1)
+        except (TypeError, ValueError):
+            return 0
+        try:
+            row = self._conn().execute(
+                "SELECT COUNT(*) AS n FROM broadcast_log "
+                "WHERE song_id = ? AND entry_type = 'song' "
+                "AND played_at IS NOT NULL "
+                f"AND played_at >= datetime('now', '-{d} days')",
+                [sid]).fetchone()
+        except Exception:
+            return 0
+        return int(row["n"] or 0) if row else 0
 
     def get_category_songs_ranked(self, category_id: int) -> list:
         """Every song in this category with its total / week / month /

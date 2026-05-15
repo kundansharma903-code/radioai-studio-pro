@@ -391,6 +391,23 @@ class MainWindow(QMainWindow):
                 self._on_studio_clicked)
             self._stack.addWidget(self.category_performance)
 
+            # Rotation Health (Figma 521:2) — Songs Library reports
+            # tile "🎯 Rotation Health". Day-wise AI rotation audit
+            # per category; rendered from ai_rotation_decisions joined
+            # with categories + clocks + songs. Engine handle is
+            # passed so the Refresh button can fire a synchronous tick.
+            from ui.rotation_health import RotationHealthScreen
+            self.rotation_health = RotationHealthScreen(
+                db=self._db, engine=self._rotation_engine)
+            self.rotation_health.breadcrumb_clicked.connect(
+                self._on_hub_screen_requested)
+            self.rotation_health.studio_clicked.connect(
+                self._on_studio_clicked)
+            self.rotation_health.back_clicked.connect(
+                lambda: self._stack.setCurrentWidget(
+                    self.songs_library))
+            self._stack.addWidget(self.rotation_health)
+
             # AI Magic Hub (Figma 454:3) — landing page for the two AI
             # automation modules (Spot on the Go / Scheduling
             # Automation). Spot on the Go now routes to its own shell;
@@ -928,9 +945,21 @@ class MainWindow(QMainWindow):
                         f"category_performance load failed: {exc}")
                 self._stack.setCurrentWidget(self.category_performance)
             return
+        if name == "rotation_health":
+            # Songs Library reports tile → Rotation Health (Figma 521:2).
+            # Refresh re-pulls the latest plan + decisions for the
+            # currently-selected date (defaults to today).
+            if hasattr(self, "rotation_health"):
+                try:
+                    self.rotation_health.refresh()
+                except Exception as exc:
+                    log.warning(
+                        f"rotation_health refresh failed: {exc}")
+                self._stack.setCurrentWidget(self.rotation_health)
+            return
         # Other report actions still bubble up as logs only — they're
-        # the "Rotation Health / Last Played / Top Songs" tiles which
-        # haven't been built yet.
+        # the "Last Played / Top Songs" tiles which haven't been
+        # built yet.
 
     def _on_nav_clicked(self, tab: str) -> None:
         log.info(f"Nav → {tab}")

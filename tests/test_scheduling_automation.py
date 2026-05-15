@@ -50,6 +50,41 @@ def db():
     return Database()
 
 
+@pytest.fixture
+def two_real_groups(db):
+    """Create 2 real sister groups (each with 2 categories) for tests
+    that need ≥1 card rendered on the Hub. Phase G fix: previously
+    these tests silently relied on 84 leaked orphan groups in the
+    live dev DB; with the orphan-wipe + WHERE EXISTS filter in
+    get_sister_groups(), the helper now correctly returns 0 groups
+    by default so tests must seed their own.
+
+    Yields ``(group_a_id, group_b_id)`` and cleans up groups +
+    categories on teardown."""
+    import uuid
+    conn = db._conn()
+    # 4 throwaway categories (2 per group)
+    cat_ids: list[int] = []
+    for i in range(4):
+        cur = conn.execute(
+            "INSERT INTO categories (name, color) VALUES (?, ?)",
+            [f"phaseG-{uuid.uuid4().hex[:6]}", "#06b6d4"])
+        cat_ids.append(int(cur.lastrowid))
+    conn.commit()
+    g1 = db.create_sister_group([cat_ids[0], cat_ids[1]])
+    g2 = db.create_sister_group([cat_ids[2], cat_ids[3]])
+    yield (g1, g2)
+    # Teardown
+    try:
+        db.delete_sister_group(g1)
+        db.delete_sister_group(g2)
+    except Exception:
+        pass
+    for cid in cat_ids:
+        conn.execute("DELETE FROM categories WHERE id = ?", [cid])
+    conn.commit()
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # Scheduling Automation Hub
 # ════════════════════════════════════════════════════════════════════════════
@@ -89,18 +124,21 @@ def test_hub_hero_stat_pills_carry_live_values(qapp, db):
     s.deleteLater()
 
 
-def test_hub_renders_two_sister_group_cards(qapp, db, qtbot):
-    """MOCK_GROUPS defines 2 cards; both must render. Each card
-    carries its group_id so Edit / Ungroup signals can route."""
+def test_hub_renders_two_sister_group_cards(qapp, db, two_real_groups,
+                                              qtbot):
+    """Phase E live mode: the Hub renders one ``_SisterGroupCard``
+    per real sister group in the DB. The fixture seeds 2 groups so
+    the Hub should render exactly 2 cards carrying those ids."""
     from ui.scheduling_automation_hub import (
         SchedulingAutomationHub, _SisterGroupCard,
     )
+    g1, g2 = two_real_groups
     s = SchedulingAutomationHub(db=db)
     qtbot.addWidget(s)
     cards = s.findChildren(_SisterGroupCard)
     assert len(cards) == 2
     ids = sorted(c._group_id for c in cards)
-    assert ids == [1, 2]
+    assert ids == sorted([g1, g2])
     s.deleteLater()
 
 
@@ -164,7 +202,8 @@ def test_hub_create_group_signal_emits(qapp, db, qtbot):
     s.deleteLater()
 
 
-def test_hub_edit_group_signal_emits_with_id(qapp, db, qtbot):
+def test_hub_edit_group_signal_emits_with_id(qapp, db, two_real_groups,
+                                                qtbot):
     """Clicking Edit on a sister-group card must emit edit_group_clicked
     with the card's group_id. Phase E uses this id to seed the picker."""
     from ui.scheduling_automation_hub import (
@@ -175,6 +214,7 @@ def test_hub_edit_group_signal_emits_with_id(qapp, db, qtbot):
     received: list[int] = []
     s.edit_group_clicked.connect(received.append)
     cards = s.findChildren(_SisterGroupCard)
+    assert cards, "Hub should have rendered ≥1 card from the fixture"
     # Trigger via the card's own signal — the underlying button is
     # a private child; easier to fire from the card's surface.
     cards[0].edit_clicked.emit(cards[0]._group_id)
@@ -182,7 +222,8 @@ def test_hub_edit_group_signal_emits_with_id(qapp, db, qtbot):
     s.deleteLater()
 
 
-def test_hub_ungroup_signal_emits_with_id(qapp, db, qtbot):
+def test_hub_ungroup_signal_emits_with_id(qapp, db, two_real_groups,
+                                            qtbot):
     from ui.scheduling_automation_hub import (
         SchedulingAutomationHub, _SisterGroupCard,
     )
@@ -191,6 +232,8 @@ def test_hub_ungroup_signal_emits_with_id(qapp, db, qtbot):
     received: list[int] = []
     s.ungroup_clicked.connect(received.append)
     cards = s.findChildren(_SisterGroupCard)
+    assert len(cards) >= 2, (
+        "Hub should have rendered ≥2 cards from the fixture")
     cards[1].ungroup_clicked.emit(cards[1]._group_id)
     assert received == [cards[1]._group_id]
     s.deleteLater()
