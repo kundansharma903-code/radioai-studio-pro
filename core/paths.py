@@ -51,9 +51,46 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import sys
 from pathlib import Path
 
 log = logging.getLogger("paths")
+
+
+# ── Resource path resolver — dev vs PyInstaller frozen ───────────────────
+def resource_path(*relative_parts: str) -> Path:
+    """Resolve a path under the app's bundled resources folder.
+
+    Works transparently in three modes:
+
+      * Dev (``py main.py`` from source) — project root is the
+        parent of the package this module lives in.
+      * PyInstaller onefolder build — sys.executable's directory
+        is the install folder (where assets/ was bundled).
+      * PyInstaller onefile build — sys._MEIPASS points to the
+        temp extraction directory.
+
+    Usage:
+        from core.paths import resource_path
+        img = QPixmap(str(resource_path("assets", "splash.png")))
+
+    Returns a ``Path`` object — caller can ``str()`` if needed."""
+    if getattr(sys, "frozen", False):
+        # PyInstaller bundle
+        base = getattr(sys, "_MEIPASS", None)
+        if base is None:
+            base = os.path.dirname(sys.executable)
+    else:
+        # Dev: project root = two dirs up from this file
+        # (core/paths.py → core/ → project_root)
+        base = os.path.dirname(
+            os.path.dirname(os.path.abspath(__file__)))
+    return Path(base, *relative_parts)
+
+
+def is_frozen() -> bool:
+    """True if running from a PyInstaller bundle (.exe)."""
+    return getattr(sys, "frozen", False)
 
 
 # ── App brand constants — used for folder naming ─────────────────────────

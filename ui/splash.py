@@ -145,10 +145,13 @@ class RadioAISplash(QSplashScreen):
                  splash_image_path: Optional[str] = None,
                  parent: Optional[QWidget] = None):
         # Resolve image path — caller can override, otherwise default
-        # to assets/splash.png next to the project root.
+        # to assets/splash.png. Uses the resource_path helper so it
+        # works in both dev mode and PyInstaller frozen builds (where
+        # the bundled assets land under sys._MEIPASS or next to the
+        # exe).
         if splash_image_path is None:
-            here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            splash_image_path = os.path.join(here, "assets", "splash.png")
+            from core.paths import resource_path
+            splash_image_path = str(resource_path("assets", "splash.png"))
         self._image_path = splash_image_path
 
         # Load + scale the image to display size. If the file is
