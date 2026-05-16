@@ -61,11 +61,11 @@ from typing import Optional, Literal
 from core import dialogs
 
 from PyQt6.QtCore import (
-    Qt, QRect, QRectF, QPoint, QTimer, pyqtSignal,
+    Qt, QRect, QRectF, QPoint, QPointF, QTimer, pyqtSignal,
 )
 from PyQt6.QtGui import (
     QPainter, QColor, QPen, QBrush, QLinearGradient, QFont,
-    QMouseEvent, QKeyEvent, QPaintEvent,
+    QMouseEvent, QKeyEvent, QPaintEvent, QPolygonF, QWheelEvent,
 )
 from PyQt6.QtWidgets import (
     QWidget, QMessageBox, QGraphicsDropShadowEffect,
@@ -242,39 +242,67 @@ class _ClockRow(QWidget):
 # ════════════════════════════════════════════════════════════════════════
 
 class _ClocksPanel(QWidget):
-    """Card with amber top accent, clock list, count badge."""
+    """Card with amber top accent, clock list, count badge.
+
+    Renders ALL clocks (not just the top 3) and scrolls the visible window
+    of 3 rows via mouse wheel + ▲/▼ chevron buttons. No nested QScrollArea
+    (per file perf invariant #7) — uses absolute child positioning with a
+    snap-to-row scroll offset and a custom-painted track.
+    """
 
     clock_selected = pyqtSignal(int)
+
+    # Layout constants — the visible row window inside the 280×240 card
+    _ROWS_TOP     = 44      # y of the first visible row
+    _ROWS_PITCH   = 60      # row spacing (row 52h + 8 gutter)
+    _ROWS_VISIBLE = 3       # how many rows fit at once
+    _BTN_X        = 266     # chevron column (right edge of card, after rows)
+    _BTN_W        = 12
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedSize(280, 240)
         self._rows: list[_ClockRow] = []
         self._selected_id: Optional[int] = None
+        self._scroll_y: int = 0          # offset in px; snapped to _ROWS_PITCH
+        self._max_scroll: int = 0
+        self._count_total: int = 0
+        self._hover_up: bool = False
+        self._hover_dn: bool = False
+        self.setMouseTracking(True)      # for hover state on chevrons
         self._font_title = inter(11, QFont.Weight.Black, letter_spacing=2.0)
         self._font_count = inter(15, QFont.Weight.Bold)
+
+    # ── Public API ────────────────────────────────────────────────────────
 
     def selected_id(self) -> Optional[int]:
         return self._selected_id
 
     def set_clocks(self, clocks: list[dict]) -> None:
         """Replace the list. ``clocks`` items shape:
-        ``{"id": int, "name": str, "description": str}``."""
+        ``{"id": int, "name": str, "description": str}``.
+
+        All clocks become children; only rows fully inside the 180px window
+        (y ∈ [44, 172]) are shown. Wheel / chevron buttons advance the window.
+        """
         for r in self._rows:
             r.setParent(None); r.deleteLater()
         self._rows.clear()
-        # Visible window — 3 rows fit per Figma (52h each + spacing)
-        for i, c in enumerate(clocks[:3]):
+        for c in clocks:
             cid = int(c["id"])
             row = _ClockRow(
                 cid, str(c.get("name") or "Clock"),
                 str(c.get("description") or ""),
                 color_for_clock_id(cid), parent=self,
             )
-            row.move(16, 44 + i * 60)
             row.clicked.connect(self._on_row_clicked)
-            row.show()
             self._rows.append(row)
+        # Recompute max scroll (snapped to row pitch) and re-clamp
+        extra = max(0, len(clocks) - self._ROWS_VISIBLE)
+        self._max_scroll = extra * self._ROWS_PITCH
+        if self._scroll_y > self._max_scroll:
+            self._scroll_y = self._max_scroll
+        self._relayout_rows()
         # If selected id is gone, clear selection
         if (self._selected_id is not None
                 and self._selected_id not in [r.clock_id for r in self._rows]):
@@ -302,10 +330,120 @@ class _ClocksPanel(QWidget):
                 r.set_hint(hint)
                 return
 
+    def visible_rows(self) -> list["_ClockRow"]:
+        """Subset of ``_rows`` currently inside the 3-row visible window.
+        Used by tests + selection plumbing that cares about what the
+        operator can actually click."""
+        return [r for r in self._rows if not r.isHidden()]
+
+    def scroll_to_clock(self, cid: int) -> None:
+        """Ensure the row for ``cid`` is in the visible window. No-op if
+        already visible. Called after selection from external code."""
+        for i, r in enumerate(self._rows):
+            if r.clock_id == int(cid):
+                # Row natural y at scroll=0 is _ROWS_TOP + i * _ROWS_PITCH.
+                # Pick a scroll that places it inside [_ROWS_TOP, _ROWS_TOP + 2*PITCH].
+                natural_y = self._ROWS_TOP + i * self._ROWS_PITCH
+                # Snap scroll so the target row sits at one of the visible slots.
+                min_scroll = max(0,
+                                 natural_y - (self._ROWS_TOP + (self._ROWS_VISIBLE - 1)
+                                              * self._ROWS_PITCH))
+                max_scroll = max(0, natural_y - self._ROWS_TOP)
+                clamped = max(min_scroll, min(self._scroll_y, max_scroll))
+                clamped = max(0, min(self._max_scroll, clamped))
+                # Snap to row pitch
+                clamped = (clamped // self._ROWS_PITCH) * self._ROWS_PITCH
+                if clamped != self._scroll_y:
+                    self._scroll_y = clamped
+                    self._relayout_rows()
+                    self.update(self.rect())
+                return
+
+    # ── Scroll plumbing ───────────────────────────────────────────────────
+
+    def _relayout_rows(self) -> None:
+        """Position every row absolutely; show only the 3 fully inside the
+        180px visible band. Rows outside the band are hidden so they
+        can't receive clicks."""
+        for i, row in enumerate(self._rows):
+            y = self._ROWS_TOP + i * self._ROWS_PITCH - self._scroll_y
+            row.move(16, y)
+            # Row height is 52; visible if 44 <= y <= 172 (so y+52 <= 224)
+            if self._ROWS_TOP <= y <= (self._ROWS_TOP
+                                       + (self._ROWS_VISIBLE - 1) * self._ROWS_PITCH):
+                row.show()
+            else:
+                row.hide()
+
+    def _scroll_by(self, delta_rows: int) -> None:
+        """Step the visible window by ``delta_rows`` (positive = scroll down).
+        Snaps to row pitch."""
+        if self._max_scroll <= 0:
+            return
+        new = self._scroll_y + delta_rows * self._ROWS_PITCH
+        new = max(0, min(self._max_scroll, new))
+        if new == self._scroll_y:
+            return
+        self._scroll_y = new
+        self._relayout_rows()
+        self.update(self.rect())
+
+    def _can_scroll(self) -> bool:
+        return self._max_scroll > 0
+
+    def _can_scroll_up(self) -> bool:
+        return self._scroll_y > 0
+
+    def _can_scroll_dn(self) -> bool:
+        return self._scroll_y < self._max_scroll
+
+    def _up_btn_rect(self) -> QRect:
+        return QRect(self._BTN_X, 44, self._BTN_W, 14)
+
+    def _dn_btn_rect(self) -> QRect:
+        return QRect(self._BTN_X, 210, self._BTN_W, 14)
+
+    # ── Event handlers ────────────────────────────────────────────────────
+
+    def wheelEvent(self, e: QWheelEvent) -> None:
+        if self._max_scroll <= 0:
+            super().wheelEvent(e); return
+        dy = e.angleDelta().y()
+        self._scroll_by(-1 if dy > 0 else 1)
+        e.accept()
+
+    def mousePressEvent(self, e: QMouseEvent) -> None:
+        if e.button() == Qt.MouseButton.LeftButton and self._can_scroll():
+            pt = e.position().toPoint()
+            if self._up_btn_rect().contains(pt):
+                self._scroll_by(-1); e.accept(); return
+            if self._dn_btn_rect().contains(pt):
+                self._scroll_by(1); e.accept(); return
+        super().mousePressEvent(e)
+
+    def mouseMoveEvent(self, e: QMouseEvent) -> None:
+        pt = e.position().toPoint()
+        new_up = self._can_scroll_up() and self._up_btn_rect().contains(pt)
+        new_dn = self._can_scroll_dn() and self._dn_btn_rect().contains(pt)
+        if new_up != self._hover_up or new_dn != self._hover_dn:
+            self._hover_up = new_up
+            self._hover_dn = new_dn
+            self.update(self.rect())
+        super().mouseMoveEvent(e)
+
+    def leaveEvent(self, e):
+        if self._hover_up or self._hover_dn:
+            self._hover_up = False
+            self._hover_dn = False
+            self.update(self.rect())
+        super().leaveEvent(e)
+
     def _on_row_clicked(self, cid: int) -> None:
         # Toggle: clicking the already-selected row deselects
         new = None if self._selected_id == cid else int(cid)
         self.select_clock(new)
+
+    # ── Paint ─────────────────────────────────────────────────────────────
 
     def paintEvent(self, e: QPaintEvent) -> None:
         p = QPainter(self); p.setClipRect(e.rect())
@@ -333,11 +471,63 @@ class _ClocksPanel(QWidget):
         # Count badge
         p.setPen(QColor(COL_TEXT_PRIMARY))
         p.setFont(self._font_count)
-        total = getattr(self, "_count_total", 0)
         p.drawText(QRectF(self.width() - 30, 14, 18, 18),
                    Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
-                   str(total))
+                   str(self._count_total))
+        # Scroll chrome — only when scrolling is possible
+        if self._can_scroll():
+            self._paint_scroll_chrome(p)
         p.end()
+
+    def _paint_scroll_chrome(self, p: QPainter) -> None:
+        """Draw ▲/▼ chevron buttons + thin track between them."""
+        p.setPen(Qt.PenStyle.NoPen)
+
+        # ▲ button
+        up_r = self._up_btn_rect()
+        up_hot = self._can_scroll_up()
+        up_a = 1.0 if (self._hover_up and up_hot) else (0.85 if up_hot else 0.25)
+        ax = up_r.x() + up_r.width() / 2.0
+        ay = up_r.y() + 4
+        up_poly = QPolygonF([
+            QPointF(ax,        ay),
+            QPointF(ax - 5.0,  ay + 6.0),
+            QPointF(ax + 5.0,  ay + 6.0),
+        ])
+        p.setBrush(_qcolor(COL_AMBER_LT, up_a))
+        p.drawPolygon(up_poly)
+
+        # ▼ button
+        dn_r = self._dn_btn_rect()
+        dn_hot = self._can_scroll_dn()
+        dn_a = 1.0 if (self._hover_dn and dn_hot) else (0.85 if dn_hot else 0.25)
+        bx = dn_r.x() + dn_r.width() / 2.0
+        by = dn_r.y() + 10
+        dn_poly = QPolygonF([
+            QPointF(bx,        by),
+            QPointF(bx - 5.0,  by - 6.0),
+            QPointF(bx + 5.0,  by - 6.0),
+        ])
+        p.setBrush(_qcolor(COL_AMBER_LT, dn_a))
+        p.drawPolygon(dn_poly)
+
+        # Track + thumb between the two chevrons
+        track_x = self._BTN_X + (self._BTN_W // 2) - 1   # centred under chevrons
+        track_y = 64
+        track_h = 140
+        p.setBrush(QColor(255, 255, 255, 22))
+        p.drawRoundedRect(QRectF(track_x, track_y, 3, track_h), 1.5, 1.5)
+        # Thumb size proportional to visible/total ratio
+        visible_h = self._ROWS_VISIBLE * self._ROWS_PITCH       # 180
+        total_h = visible_h + self._max_scroll
+        thumb_ratio = visible_h / total_h if total_h > 0 else 1.0
+        thumb_h = max(24, int(track_h * thumb_ratio))
+        thumb_max_off = max(0, track_h - thumb_h)
+        thumb_off = (int(self._scroll_y / self._max_scroll * thumb_max_off)
+                     if self._max_scroll > 0 else 0)
+        p.setBrush(_qcolor(COL_AMBER, 0.85))
+        p.drawRoundedRect(QRectF(track_x, track_y + thumb_off, 3, thumb_h),
+                          1.5, 1.5)
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -1146,8 +1336,8 @@ class AutoSchedule(QWidget):
         except Exception as exc:
             log.warning(f"load clocks failed: {exc}")
             clocks = []
-        # Sort newest-first so a freshly-saved clock always lands in the
-        # visible 3-row window (panel slices to top 3 per Figma 278:2).
+        # Sort newest-first so a freshly-saved clock always lands at the
+        # top of the visible window without the operator scrolling.
         # db.get_all_clocks() orders by name — fine for full-list callers,
         # but here the operator's mental model is "the clock I just made."
         # Higher id = more recently created (autoincrement primary key).
@@ -1243,20 +1433,14 @@ class AutoSchedule(QWidget):
         self._card.grid.set_grid({})
         log.info(f"[auto_sched] cleared schedule ({n} rows)")
 
-    def _delete_clock_with_cells(self, cid: int) -> None:
-        """Clear every auto_schedule row referencing ``cid``, then drop
-        the clock. Two steps because the live schema's
-        ``auto_schedule.clock_id`` FK is *not* declared
-        ``ON DELETE CASCADE`` (despite the db.delete_clock docstring) —
-        bare delete_clock raises IntegrityError when assignments exist."""
-        cells = [(d, h) for (d, h), assigned
-                 in self._card.grid._grid.items() if assigned == int(cid)]
-        for d, h in cells:
-            try:
-                self._db.clear_auto_schedule_cell(int(d), int(h))
-            except Exception as exc:
-                log.warning(f"clear cell ({d},{h}) failed: {exc}")
-        self._db.delete_clock(int(cid))
+    def _cells_assigned_to(self, cid: int) -> list[tuple[int, int]]:
+        """Return every (day, hour) cell currently assigned to ``cid``.
+        Reads from the grid cache populated by ``_reload_clocks_and_grid``."""
+        return sorted(
+            (d, h) for (d, h), assigned
+            in self._card.grid._grid.items()
+            if assigned == int(cid)
+        )
 
     def _on_delete_clicked(self) -> None:
         cid = self._clocks_panel.selected_id()
@@ -1264,14 +1448,34 @@ class AutoSchedule(QWidget):
             return
         meta = self._card.grid._clock_meta.get(int(cid)) or {}
         name = meta.get("name") or f"clock #{cid}"
+        # Refuse delete if the clock is still assigned to any grid cell —
+        # the operator must clear those cells first. Protects against
+        # accidental wipe of the day's schedule via a delete.
+        assigned = self._cells_assigned_to(int(cid))
+        if assigned:
+            sample = ", ".join(
+                f"{DAY_NAMES_SHORT[d]} {h:02d}:00" for d, h in assigned[:3]
+            )
+            tail = (f" + {len(assigned) - 3} more"
+                    if len(assigned) > 3 else "")
+            dialogs.warning(
+                self, "Clock is in use",
+                f"'{name}' is assigned to {len(assigned)} schedule slot"
+                f"{'s' if len(assigned) != 1 else ''} ({sample}{tail}).\n\n"
+                f"Remove this clock from every schedule cell first, then "
+                f"the delete will go through.")
+            return
         if not dialogs.confirm(
                 self, "Delete clock?",
-                f"Delete '{name}'? Every cell using it will be "
-                f"cleared.",
+                f"Delete '{name}'?",
                 danger=True, yes_label="Delete Clock"):
             return
         try:
-            self._delete_clock_with_cells(int(cid))
+            # db.delete_clock manual-cascades clock_slots / broadcast_log /
+            # ai_rotation_decisions / force_clocks (see commit d65ba98).
+            # No auto_schedule cells exist for this clock (just checked
+            # above), so the bare delete is safe.
+            self._db.delete_clock(int(cid))
         except ValueError as exc:
             dialogs.info(self, "Cannot delete", str(exc)); return
         except Exception as exc:

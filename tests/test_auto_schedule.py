@@ -339,21 +339,62 @@ def test_duplicate_clock_creates_clone(screen):
     assert cln["name"].startswith(src["name"])
 
 
-def test_delete_clock_clears_referencing_cells(screen):
-    """The screen's delete flow clears every auto_schedule row using the
-    clock first, then drops the clock. The bare db.delete_clock raises
-    IntegrityError on a clock that's still referenced (FK not declared
-    ON DELETE CASCADE) — flagged in NIGHT_LOG as a docstring bug."""
+def test_delete_refuses_when_clock_is_assigned_to_grid_cells(screen,
+                                                              monkeypatch):
+    """Operator request 2026-05-17: if a clock is still assigned to any
+    auto_schedule cell, the screen MUST refuse to delete it. The operator
+    has to clear the cells from the grid first — protects against the
+    accidental schedule wipe that the old auto-clear flow could cause."""
     s, env = screen
-    cid = env.make_clock("cascade")
+    cid = env.make_clock("refuse_when_assigned")
     env.db.set_auto_schedule_cell(3, 14, cid)
     s._reload_clocks_and_grid()
     assert env.db.get_auto_schedule_grid().get((3, 14)) == cid
     s._clocks_panel.select_clock(cid)
-    s._delete_clock_with_cells(cid)
-    env.created_clock_ids.remove(cid)    # already gone — don't double-delete
-    grid_after = env.db.get_auto_schedule_grid()
-    assert (3, 14) not in grid_after
+    # Intercept the warning + confirm dialogs so the test stays headless.
+    warnings: list[tuple[str, str]] = []
+    def _fake_warning(parent, title, text, **kw):
+        warnings.append((title, text))
+    confirms: list[tuple[str, str]] = []
+    def _fake_confirm(parent, title, text, **kw):
+        confirms.append((title, text))
+        return True
+    monkeypatch.setattr("ui.auto_schedule.dialogs.warning", _fake_warning)
+    monkeypatch.setattr("ui.auto_schedule.dialogs.confirm", _fake_confirm)
+    s._on_delete_clicked()
+    # Refused: warning shown, no confirm, clock + cell both still alive.
+    assert warnings, "expected a 'Clock is in use' warning"
+    assert "use" in warnings[0][0].lower() or "use" in warnings[0][1].lower()
+    assert not confirms, "delete must not prompt for confirmation when blocked"
+    assert env.db.get_auto_schedule_grid().get((3, 14)) == cid
+    assert env.db.get_clock(cid) is not None
+    # Cleanup the cell so the env fixture's delete_clock cascade can run.
+    env.db.clear_auto_schedule_cell(3, 14)
+
+
+def test_delete_succeeds_when_clock_has_no_grid_assignments(screen,
+                                                            monkeypatch):
+    """Counterpart to the refuse case: once the operator has cleared every
+    assignment, the next Delete click confirms + drops the clock."""
+    s, env = screen
+    cid = env.make_clock("delete_when_clean")
+    s._reload_clocks_and_grid()
+    assert env.db.get_clock(cid) is not None
+    s._clocks_panel.select_clock(cid)
+    # Auto-confirm the dialog; no warning is expected at all.
+    confirms: list[tuple[str, str]] = []
+    def _fake_confirm(parent, title, text, **kw):
+        confirms.append((title, text))
+        return True
+    warnings: list[tuple[str, str]] = []
+    def _fake_warning(parent, title, text, **kw):
+        warnings.append((title, text))
+    monkeypatch.setattr("ui.auto_schedule.dialogs.warning", _fake_warning)
+    monkeypatch.setattr("ui.auto_schedule.dialogs.confirm", _fake_confirm)
+    s._on_delete_clicked()
+    assert not warnings, f"unexpected warning: {warnings}"
+    assert confirms, "expected a delete confirmation"
+    env.created_clock_ids.remove(cid)    # gone — don't double-delete in cleanup
     assert env.db.get_clock(cid) is None
 
 
@@ -361,11 +402,13 @@ def test_delete_clock_clears_referencing_cells(screen):
 
 
 def test_panel_orders_newest_first_so_freshly_saved_appears_in_top_slot(screen):
-    """``_reload_clocks_and_grid`` must sort by id DESC before slicing to
-    the panel's 3-row window. db.get_all_clocks() orders by name; on a
-    DB with 30+ clocks, an alphabetically-late name (e.g. lowercase
-    'test 01') would never reach the top 3 — operator perceives "save
-    vanished." Higher id ⇒ more recently created (autoincrement PK)."""
+    """``_reload_clocks_and_grid`` must sort by id DESC. db.get_all_clocks()
+    orders by name; on a DB with 30+ clocks, an alphabetically-late name
+    (e.g. lowercase 'test 01') would render below the visible window —
+    operator perceives "save vanished." Higher id ⇒ more recently created
+    (autoincrement PK). With the post-2026-05-17 scrollable panel, ALL
+    clocks land in ``_rows``; we still need the newest at index 0 so it
+    is visible by default without scrolling."""
     s, env = screen
     # Seed 4 fresh clocks so we KNOW the highest-id one is ours, not
     # whatever the live DB had before
@@ -377,13 +420,95 @@ def test_panel_orders_newest_first_so_freshly_saved_appears_in_top_slot(screen):
     ])
     newest = seeded_ids[-1]
     s._reload_clocks_and_grid()
-    # The visible panel is sliced to 3 rows by _ClocksPanel.set_clocks.
-    # After the newest-first sort, the highest seeded id MUST be in slot 0.
-    visible_ids = [r.clock_id for r in s._clocks_panel._rows]
-    assert visible_ids, "panel rendered no rows"
-    assert visible_ids[0] == newest, (
-        f"expected newest clock id={newest} in slot 0, got "
-        f"visible={visible_ids}")
+    # All clocks live in _rows (no slice). The highest seeded id MUST be
+    # index 0 + inside the visible window at scroll_y=0.
+    row_ids = [r.clock_id for r in s._clocks_panel._rows]
+    assert row_ids, "panel rendered no rows"
+    assert row_ids[0] == newest, (
+        f"expected newest clock id={newest} at index 0, got rows={row_ids}")
+    visible_ids = [r.clock_id for r in s._clocks_panel.visible_rows()]
+    assert newest in visible_ids, (
+        f"newest id={newest} must be in default visible window, "
+        f"got visible={visible_ids}")
+
+
+# ── Scroll plumbing (regression: "30 clocks but only 3 visible") ────────
+
+
+def test_panel_renders_all_clocks_not_just_top_three(screen):
+    """Operator's 2026-05-16 bug: ``set_clocks`` previously hard-sliced to
+    ``clocks[:3]``. Even with 30 clocks in DB, only 3 could be selected
+    — Delete on a hidden clock did nothing because the button stayed
+    disabled (selection impossible). The fix renders every clock as a
+    child widget; the 3-row visible window scrolls via wheel + buttons."""
+    s, env = screen
+    # Seed 5 fresh clocks so we exceed the 3-row visible window by 2 rows.
+    seeded = [env.make_clock(f"scroll_{i}") for i in range(5)]
+    s._reload_clocks_and_grid()
+    row_ids = [r.clock_id for r in s._clocks_panel._rows]
+    # Every seeded id must be in _rows (not sliced out).
+    for cid in seeded:
+        assert cid in row_ids, f"clock id={cid} missing from _rows"
+    panel = s._clocks_panel
+    # Visible window at default scroll = first 3 rows.
+    assert len(panel.visible_rows()) == 3
+    # max_scroll = (N - 3) * 60, where N = total clocks in DB right now.
+    assert panel._max_scroll == max(0, (len(row_ids) - 3) * 60)
+    assert panel._can_scroll(), "scroll must be possible when N > 3"
+
+
+def test_panel_scroll_buttons_advance_visible_window(screen):
+    """Click ▼ → window shifts by one row (60px); click ▲ → reverses.
+    Wheel + buttons share the same _scroll_by codepath; testing the
+    button rects covers both."""
+    from PyQt6.QtCore import QPointF
+    s, env = screen
+    for i in range(5):
+        env.make_clock(f"btn_{i}")
+    s._reload_clocks_and_grid()
+    panel = s._clocks_panel
+    initial_visible = [r.clock_id for r in panel.visible_rows()]
+    assert len(initial_visible) == 3
+    # Synthesize a left-button click on the ▼ chevron centre.
+    dn = panel._dn_btn_rect()
+    pt = QPointF(dn.center().x(), dn.center().y())
+    ev = QMouseEvent(QEvent.Type.MouseButtonPress, pt, pt,
+                     Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+                     Qt.KeyboardModifier.NoModifier)
+    panel.mousePressEvent(ev)
+    # Scroll advanced by exactly one row pitch.
+    assert panel._scroll_y == panel._ROWS_PITCH
+    after_dn_visible = [r.clock_id for r in panel.visible_rows()]
+    assert after_dn_visible != initial_visible, "▼ click should shift window"
+    # ▲ scrolls back.
+    up = panel._up_btn_rect()
+    pt2 = QPointF(up.center().x(), up.center().y())
+    ev2 = QMouseEvent(QEvent.Type.MouseButtonPress, pt2, pt2,
+                      Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+                      Qt.KeyboardModifier.NoModifier)
+    panel.mousePressEvent(ev2)
+    assert panel._scroll_y == 0
+    assert [r.clock_id for r in panel.visible_rows()] == initial_visible
+
+
+def test_panel_scroll_clamps_when_clocks_shrink_below_visible(screen):
+    """After deleting clocks until only 3 remain, max_scroll must clamp
+    to 0 so the panel doesn't leave scroll state pointing past the end."""
+    s, env = screen
+    seeded = [env.make_clock(f"clamp_{i}") for i in range(5)]
+    s._reload_clocks_and_grid()
+    panel = s._clocks_panel
+    panel._scroll_y = panel._max_scroll      # scroll to bottom
+    assert panel._scroll_y > 0
+    # Delete the seeded clocks via the DB (no UI flow); reload the panel.
+    for cid in seeded:
+        env.db.delete_clock(int(cid))
+    env.created_clock_ids = [c for c in env.created_clock_ids
+                             if c not in seeded]
+    s._reload_clocks_and_grid()
+    # Even if the dev DB still has > 3 clocks total, scroll must be
+    # clamped to the new max — never pointing past available rows.
+    assert panel._scroll_y <= panel._max_scroll
 
 
 def test_freshly_saved_clock_via_clock_editor_visible_after_reload(qtbot, screen):
