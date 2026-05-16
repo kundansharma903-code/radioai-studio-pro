@@ -3000,16 +3000,65 @@ class Database:
             raise
 
     def delete_clock(self, clock_id: int) -> None:
-        """Delete a clock by exact id (FK ON DELETE CASCADE removes its
-        slots and any auto_schedule rows). Refuses to drop the very last
-        clock so the editor always has something to load."""
+        """Delete a clock and ALL its dependent rows across every
+        table that references ``clocks(id)``. Manual cascade because
+        the live DB (created from an earlier schema version) doesn't
+        actually enforce the ``ON DELETE CASCADE`` declared in the
+        current schema.sql — silent FK failures used to make the
+        Delete Selected Clock button look broken in Main Auto
+        Schedule (2026-05-16 bug). All operations in a single
+        transaction so a mid-flight failure rolls back cleanly.
+
+        Cleanup chain:
+          • ``clock_slots``           — DELETE (slots are owned by
+                                        the clock; no orphans allowed)
+          • ``auto_schedule``         — DELETE (grid cells using
+                                        this clock; gone with the clock)
+          • ``ai_rotation_decisions`` — DELETE (per-day decisions
+                                        tied to this clock; gone)
+          • ``broadcast_log``         — NULL out clock_id only;
+                                        preserves the historical
+                                        record of what actually
+                                        played, just loses the
+                                        clock association
+          • ``force_clocks``          — NULL out clock_id; preserves
+                                        the override row's date
+
+        Refuses to drop the very last clock so the editor always
+        has something to load (raises ``ValueError``)."""
         conn = self._conn()
-        total = conn.execute("SELECT COUNT(*) FROM clocks").fetchone()[0]
+        total = conn.execute(
+            "SELECT COUNT(*) FROM clocks WHERE is_active = 1"
+        ).fetchone()[0]
         if int(total or 0) <= 1:
             raise ValueError("cannot delete the last remaining clock")
         cid = int(clock_id)
         try:
             conn.execute("BEGIN")
+            # 1. Owned children — delete outright
+            conn.execute(
+                "DELETE FROM clock_slots WHERE clock_id = ?", [cid])
+            conn.execute(
+                "DELETE FROM auto_schedule WHERE clock_id = ?", [cid])
+            # ai_rotation_decisions may not exist on very old DBs;
+            # try/except keeps backwards compatibility.
+            try:
+                conn.execute(
+                    "DELETE FROM ai_rotation_decisions "
+                    "WHERE clock_id = ?", [cid])
+            except Exception:
+                pass
+            # 2. Historical references — NULL out, preserve audit
+            conn.execute(
+                "UPDATE broadcast_log SET clock_id = NULL "
+                "WHERE clock_id = ?", [cid])
+            try:
+                conn.execute(
+                    "UPDATE force_clocks SET clock_id = NULL "
+                    "WHERE clock_id = ?", [cid])
+            except Exception:
+                pass
+            # 3. Finally drop the clock itself
             conn.execute("DELETE FROM clocks WHERE id = ?", [cid])
             conn.commit()
         except Exception:
