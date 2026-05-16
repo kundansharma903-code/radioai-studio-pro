@@ -263,14 +263,38 @@ class _PremiumDialog(QDialog):
                     lambda: self._on_btn(default_btn_idx))
 
         self._clicked_idx = -1
-        # Center on parent (if any)
-        if parent is not None:
-            try:
-                pgeo = parent.geometry()
-                self.move(pgeo.center().x() - self.CARD_W // 2 - 24,
-                          pgeo.center().y() - 120)
-            except Exception:
-                pass
+        # Center the dialog over the parent's TOP-LEVEL WINDOW
+        # using screen coordinates. Earlier this used parent.geometry()
+        # — which returns geometry in the parent's parent's coordinate
+        # system, NOT screen coordinates — so when ``parent`` was a
+        # nested widget (e.g. AutoSchedule mounted inside MainWindow's
+        # stack), the dialog moved to garbage screen coordinates and
+        # could land off-screen or behind the main window. exec()
+        # would block silently waiting for an invisible dialog, which
+        # the operator experienced as "Delete Selected Clock button
+        # does nothing." (2026-05-16 fix.)
+        try:
+            top_window = None
+            if parent is not None and hasattr(parent, "window"):
+                top_window = parent.window()
+            if top_window is not None:
+                # frameGeometry returns the window's position + size
+                # in SCREEN coordinates (including title bar / frame).
+                tg = top_window.frameGeometry()
+                cx = tg.x() + tg.width() // 2
+                cy = tg.y() + tg.height() // 2
+            else:
+                screen = QApplication.primaryScreen()
+                if screen is not None:
+                    geo = screen.availableGeometry()
+                    cx = geo.center().x()
+                    cy = geo.center().y()
+                else:
+                    cx, cy = 480, 360
+            # Card is 460 wide; outer adds 24px shadow margin
+            self.move(cx - self.CARD_W // 2 - 24, cy - 140)
+        except Exception:
+            pass
 
     # ── Painting (accent stripe lives here so it doesn't break
     #    the card's rounded top corners) ───────────────────────────
