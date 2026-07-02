@@ -20,7 +20,8 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import (
     QWidget, QFrame, QLabel, QPushButton, QLineEdit, QComboBox,
-    QHBoxLayout, QVBoxLayout, QScrollArea, QMessageBox, QInputDialog,
+    QHBoxLayout, QVBoxLayout, QGridLayout, QScrollArea, QMessageBox,
+    QInputDialog,
 )
 
 from ui.widgets._tokens import (
@@ -35,6 +36,16 @@ log = logging.getLogger("EditCategoriesDialog")
 
 INPUT_BG = "#0a0c18"
 INPUT_BORDER = "#1c1f38"
+
+# Air-time preset chips: (label, hour_start, hour_end) — daily (day_of_week=None)
+DAYPART_PRESETS = [
+    ("Morning Drive 06-10", 6, 10),
+    ("Midday 10-14",        10, 14),
+    ("Afternoon 14-18",     14, 18),
+    ("Evening 18-23",       18, 23),
+    ("Late Night 23-02",    23, 2),   # overnight wrap (h2 <= h1)
+]
+DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 # 10 swatch colors (Figma)
 SWATCH_COLORS = [
@@ -286,6 +297,16 @@ class EditCategoriesDialog(BaseDialog):
         self._songs_count_badge: Optional[QLabel] = None
         self._swatches: List[_ColorSwatch] = []
 
+        # Air-time (auto-grid) daypart tags for the selected category:
+        # list of (day_of_week_or_None, hour_start, hour_end)
+        self._dayparts: List[tuple] = []
+        self._preset_chips: List[QPushButton] = []
+        self._dp_start_combo: Optional[QComboBox] = None
+        self._dp_end_combo: Optional[QComboBox] = None
+        self._dp_day_combo: Optional[QComboBox] = None
+        self._pills_grid = None          # QGridLayout of current tag pills
+        self._pills_empty_hint: Optional[QLabel] = None
+
         super().__init__(target_size=(640, 560), parent=parent)
         self._load_categories()
 
@@ -525,6 +546,75 @@ class EditCategoriesDialog(BaseDialog):
         self._songs_preview = _SongsPreview()
         fv.addWidget(self._songs_preview)
 
+        # ── AIR TIME (AUTO-GRID) ──────────────────────────────────────────
+        fv.addSpacing(2)
+        air_hdr = QLabel("AIR TIME (AUTO-GRID)")
+        air_hdr.setFont(inter(9, QFont.Weight.Bold, letter_spacing=0.8))
+        air_hdr.setStyleSheet(f"color: {TEXT_MUTED}; background: transparent;")
+        air_hdr.setFixedHeight(13)
+        fv.addWidget(air_hdr)
+
+        # Preset chips (toggle daily dayparts) — 3 + 2 across two rows
+        self._preset_chips = []
+        for chunk in (DAYPART_PRESETS[:3], DAYPART_PRESETS[3:]):
+            chip_row = QHBoxLayout()
+            chip_row.setContentsMargins(0, 0, 0, 0); chip_row.setSpacing(4)
+            for label, h1, h2 in chunk:
+                chip = self._make_preset_chip(label, h1, h2)
+                self._preset_chips.append(chip)
+                chip_row.addWidget(chip)
+            chip_row.addStretch()
+            fv.addLayout(chip_row)
+
+        # Custom row: start hour · end hour · day · + Add
+        custom_row = QHBoxLayout()
+        custom_row.setContentsMargins(0, 0, 0, 0); custom_row.setSpacing(4)
+        self._dp_start_combo = self._make_combo(
+            [f"{h:02d}:00" for h in range(24)])
+        self._dp_start_combo.setFixedWidth(66)
+        self._dp_start_combo.setCurrentIndex(6)
+        custom_row.addWidget(self._dp_start_combo)
+        arrow = QLabel("→")
+        arrow.setFont(inter(10))
+        arrow.setStyleSheet(f"color: {TEXT_MUTED}; background: transparent;")
+        custom_row.addWidget(arrow)
+        self._dp_end_combo = self._make_combo(
+            [f"{h:02d}:00" for h in range(24)])
+        self._dp_end_combo.setFixedWidth(66)
+        self._dp_end_combo.setCurrentIndex(10)
+        custom_row.addWidget(self._dp_end_combo)
+        self._dp_day_combo = self._make_combo(
+            ["Every day"] + list(DAY_NAMES))
+        self._dp_day_combo.setFixedWidth(92)
+        custom_row.addWidget(self._dp_day_combo)
+        add_dp = QPushButton("+ Add")
+        add_dp.setFixedSize(52, 30)
+        add_dp.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        add_dp.setFont(inter(10, QFont.Weight.DemiBold))
+        add_dp.setStyleSheet(
+            f"QPushButton {{ background: #052e16; color: {GREEN}; "
+            f"border: none; border-left: 2px solid {GREEN}; border-radius: 7px; }}"
+            f"QPushButton:hover {{ background: {rgba(GREEN, 0.30)}; }}"
+        )
+        add_dp.clicked.connect(self._on_add_daypart)
+        custom_row.addWidget(add_dp)
+        custom_row.addStretch()
+        fv.addLayout(custom_row)
+
+        # Current tags — pill grid (2 columns), × on a pill removes it
+        pills_wrap = QWidget(); pills_wrap.setStyleSheet("background: transparent;")
+        self._pills_grid = QGridLayout(pills_wrap)
+        self._pills_grid.setContentsMargins(0, 0, 0, 0)
+        self._pills_grid.setHorizontalSpacing(4)
+        self._pills_grid.setVerticalSpacing(4)
+        fv.addWidget(pills_wrap)
+        self._pills_empty_hint = QLabel(
+            "No air-time tags — auto-grid leaves the schedule untouched")
+        self._pills_empty_hint.setFont(inter(8))
+        self._pills_empty_hint.setStyleSheet(
+            f"color: {TEXT_DIM}; background: transparent;")
+        fv.addWidget(self._pills_empty_hint)
+
         # Save Category button
         save = QPushButton("✓  Save Category")
         save.setFixedHeight(34)
@@ -585,6 +675,90 @@ class EditCategoriesDialog(BaseDialog):
             f"outline: none; padding: 4px; }}"
         )
         return c
+
+    # ── Air time (auto-grid) helpers ──────────────────────────────────────
+
+    def _make_preset_chip(self, label: str, h1: int, h2: int) -> QPushButton:
+        chip = QPushButton(label)
+        chip.setCheckable(True)
+        chip.setFixedHeight(22)
+        chip.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        chip.setFont(inter(8, QFont.Weight.Medium))
+        chip.setStyleSheet(
+            f"QPushButton {{ background: {INPUT_BG}; color: {TEXT_SEC}; "
+            f"border: 1px solid {rgba(INPUT_BORDER, 0.7)}; "
+            f"border-radius: 11px; padding: 0 8px; }}"
+            f"QPushButton:hover {{ border-color: {rgba(PURPLE, 0.7)}; }}"
+            f"QPushButton:checked {{ background: {rgba(PURPLE, 0.25)}; "
+            f"color: {PURPLE_LIGHT}; border: 1px solid {PURPLE}; }}"
+        )
+        chip.clicked.connect(lambda _c, a=h1, b=h2: self._toggle_preset(a, b))
+        return chip
+
+    def _toggle_preset(self, h1: int, h2: int):
+        tag = (None, h1, h2)
+        if tag in self._dayparts:
+            self._dayparts.remove(tag)
+        else:
+            self._dayparts.append(tag)
+        self._refresh_daypart_ui()
+
+    def _on_add_daypart(self):
+        h1 = self._dp_start_combo.currentIndex()
+        h2 = self._dp_end_combo.currentIndex()
+        day_ix = self._dp_day_combo.currentIndex()
+        dow = None if day_ix == 0 else day_ix - 1   # Every day → None, Mon..Sun → 0..6
+        if h1 == h2:
+            dialogs.warning(self, "Invalid range",
+                            "Start and end hour must be different.")
+            return
+        tag = (dow, h1, h2)   # h2 <= h1 = overnight wrap (backend supported)
+        if tag in self._dayparts:
+            return
+        self._dayparts.append(tag)
+        self._refresh_daypart_ui()
+
+    def _remove_daypart(self, tag: tuple):
+        if tag in self._dayparts:
+            self._dayparts.remove(tag)
+        self._refresh_daypart_ui()
+
+    def _daypart_label(self, tag: tuple) -> str:
+        dow, h1, h2 = tag
+        day = "Daily" if dow is None else DAY_NAMES[int(dow) % 7]
+        return f"{day} {h1:02d}:00-{h2:02d}:00"
+
+    def _refresh_daypart_ui(self):
+        """Sync preset chips + rebuild the tag pill grid from _dayparts."""
+        # Preset chips reflect active state from the list
+        for chip, (_lbl, h1, h2) in zip(self._preset_chips, DAYPART_PRESETS):
+            chip.setChecked((None, h1, h2) in self._dayparts)
+        # Rebuild pills
+        if self._pills_grid is None:
+            return
+        while self._pills_grid.count():
+            item = self._pills_grid.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+        for i, tag in enumerate(self._dayparts):
+            pill = QPushButton(f"{self._daypart_label(tag)}  ×")
+            pill.setFixedHeight(20)
+            pill.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+            pill.setFont(mono(8))
+            pill.setStyleSheet(
+                f"QPushButton {{ background: #131626; color: {TEXT_SEC}; "
+                f"border: 1px solid {rgba(INPUT_BORDER, 0.7)}; "
+                f"border-radius: 10px; padding: 0 8px; text-align: center; }}"
+                f"QPushButton:hover {{ background: {rgba(RED, 0.18)}; "
+                f"color: {RED_LIGHT}; border-color: {rgba(RED, 0.5)}; }}"
+            )
+            pill.setToolTip("Click to remove this air-time tag")
+            pill.clicked.connect(lambda _c, t=tag: self._remove_daypart(t))
+            self._pills_grid.addWidget(
+                pill, i // 2, i % 2, Qt.AlignmentFlag.AlignLeft)
+        if self._pills_empty_hint:
+            self._pills_empty_hint.setVisible(not self._dayparts)
 
     # ── Footer ────────────────────────────────────────────────────────────
 
@@ -690,6 +864,19 @@ class EditCategoriesDialog(BaseDialog):
                 self._songs_count_badge.setText(f"{total} song{'s' if total != 1 else ''}")
         except Exception as exc:
             log.error(f"songs preview failed: {exc}")
+
+        # Air-time daypart tags for this category
+        try:
+            parts = self._db.get_category_dayparts(cat["id"])
+            self._dayparts = [
+                (None if p["day_of_week"] is None else int(p["day_of_week"]),
+                 int(p["hour_start"]), int(p["hour_end"]))
+                for p in parts
+            ]
+        except Exception as exc:
+            log.error(f"dayparts load failed: {exc}")
+            self._dayparts = []
+        self._refresh_daypart_ui()
 
     def _on_color_picked(self, hex_color: str):
         self._selected_color = hex_color
@@ -804,6 +991,32 @@ class EditCategoriesDialog(BaseDialog):
             dialogs.error(self, "Save failed", f"Could not save:\n\n{exc}")
             return
 
+        # Persist air-time tags + rebuild the auto grid. A grid-build
+        # failure must never block the category save — warn in the log.
+        grid_note = ""
+        try:
+            self._db.set_category_dayparts(
+                self._selected_id, list(self._dayparts))
+            log.info(f"[SAVE] dayparts saved: {self._dayparts}")
+        except Exception as exc:
+            log.error(f"[SAVE] set_category_dayparts failed: {exc}",
+                      exc_info=True)
+            dialogs.warning(
+                self, "Air time not saved",
+                f"Category saved, but the air-time tags could not "
+                f"be stored:\n\n{exc}")
+        else:
+            try:
+                from core.auto_grid_builder import build_grid
+                summary = build_grid(self._db)
+                log.info(f"[SAVE] auto-grid rebuilt: {summary}")
+                if isinstance(summary, dict) and not summary.get("error"):
+                    grid_note = (f" · grid: {summary.get('placed', 0)} placed, "
+                                 f"{summary.get('cleared', 0)} cleared")
+            except Exception as exc:
+                log.warning(f"[SAVE] auto-grid rebuild failed "
+                            f"(save kept): {exc}")
+
         # Reload — _load_categories now preserves current selection
         saved_id = self._selected_id
         self._load_categories()
@@ -811,16 +1024,16 @@ class EditCategoriesDialog(BaseDialog):
         log.info(f"[SAVE] DONE — category id={saved_id} saved as '{name}'")
 
         # Visible success feedback — flash the Save button green for 1 second
-        self._flash_save_success(name)
+        self._flash_save_success(name, grid_note)
 
-    def _flash_save_success(self, name: str):
+    def _flash_save_success(self, name: str, extra: str = ""):
         """Show a brief 'Saved' confirmation on the Save button."""
         if not hasattr(self, "_save_btn_ref") or self._save_btn_ref is None:
             return
         btn = self._save_btn_ref
         original_text = btn.text()
         original_style = btn.styleSheet()
-        btn.setText(f"✓  Saved '{name}'")
+        btn.setText(f"✓  Saved '{name}'{extra}")
         btn.setStyleSheet(
             f"QPushButton {{ background: qlineargradient("
             f"x1:0,y1:0,x2:0,y2:1, stop:0 #34d399, stop:1 #059669); "

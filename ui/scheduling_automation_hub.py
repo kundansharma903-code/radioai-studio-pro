@@ -889,6 +889,62 @@ class SchedulingAutomationHub(QWidget):
             f"border: none;")
         hint.setAlignment(Qt.AlignmentFlag.AlignRight)
 
+        # CATEGORY AUTO-GRID strip (2026-07-02) — status + Rebuild Now
+        # for the daypart-driven grid builder (core/auto_grid_builder).
+        self._autogrid_lbl = QLabel("", self)
+        self._autogrid_lbl.setGeometry(150, 306, 900, 20)
+        self._autogrid_lbl.setFont(inter(10, QFont.Weight.Bold))
+        self._autogrid_lbl.setStyleSheet(
+            f"color: {CYAN}; background: transparent; border: none;")
+
+        def _refresh_autogrid_lbl(extra: str = ""):
+            try:
+                if self._db is None:
+                    self._autogrid_lbl.setText(
+                        "▦ CATEGORY AUTO-GRID: (no db)")
+                    return
+                parts = self._db.get_all_category_dayparts()
+                cats = len({p["category_id"] for p in parts})
+                cells = len(self._db.get_auto_grid_cell_records())
+                txt = (f"▦ CATEGORY AUTO-GRID: {cats} categor"
+                       f"{'y' if cats == 1 else 'ies'} tagged · "
+                       f"{cells} auto cells on the grid")
+                if extra:
+                    txt += f"   —   {extra}"
+                self._autogrid_lbl.setText(txt)
+            except Exception as exc:
+                self._autogrid_lbl.setText(
+                    f"▦ CATEGORY AUTO-GRID: status failed ({exc})")
+        self._refresh_autogrid_lbl = _refresh_autogrid_lbl
+        _refresh_autogrid_lbl()
+
+        rebuild = QPushButton("▦   Rebuild Grid", self)
+        rebuild.setGeometry(1116, 304, 248, 26)
+        rebuild.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        rebuild.setFont(inter(10, QFont.Weight.Bold))
+        rebuild.setStyleSheet(
+            f"QPushButton {{ background: {rgba(PURPLE, 0.18)}; "
+            f"color: {PURPLE_LIGHT}; border: 1px solid "
+            f"{rgba(PURPLE, 0.45)}; border-radius: 8px; }}"
+            f"QPushButton:hover {{ background: {rgba(PURPLE, 0.30)}; }}")
+
+        def _on_rebuild_grid():
+            if self._db is None:
+                return
+            try:
+                from core.auto_grid_builder import build_grid
+                res = build_grid(self._db)
+                if res.get("error"):
+                    _refresh_autogrid_lbl(f"build FAILED: {res['error']}")
+                else:
+                    _refresh_autogrid_lbl(
+                        f"built now: +{res['placed']} placed, "
+                        f"{res['skipped_manual']} manual kept, "
+                        f"{res['cleared']} cleared")
+            except Exception as exc:
+                _refresh_autogrid_lbl(f"build crashed: {exc}")
+        rebuild.clicked.connect(_on_rebuild_grid)
+
     # ── Sister Groups section ───────────────────────────────────────
 
     def _build_sister_groups(self) -> None:

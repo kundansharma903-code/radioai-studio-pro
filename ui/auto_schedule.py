@@ -817,6 +817,9 @@ class _ScheduleGrid(QWidget):
         self.setFixedSize(GRID_W, GRID_H)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._grid: dict[tuple[int, int], int] = {}
+        # Cells placed by the Category Auto-Grid builder (loaded alongside
+        # the grid snapshot — never queried from paintEvent).
+        self._auto_cells: set[tuple[int, int]] = set()
         self._clock_meta: dict[int, dict] = {}
         self._sel: set[tuple[int, int]] = set()
         self._anchor: Optional[tuple[int, int]] = None
@@ -833,9 +836,12 @@ class _ScheduleGrid(QWidget):
         # Cached fonts
         self._font_time = mono(10, bold=False)
         self._font_cell = inter(10, QFont.Weight.Bold, letter_spacing=-0.1)
+        self._font_auto = inter(7, QFont.Weight.Bold, letter_spacing=0.6)
         # Cached row backgrounds (alternating)
         self._row_bg_a = QColor(255, 255, 255, 4)
         self._row_bg_b = QColor(255, 255, 255, 8)
+        # AUTO tag ink (semi-transparent so it reads as a watermark)
+        self._auto_tag_ink = QColor(255, 255, 255, 110)
 
         # Pre-build time labels
         self._time_labels = [
@@ -854,18 +860,26 @@ class _ScheduleGrid(QWidget):
         }
         self.update(self.rect())
 
-    def set_grid(self, grid: dict) -> None:
+    def set_grid(self, grid: dict,
+                 auto_cells: Optional[set[tuple[int, int]]] = None) -> None:
         self._grid = {(int(d), int(h)): int(cid) for (d, h), cid in grid.items()}
+        self._auto_cells = {
+            (int(d), int(h)) for d, h in (auto_cells or set())
+        }
         self.update(self.rect())
 
     def set_assignment(self, d: int, h: int, cid: Optional[int]) -> None:
         key = (int(d), int(h))
         prev = self._grid.get(key)
+        was_auto = key in self._auto_cells
+        # Any manual write supersedes an auto placement — the builder
+        # releases the registry row; the badge must drop immediately too.
+        self._auto_cells.discard(key)
         if cid is None:
             self._grid.pop(key, None)
         else:
             self._grid[key] = int(cid)
-        if prev != self._grid.get(key):
+        if prev != self._grid.get(key) or was_auto:
             self.update(_cell_rect(d, h))
 
     @property
@@ -1065,18 +1079,21 @@ class _ScheduleGrid(QWidget):
         meta = self._clock_meta.get(cid) if cid is not None else None
         accent = meta["color"] if meta else None
         sel = (d, h) in self._sel
+        is_auto = (d, h) in self._auto_cells
         rf = QRectF(rect)
         # Fill
         if accent:
             p.fillRect(rf, _qcolor(accent, 0.36 if sel else 0.18))
         else:
             p.fillRect(rf, QColor(255, 255, 255, 18 if sel else 6))
-        # Border
+        # Border — auto-placed cells get a dashed accent outline
         p.setBrush(Qt.BrushStyle.NoBrush)
         if sel:
             pen = QPen(QColor(255, 255, 255, 220)); pen.setWidthF(1.5)
         elif accent:
             pen = QPen(_qcolor(accent, 0.5)); pen.setWidthF(1.0)
+            if is_auto:
+                pen.setStyle(Qt.PenStyle.DashLine)
         else:
             pen = QPen(QColor(255, 255, 255, 22)); pen.setWidthF(1.0)
         p.setPen(pen)
@@ -1086,6 +1103,14 @@ class _ScheduleGrid(QWidget):
             p.setPen(QColor(COL_TEXT_PRIMARY))
             p.setFont(self._font_cell)
             p.drawText(rf, Qt.AlignmentFlag.AlignCenter, meta["name"])
+            # AUTO watermark tag, right-aligned inside the cell
+            if is_auto:
+                p.setPen(self._auto_tag_ink)
+                p.setFont(self._font_auto)
+                p.drawText(rf.adjusted(0, 0, -5, 0),
+                           Qt.AlignmentFlag.AlignRight
+                           | Qt.AlignmentFlag.AlignVCenter,
+                           "AUTO")
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -1347,9 +1372,21 @@ class AutoSchedule(QWidget):
         except Exception as exc:
             log.warning(f"load grid failed: {exc}")
             grid = {}
+        # Category Auto-Grid registry — a cell is "auto" only while the
+        # registry and the live grid agree on the clock. Manual overwrites
+        # break the match, so the badge drops on the next refresh.
+        try:
+            records = self._db.get_auto_grid_cell_records()
+        except Exception as exc:
+            log.warning(f"load auto-grid records failed: {exc}")
+            records = {}
+        auto_cells = {
+            (int(d), int(h)) for (d, h), cid in records.items()
+            if grid.get((int(d), int(h))) == int(cid)
+        }
         self._clocks_panel.set_clocks(clocks)
         self._card.grid.set_clocks(clocks)
-        self._card.grid.set_grid(grid)
+        self._card.grid.set_grid(grid, auto_cells)
         self._update_button_states()
 
     # ── State / UI sync ──────────────────────────────────────────────────
