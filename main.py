@@ -218,6 +218,22 @@ def main():
         log.info(
             "[boot] fresh database bootstrapped from schema + "
             "seeds (no legacy DB found — first-launch path).")
+    # DB safety net: quick_check + once-a-day auto-backup; a corrupt
+    # DB is quarantined and auto-restored from the newest healthy
+    # backup BEFORE Database() opens its connection (2026-07-02:
+    # three corruption incidents in two days — the app must
+    # self-heal, not run a broken session with silently-failing
+    # writes like a blank History panel).
+    try:
+        from core.paths import ensure_database_health
+        _health = ensure_database_health()
+        log.info(f"[boot] database health: {_health}")
+        if _health == "corrupt-no-backup" and bootstrap_fresh_database():
+            log.warning(
+                "[boot] fresh empty database bootstrapped after "
+                "unrecoverable corruption")
+    except Exception as exc:
+        log.warning(f"[boot] database health check failed: {exc}")
     db = Database()
     db_ok = db.verify()
     song_count = 0

@@ -266,6 +266,97 @@ def bootstrap_fresh_database() -> bool:
         return False
 
 
+def _quick_check(path) -> bool:
+    """True when SQLite reports 'ok' for the file. Read-only URI open
+    so a missing file is never created as a side effect."""
+    import sqlite3
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            return conn.execute("PRAGMA quick_check").fetchone()[0] == "ok"
+        finally:
+            conn.close()
+    except Exception:
+        return False
+
+
+def ensure_database_health() -> str:
+    """Launch-time DB safety net (added 2026-07-02 after three real
+    corruption incidents in two days — processes killed mid-WAL-write
+    corrupted the live DB, and the app then ran a broken session with
+    silently-failing writes, e.g. a blank Studio History panel).
+
+    1. ``PRAGMA quick_check`` on the live DB.
+    2. Healthy → refresh a once-per-day auto-backup in
+       ``BACKUPS_DIR/auto/radioai_auto_YYYYMMDD.db`` (newest 7 kept).
+    3. Malformed → quarantine db+wal+shm into
+       ``BACKUPS_DIR/corrupt_<ts>/`` and restore the NEWEST auto-backup
+       that itself passes quick_check. Self-heal beats a broken session.
+
+    Returns a status string for the boot log: ``healthy`` /
+    ``healthy+backup`` / ``restored:<name>`` / ``corrupt-no-backup`` /
+    ``skipped:<reason>``.
+    """
+    import sqlite3
+    from datetime import datetime
+
+    if not DB_PATH.exists():
+        return "skipped:no-db"
+    auto_dir = BACKUPS_DIR / "auto"
+    auto_dir.mkdir(parents=True, exist_ok=True)
+
+    if _quick_check(DB_PATH):
+        today_name = f"radioai_auto_{datetime.now():%Y%m%d}.db"
+        dest = auto_dir / today_name
+        if dest.exists():
+            return "healthy"
+        try:
+            src = sqlite3.connect(str(DB_PATH))
+            dst = sqlite3.connect(str(dest))
+            try:
+                src.backup(dst)
+            finally:
+                dst.close()
+                src.close()
+            # prune to the newest 7 (names sort chronologically)
+            backups = sorted(auto_dir.glob("radioai_auto_*.db"))
+            for old in backups[:-7]:
+                try:
+                    old.unlink()
+                except Exception:
+                    pass
+            return "healthy+backup"
+        except Exception as exc:
+            log.warning(f"[paths] auto-backup failed: {exc}")
+            return "healthy"
+
+    # ── Malformed: quarantine + restore newest healthy backup ──
+    log.error(
+        "[paths] DATABASE CORRUPT at launch (quick_check failed) — "
+        "attempting auto-restore from the newest healthy backup")
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    quarantine = BACKUPS_DIR / f"corrupt_{ts}"
+    quarantine.mkdir(parents=True, exist_ok=True)
+    for ext in ("", "-wal", "-shm"):
+        p = Path(str(DB_PATH) + ext)
+        if p.exists():
+            try:
+                shutil.move(str(p), str(quarantine / p.name))
+            except Exception as exc:
+                log.warning(f"[paths] quarantine of {p.name} failed: {exc}")
+    for cand in sorted(auto_dir.glob("radioai_auto_*.db"), reverse=True):
+        if _quick_check(cand):
+            shutil.copy2(str(cand), str(DB_PATH))
+            log.warning(
+                f"[paths] database auto-restored from {cand.name}; "
+                f"corrupt files preserved in {quarantine}")
+            return f"restored:{cand.name}"
+    log.error(
+        "[paths] no healthy auto-backup available — the corrupt DB was "
+        f"quarantined to {quarantine}; a fresh DB will be bootstrapped")
+    return "corrupt-no-backup"
+
+
 # Create folders on first import so any caller that just reads
 # DB_PATH / LOGS_DIR can trust them to exist.
 ensure_dirs()

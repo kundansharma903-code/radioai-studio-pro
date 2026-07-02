@@ -39,6 +39,13 @@
 ; installs of the SAME app. Never change this for the lifetime of
 ; the v2.x line; generate a NEW GUID only when launching a v3.0.
 AppId={{CB5B13C7-E662-4D04-9450-09F0975DCF84}
+; Ask a running RadioAI instance to close GRACEFULLY (Windows
+; RestartManager) before files are replaced. A force-killed app
+; mid-WAL-write corrupted the operator DB during the 2026-07-02
+; upgrade - graceful close lets the app run its clean shutdown
+; (scheduler stop, engine cleanup, DB close).
+CloseApplications=yes
+RestartApplications=no
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppVerName={#MyAppName} {#MyAppVersion}
