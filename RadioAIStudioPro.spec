@@ -93,6 +93,25 @@ for dll_name in ("bass.dll", "tags.dll"):
         # internal loader can find it via its package-relative path.
         binaries.append((str(src), "pybass3/vendor"))
 
+# ── BASSmix DLL (Phase 5 — optional addon, bundled if present) ──────────
+# bassmix.dll is the un4seen mixer-architecture addon. pybass3 does NOT
+# ship it; the operator drops it into core/audio/vendor/ when ready.
+# Bundle it from BOTH locations if it exists in either, so a frozen build
+# carries it forward.
+_PROJECT_ROOT = Path(SPECPATH)
+_BASSMIX_CANDIDATES = [
+    _PROJECT_ROOT / "core" / "audio" / "vendor" / "bassmix.dll",
+    _PYBASS3_DIR / "vendor" / "bassmix.dll",
+]
+for candidate in _BASSMIX_CANDIDATES:
+    if candidate.exists():
+        # Bundle alongside bass.dll so the BASS DLL loader's
+        # search path picks it up. core/audio/_bassmix.py also
+        # searches its project-local vendor/ folder first; either
+        # destination works.
+        binaries.append((str(candidate), "pybass3/vendor"))
+        break
+
 
 # ── Modules to exclude (save space + boot time) ──────────────────────────
 excludes = [

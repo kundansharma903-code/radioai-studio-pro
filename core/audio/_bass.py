@@ -23,9 +23,22 @@ import pybass3.bass_module as _bm
 # ── BASS constants ──────────────────────────────────────────────────────────
 
 BASS_STREAM_PRESCAN   = 0x20000        # accurate duration: scan the file once
+BASS_STREAM_DECODE    = 0x200000       # decoder-only stream — no direct output;
+                                       # required when the stream feeds a BASSmix
+                                       # mixer stream instead of the audio device
 BASS_ATTRIB_VOL       = 2              # per-channel volume attribute (0.0–1.0)
+BASS_SYNC_POS         = 0              # sync type: byte-position reached
 BASS_SYNC_END         = 2              # sync type: end-of-stream
+BASS_SYNC_SLIDE       = 5              # sync type: ChannelSlideAttribute finished
 BASS_SYNC_ONETIME     = 0x80000000     # fire sync callback only once
+BASS_SYNC_MIXTIME     = 0x40000000     # OR with sync type: fire at MIXER-time
+                                       # (after audio actually played), not at
+                                       # decode-time. Critical for decode-only
+                                       # streams in a BASSmix mixer: without
+                                       # this flag, EOS / position syncs fire
+                                       # ~500ms before the audio reaches the
+                                       # speakers, causing next-song overlap
+                                       # and audible stutter at transitions.
 BASS_POS_BYTE         = 0              # GetLength / SetPosition mode: bytes
 BASS_SAMPLE_LOOP      = 4              # stream creation flag — loop on EOF
 

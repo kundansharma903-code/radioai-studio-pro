@@ -53,8 +53,10 @@ from PyQt6.QtCore import QObject, QTimer, Qt, pyqtSignal
 from pybass3 import BassStream, BassChannel
 
 from core.audio._bass import (
-    BASS_ATTRIB_VOL, BASS_POS_BYTE, BASS_STREAM_PRESCAN,
-    BASS_SAMPLE_LOOP, BASS_SYNC_END, BASS_SYNC_ONETIME,
+    BASS_ATTRIB_VOL, BASS_POS_BYTE, BASS_STREAM_PRESCAN, BASS_STREAM_DECODE,
+    BASS_SAMPLE_LOOP,
+    BASS_SYNC_POS, BASS_SYNC_END, BASS_SYNC_SLIDE, BASS_SYNC_ONETIME,
+    BASS_SYNC_MIXTIME,
     SYNCPROC, get_dll, error_code,
 )
 from core.audio.channels import Channel, CHANNEL_STATES
@@ -92,6 +94,15 @@ class AudioEngine(QObject):
     playback_ended        = pyqtSignal(int)        # channel_id
     error_occurred        = pyqtSignal(int, str)   # (channel_id, message)
     channel_state_changed = pyqtSignal(int, str)   # (channel_id, state)
+    # Phase 1 (2026-05-17) — sample-accurate BASS-driven transition events.
+    # mix_point_reached fires when playback hits the byte position the
+    # caller registered via set_position_sync. fade_completed fires when
+    # a BASS_ChannelSlideAttribute (used by fade_volume_to) finishes its
+    # ramp. Both replace the prior 250ms polling-based fade triggers in
+    # Studio with sample-accurate notifications driven from BASS itself,
+    # matching the Jazler / mAirList / RadioBoss industry pattern.
+    mix_point_reached     = pyqtSignal(int)        # channel_id
+    fade_completed        = pyqtSignal(int)        # channel_id
 
     # ── Internal bridge ───────────────────────────────────────────────────
     #
@@ -100,7 +111,9 @@ class AudioEngine(QObject):
     # delivery to the receiver's thread (engine's owning thread = Qt main
     # thread by default). The slot then mutates state safely.
 
-    _stream_ended_internal = pyqtSignal(int)       # channel_id
+    _stream_ended_internal       = pyqtSignal(int)   # channel_id
+    _mix_point_reached_internal  = pyqtSignal(int)   # channel_id
+    _fade_completed_internal     = pyqtSignal(int)   # channel_id
 
     # ── Constants ─────────────────────────────────────────────────────────
 
@@ -109,18 +122,85 @@ class AudioEngine(QObject):
 
     # ─────────────────────────────────────────────────────────────────────
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *,
+                 route_via_mixer: bool = False):
+        """``route_via_mixer`` (Phase 5.2 opt-in): when True AND
+        ``bassmix.dll`` is available, every loaded stream is created
+        with the BASS_STREAM_DECODE flag and added to the singleton
+        ``MixerBus``. The mixer is the only handle that plays to the
+        output device — every engine ultimately feeds it. When False
+        (default), the legacy direct-play architecture is used: each
+        stream plays straight to the BASS device, and BASS auto-mixes
+        at the device level.
+
+        ════════════════════════════════════════════════════════════════
+        CRITICAL INVARIANT — default MUST stay False (2026-05-17 lock)
+        ════════════════════════════════════════════════════════════════
+        The BASSmix migration attempt 2026-05-17 surfaced stutter +
+        broken pause symptoms that couldn't be resolved in-session.
+        Operator-locked: stay on direct-play until a future
+        BASSmix retry session diagnoses the root cause.
+        See HANDOVER_2026_05_17.md "Incident #26 — Phase 5 BASSmix
+        retry blocked" for what was tried and why none of those
+        fixes worked.
+        DO NOT CHANGE the default to True. Don't.
+        ════════════════════════════════════════════════════════════════
+
+        Auto-falls back to ``route_via_mixer=False`` if bassmix.dll
+        is missing — the engine never refuses to start. Operator can
+        flip the flag back on at runtime once the DLL is installed
+        (next ``load_file`` will route via mixer)."""
         super().__init__(parent)
         self._dll = get_dll()
         self._channels: dict[int, Channel] = {}
         self._lock = threading.Lock()
         # Monotonic, never-reused. Starts at 1 — 0 is sentinel for "invalid".
         self._next_id: int = 1
+        # ── Phase 5 mixer routing ───────────────────────────────────────
+        # Forced off if bassmix.dll absent. The engine eagerly creates
+        # the mixer stream when routing is on, so the first load_file
+        # has a target to add channels to.
+        self._route_via_mixer: bool = False
+        if route_via_mixer:
+            try:
+                from core.audio.mixer_bus import MixerBus
+                if MixerBus.is_available():
+                    mb = MixerBus.instance()
+                    if mb.handle() is None:
+                        mb.create()
+                    if mb.handle() is not None:
+                        self._route_via_mixer = True
+                        log.info(
+                            f"AudioEngine: routing via MixerBus "
+                            f"(handle={mb.handle()})")
+                    else:
+                        log.warning(
+                            "AudioEngine: mixer create() failed — "
+                            "falling back to direct-play")
+                else:
+                    log.info(
+                        "AudioEngine: route_via_mixer requested but "
+                        "bassmix.dll not available — using direct-play")
+            except Exception as exc:
+                log.warning(
+                    f"AudioEngine: mixer init failed ({exc}) — "
+                    f"falling back to direct-play")
 
         # Cross-thread bridge: BASS callback thread → Qt main thread.
         # AutoConnection on a different-thread emit becomes QueuedConnection.
         self._stream_ended_internal.connect(
             self._on_stream_ended_main,
+            Qt.ConnectionType.QueuedConnection,
+        )
+        # Phase 1 sync bridges — internal signals fire from the BASS
+        # callback thread; the public signals are emitted on the main
+        # thread via queued delivery.
+        self._mix_point_reached_internal.connect(
+            self.mix_point_reached,
+            Qt.ConnectionType.QueuedConnection,
+        )
+        self._fade_completed_internal.connect(
+            self.fade_completed,
             Qt.ConnectionType.QueuedConnection,
         )
 
@@ -177,6 +257,13 @@ class AudioEngine(QObject):
             flags = BASS_STREAM_PRESCAN
             if loop:
                 flags |= BASS_SAMPLE_LOOP
+            # Phase 5.2 — when routing through the unified mixer, every
+            # stream is created decoder-only. The mixer pulls data from
+            # it and is the single handle that talks to the output
+            # device. Without this flag, the stream would ALSO try to
+            # play directly to the device, double-output.
+            if self._route_via_mixer:
+                flags |= BASS_STREAM_DECODE
             try:
                 handle = BassStream.CreateFile(
                     False, path.encode("utf-8"),
@@ -206,10 +293,22 @@ class AudioEngine(QObject):
 
             # Per-channel SYNCPROC. Pin the ref on the Channel so ctypes
             # doesn't garbage-collect the closure mid-playback.
+            #
+            # Phase 5.3 critical fix (2026-05-17): for mixer-routed
+            # decode streams, OR in BASS_SYNC_MIXTIME so EOS fires at
+            # MIXER-time (when audio actually reaches the speakers),
+            # NOT at decode-time (~500ms ahead of speakers). Without
+            # MIXTIME, Studio loads the next song while the mixer is
+            # still playing the previous song's last 500ms — both
+            # songs feed the mixer briefly, causing the audible
+            # stutter operator reported.
+            sync_type = BASS_SYNC_END | BASS_SYNC_ONETIME
+            if self._route_via_mixer:
+                sync_type |= BASS_SYNC_MIXTIME
             sync_cb = self._make_sync_cb(channel_id)
             sync_handle = self._dll.BASS_ChannelSetSync(
                 handle,
-                BASS_SYNC_END | BASS_SYNC_ONETIME,
+                sync_type,
                 0,
                 sync_cb,
                 None,
@@ -226,15 +325,56 @@ class AudioEngine(QObject):
             )
             self._channels[channel_id] = ch
 
+        # Phase 5.2 — attach to mixer if routing is enabled. Done OUTSIDE
+        # the _lock to avoid holding it across a BASSmix call (the mixer
+        # has its own lock; nesting risk). If attach fails, log + fall
+        # through — the stream is loaded but won't audibly play through
+        # the mixer; legacy state is `loaded`, callers see no error.
+        if self._route_via_mixer:
+            try:
+                from core.audio.mixer_bus import MixerBus
+                mb = MixerBus.instance()
+                ok = mb.add_channel(handle)
+                if not ok:
+                    log.warning(
+                        f"[ch {channel_id}] mixer add_channel failed; "
+                        f"channel loaded but not audibly routed")
+                else:
+                    # Mark this channel as mixer-attached so cleanup
+                    # detaches BEFORE freeing the stream.
+                    ch.extras["_in_mixer"] = True
+                    # Make sure the mixer is playing — needed when the
+                    # first channel is added (BASS_MIXER_RESUME does it
+                    # automatically, this is defence-in-depth).
+                    mb.play()
+            except Exception as exc:
+                log.warning(
+                    f"[ch {channel_id}] mixer attach raised: {exc}")
+
         self.channel_state_changed.emit(channel_id, "loaded")
-        log.info(f"[ch {channel_id}] loaded {os.path.basename(path)}")
+        log.info(
+            f"[ch {channel_id}] loaded {os.path.basename(path)} "
+            f"(mixer={self._route_via_mixer})")
         return channel_id
 
     def play(self, channel_id: int) -> None:
         ch = self._require_channel(channel_id)
-        # BassChannel.Play(restart=False) resumes from current position, which
-        # works for both loaded (pos=0) and paused/stopped/ended states.
-        BassChannel.Play(ch.handle, False)
+        if ch.extras.get("_in_mixer"):
+            # Phase 5.2 fix (2026-05-17) — decode-only sources cannot
+            # be played directly (BASS_ChannelPlay returns
+            # BASS_ERROR_DECODE 38). The MixerBus.create() already
+            # called Play on the mixer handle; the mixer pulls data
+            # from this source automatically. Just clear the
+            # per-channel paused flag if previously paused, then
+            # update bookkeeping.
+            try:
+                from core.audio.mixer_bus import MixerBus
+                MixerBus.instance().resume_source(ch.handle)
+            except Exception as exc:
+                log.debug(f"[ch {channel_id}] mixer resume on play: {exc}")
+        else:
+            # Legacy direct-play path — unchanged.
+            BassChannel.Play(ch.handle, False)
         ch.state = "playing"
         self._ensure_poll_timer()
         self.channel_state_changed.emit(channel_id, "playing")
@@ -242,7 +382,18 @@ class AudioEngine(QObject):
 
     def pause(self, channel_id: int) -> None:
         ch = self._require_channel(channel_id)
-        BassChannel.Pause(ch.handle)
+        if ch.extras.get("_in_mixer"):
+            # Phase 5.2 fix — BASS_ChannelPause on a decode source
+            # is a no-op (mixer keeps pulling data). Use
+            # BASS_Mixer_ChannelFlags(PAUSE) to actually halt the
+            # mixer's pull from this source.
+            try:
+                from core.audio.mixer_bus import MixerBus
+                MixerBus.instance().pause_source(ch.handle)
+            except Exception as exc:
+                log.debug(f"[ch {channel_id}] mixer pause: {exc}")
+        else:
+            BassChannel.Pause(ch.handle)
         ch.state = "paused"
         self.channel_state_changed.emit(channel_id, "paused")
         log.info(f"[ch {channel_id}] paused")
@@ -252,7 +403,14 @@ class AudioEngine(QObject):
         ch = self._require_channel(channel_id)
         if ch.state != "paused":
             return
-        BassChannel.Resume(ch.handle)
+        if ch.extras.get("_in_mixer"):
+            try:
+                from core.audio.mixer_bus import MixerBus
+                MixerBus.instance().resume_source(ch.handle)
+            except Exception as exc:
+                log.debug(f"[ch {channel_id}] mixer resume: {exc}")
+        else:
+            BassChannel.Resume(ch.handle)
         ch.state = "playing"
         self._ensure_poll_timer()
         self.channel_state_changed.emit(channel_id, "playing")
@@ -267,7 +425,15 @@ class AudioEngine(QObject):
         from the beginning. Natural EOS ('ended' state) keeps position at
         duration; that's the distinguishing semantic between the two."""
         ch = self._require_channel(channel_id)
-        BassChannel.Stop(ch.handle)
+        if ch.extras.get("_in_mixer"):
+            # Pause the mixer pull from this source + reset position.
+            try:
+                from core.audio.mixer_bus import MixerBus
+                MixerBus.instance().pause_source(ch.handle)
+            except Exception as exc:
+                log.debug(f"[ch {channel_id}] mixer stop pause: {exc}")
+        else:
+            BassChannel.Stop(ch.handle)
         try:
             self._dll.BASS_ChannelSetPosition(ch.handle, 0, BASS_POS_BYTE)
         except Exception as exc:
@@ -402,18 +568,202 @@ class AudioEngine(QObject):
         # immediately, even though BASS is still tweening.
         ch.volume = target
 
+    # ── Public API: sample-accurate sync callbacks (Phase 1) ──────────────
+    #
+    # These replace the previous "poll position every 250ms and check
+    # threshold" pattern with BASS-native byte-position and slide-end
+    # callbacks. The BASS audio thread fires the callback at the exact
+    # sample boundary; the engine emits a Qt signal across threads so
+    # consumers handle the event on the main thread.
+
+    def set_position_sync(self, channel_id: int,
+                           position_ms: int) -> Optional[int]:
+        """Register a one-time BASS_SYNC_POS at the given playback position.
+        When the channel's byte position crosses ``position_ms`` while
+        playing, ``mix_point_reached(channel_id)`` is emitted on the main
+        Qt thread.
+
+        Returns the sync handle (use with ``remove_sync``) or None on
+        any failure — position out of range, channel unknown, or BASS
+        error. The engine retains a reference to the SYNCPROC closure
+        so ctypes doesn't garbage-collect it mid-playback.
+
+        Caller pattern (Studio Phase 1): on every new song load, call
+        set_position_sync(cid, mix_point_ms). One sync per channel is
+        sufficient; replace by removing the old one first if mix_point
+        changes mid-track.
+        """
+        ch = self._require_channel(channel_id)
+        if position_ms <= 0:
+            return None
+        try:
+            byte_pos = self._dll.BASS_ChannelSeconds2Bytes(
+                ch.handle, ctypes.c_double(position_ms / 1000.0))
+        except Exception as exc:
+            log.debug(f"[ch {channel_id}] Seconds2Bytes failed: {exc}")
+            return None
+        # BASS_ChannelSeconds2Bytes returns 0xFF…FF (unsigned -1) on err.
+        if byte_pos == 0xFFFFFFFFFFFFFFFF:
+            log.debug(
+                f"[ch {channel_id}] set_position_sync: invalid pos_ms="
+                f"{position_ms}, err={error_code()}")
+            return None
+        cb = self._make_pos_sync_cb(channel_id)
+        # Phase 5.3 fix — mixer-routed channels need MIXTIME so the
+        # mix-point sync fires when audio actually reaches the speakers,
+        # not at decode-time (which leads speakers by ~500ms in a
+        # buffered mixer pipeline). Otherwise the fade triggers before
+        # listener perceives the mix point → wrong-feeling transition.
+        sync_type = BASS_SYNC_POS | BASS_SYNC_ONETIME
+        if ch.extras.get("_in_mixer"):
+            sync_type |= BASS_SYNC_MIXTIME
+        try:
+            sync_handle = self._dll.BASS_ChannelSetSync(
+                ch.handle,
+                sync_type,
+                ctypes.c_ulonglong(byte_pos),
+                cb,
+                None,
+            )
+        except Exception as exc:
+            log.warning(
+                f"[ch {channel_id}] BASS_ChannelSetSync (POS) failed: {exc}")
+            return None
+        if not sync_handle:
+            log.debug(
+                f"[ch {channel_id}] BASS_ChannelSetSync (POS) "
+                f"returned 0, err={error_code()}")
+            return None
+        # Pin the callback so ctypes doesn't free it; cleanup will
+        # remove it via remove_sync.
+        ch.extras.setdefault("_pos_syncs", []).append(
+            (cb, int(sync_handle)))
+        log.info(
+            f"[ch {channel_id}] position sync registered at "
+            f"{position_ms}ms (sync={sync_handle})")
+        return int(sync_handle)
+
+    def set_slide_end_sync(self, channel_id: int) -> Optional[int]:
+        """Register a one-time BASS_SYNC_SLIDE callback. Fires when the
+        next ``BASS_ChannelSlideAttribute`` on this channel completes.
+        Emits ``fade_completed(channel_id)`` on the main Qt thread.
+
+        Typical use: register immediately AFTER calling
+        ``fade_volume_to(cid, 0, duration)`` to be notified when the
+        outgoing fade has fully reached zero. Caller can then cleanup
+        the channel (or rely on negative-target auto-stop).
+
+        Returns the sync handle or None on failure."""
+        ch = self._require_channel(channel_id)
+        cb = self._make_slide_sync_cb(channel_id)
+        try:
+            sync_handle = self._dll.BASS_ChannelSetSync(
+                ch.handle,
+                BASS_SYNC_SLIDE | BASS_SYNC_ONETIME,
+                ctypes.c_ulonglong(0),
+                cb,
+                None,
+            )
+        except Exception as exc:
+            log.warning(
+                f"[ch {channel_id}] BASS_ChannelSetSync (SLIDE) failed: {exc}")
+            return None
+        if not sync_handle:
+            log.debug(
+                f"[ch {channel_id}] BASS_ChannelSetSync (SLIDE) "
+                f"returned 0, err={error_code()}")
+            return None
+        ch.extras.setdefault("_slide_syncs", []).append(
+            (cb, int(sync_handle)))
+        return int(sync_handle)
+
+    def remove_sync(self, channel_id: int, sync_handle: int) -> None:
+        """Remove a sync previously registered via set_position_sync /
+        set_slide_end_sync. Idempotent on unknown handles."""
+        ch = self._channels.get(channel_id)
+        if ch is None or not sync_handle:
+            return
+        try:
+            self._dll.BASS_ChannelRemoveSync(
+                ch.handle, ctypes.c_ulong(int(sync_handle)))
+        except Exception as exc:
+            log.debug(
+                f"[ch {channel_id}] remove_sync({sync_handle}) failed: {exc}")
+        # Drop the stored callback ref too.
+        for key in ("_pos_syncs", "_slide_syncs"):
+            syncs = ch.extras.get(key)
+            if not syncs:
+                continue
+            ch.extras[key] = [
+                (cb, h) for cb, h in syncs if h != int(sync_handle)
+            ]
+
+    def _make_pos_sync_cb(self, channel_id: int):
+        """Build a SYNCPROC closure that emits mix_point_reached for the
+        captured ``channel_id``. Returned object MUST be kept alive while
+        the sync is registered (stored in Channel.extras)."""
+        engine = self
+
+        def _pos_cb(handle, channel, data, user):
+            try:
+                engine._mix_point_reached_internal.emit(channel_id)
+            except Exception:
+                # NEVER let an exception escape a BASS callback — it
+                # crashes the audio thread.
+                pass
+        return SYNCPROC(_pos_cb)
+
+    def _make_slide_sync_cb(self, channel_id: int):
+        """Build a SYNCPROC closure that emits fade_completed for the
+        captured ``channel_id``."""
+        engine = self
+
+        def _slide_cb(handle, channel, data, user):
+            try:
+                engine._fade_completed_internal.emit(channel_id)
+            except Exception:
+                pass
+        return SYNCPROC(_slide_cb)
+
     # ── Public API: cleanup ───────────────────────────────────────────────
 
     def cleanup(self, channel_id: int) -> None:
-        """Stop the channel, unhook its sync callback, free the BASS stream,
-        and drop it from the active map. Idempotent on unknown ids."""
+        """Stop the channel, unhook ALL sync callbacks (EOS + any
+        Phase-1 position/slide syncs registered via set_position_sync /
+        set_slide_end_sync), detach from the BASSmix mixer if attached,
+        free the BASS stream, and drop it from the active map.
+        Idempotent on unknown ids.
+
+        Order matters when route_via_mixer is on: mixer-detach BEFORE
+        stream-free, otherwise the mixer briefly holds a dangling
+        handle (potential crash inside BASSmix's pull thread)."""
         with self._lock:
             ch = self._channels.pop(channel_id, None)
         if ch is None:
             return
         try:
+            # Phase 5.2 — detach from the mixer FIRST. Idempotent at
+            # the MixerBus layer: unknown handles are silently skipped.
+            if ch.extras.get("_in_mixer"):
+                try:
+                    from core.audio.mixer_bus import MixerBus
+                    MixerBus.instance().remove_channel(ch.handle)
+                except Exception as exc:
+                    log.debug(
+                        f"[ch {channel_id}] mixer detach failed: {exc}")
+            # EOS sync (always present, allocated in load_file)
             if ch.sync_handle:
                 self._dll.BASS_ChannelRemoveSync(ch.handle, ch.sync_handle)
+            # Phase 1 syncs — position + slide callbacks registered by
+            # Studio after load_file. Drop them BEFORE Stop/Free so a
+            # ramp-completion mid-cleanup can't surprise us.
+            for key in ("_pos_syncs", "_slide_syncs"):
+                for _cb, sync_handle in ch.extras.get(key, []):
+                    try:
+                        self._dll.BASS_ChannelRemoveSync(
+                            ch.handle, ctypes.c_ulong(int(sync_handle)))
+                    except Exception:
+                        pass
             BassChannel.Stop(ch.handle)
             BassStream.Free(ch.handle)
         except Exception as exc:
@@ -643,9 +993,37 @@ class AudioEngine(QObject):
     # ── BASS byte-position read helpers ──────────────────────────────────
 
     def _read_position_ms(self, handle: int) -> int:
-        """Synchronous BASS_ChannelGetPosition + Bytes2Seconds. Returns 0
-        on any BASS error — this is a paint-loop primitive, MUST NOT raise."""
+        """Synchronous position read. Returns 0 on any BASS error —
+        this is a paint-loop primitive, MUST NOT raise.
+
+        Phase 5.3 fix (2026-05-17): for mixer-routed sources, use
+        ``BASS_Mixer_ChannelGetPosition`` instead of the standard
+        ``BASS_ChannelGetPosition``. The former is latency-compensated
+        (BASS_MIXER_POSEX flag enables it) — it returns the position
+        the listener is HEARING right now, accounting for the mixer's
+        output buffer. The standard call returns decode-position
+        (where the mixer has pulled to), which leads speaker by the
+        full mixer buffer (~500ms). Without this fix, the progress
+        bar shows position 500ms AHEAD of audio."""
         try:
+            # Determine if this is a mixer-routed source by checking
+            # if the handle is in the mixer's tracked set.
+            if self._route_via_mixer:
+                try:
+                    from core.audio.mixer_bus import MixerBus
+                    from core.audio._bassmix import get_mixer_dll
+                    mb = MixerBus.instance()
+                    if mb.is_attached(handle):
+                        mixer_dll = get_mixer_dll()
+                        if mixer_dll is not None:
+                            pos_bytes = mixer_dll.BASS_Mixer_ChannelGetPosition(
+                                ctypes.c_ulong(int(handle)),
+                                ctypes.c_ulong(BASS_POS_BYTE),
+                            )
+                            return int(self._dll.BASS_ChannelBytes2Seconds(
+                                handle, pos_bytes) * 1000)
+                except Exception:
+                    pass   # fall through to standard read
             pos_bytes = self._dll.BASS_ChannelGetPosition(handle, BASS_POS_BYTE)
             return int(self._dll.BASS_ChannelBytes2Seconds(handle, pos_bytes) * 1000)
         except Exception:
