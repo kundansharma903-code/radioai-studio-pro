@@ -263,3 +263,74 @@ def test_peek_falls_back_to_static_queue_when_scheduler_idle(qapp, db):
     head = studio._peek_next_for_display(after_id=None)
     assert head is studio._queue_songs[0]
     studio.deleteLater()
+
+
+# ── NEXT-chip freeze regression (2026-07-02) ──────────────────────────────
+# The static fallback used `idx(after_id) + 1` where an after_id NOT in
+# _queue_songs gave -1 + 1 = 0 → both the chip preview AND the EOS
+# dispatch pinned to _queue_songs[0] forever ("90'S FEEL Part 02"
+# frozen chip). The live-peek branch's empty-peek fallback also returned
+# the raw head. All three paths now share consumed-aware
+# _static_next_after().
+
+def _static_q(studio, *ids):
+    studio._queue_songs = [
+        {"id": i, "title": f"S{i}", "artist": "A",
+         "file_path": _REAL_PATH, "duration_ms": 1000} for i in ids]
+
+
+def test_static_next_unknown_after_id_skips_played_head(qapp, db):
+    """after_id not in the list (spot resume / scheduler handoff) must
+    NOT pin to the head: head already aired → first unplayed returns."""
+    studio = _make_studio(db, scheduler=None)
+    _static_q(studio, 35, 40, 41)
+    studio._played_song_ids = {35}          # head already aired
+    nxt = studio._peek_next_for_display(after_id=999)   # unknown song
+    assert nxt is not None and nxt["id"] == 40, (
+        f"chip pinned to played head: {nxt}")
+    studio.deleteLater()
+
+
+def test_static_next_advances_past_played_middle(qapp, db):
+    """after_id found → forward walk skips already-aired songs."""
+    studio = _make_studio(db, scheduler=None)
+    _static_q(studio, 10, 11, 12, 13)
+    studio._played_song_ids = {10, 11, 12}
+    nxt = studio._compute_next_song(after_id=11)
+    assert nxt is not None and nxt["id"] == 13
+    studio.deleteLater()
+
+
+def test_static_next_end_of_playlist_still_stops(qapp, db):
+    """Legacy terminal semantics: after_id at the tail with everything
+    after it consumed → None (playlist end stops, no wrap)."""
+    studio = _make_studio(db, scheduler=None)
+    _static_q(studio, 10, 11)
+    studio._played_song_ids = {10, 11}
+    assert studio._compute_next_song(after_id=11) is None
+    studio.deleteLater()
+
+
+def test_static_next_all_consumed_unknown_never_silent(qapp, db):
+    """Unknown after_id with EVERYTHING consumed → legacy head fallback
+    (radio must keep playing rather than go silent)."""
+    studio = _make_studio(db, scheduler=None)
+    _static_q(studio, 10, 11)
+    studio._played_song_ids = {10, 11}
+    nxt = studio._peek_next_for_display(after_id=999)
+    assert nxt is not None and nxt["id"] == 10
+    studio.deleteLater()
+
+
+def test_live_peek_empty_fallback_is_consumed_aware(qapp, db):
+    """Scheduler RUNNING but peek empty (no clock this hour) → the
+    fallback must be consumed-aware, not the raw queue head — THE
+    frozen-chip case from the operator's 13:17 screenshot."""
+    sched = _CursorTrackingScheduler()   # running, but nothing queued
+    studio = _make_studio(db, scheduler=sched)
+    _static_q(studio, 35, 40)
+    studio._played_song_ids = {35}    # "90'S FEEL Part 02" already aired
+    nxt = studio._peek_next_for_display(after_id=None)
+    assert nxt is not None and nxt["id"] == 40, (
+        f"live-branch fallback pinned to played head: {nxt}")
+    studio.deleteLater()

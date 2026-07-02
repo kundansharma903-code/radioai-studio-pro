@@ -5272,16 +5272,45 @@ class Studio(QWidget):
             # Either no item or exhausted skip budget: fall through to
             # static-queue fallback (matches the original idle-scheduler
             # behaviour).
+        return self._static_next_after(after_id)
+
+    def _static_next_after(self, after_id: Optional[int]) -> Optional[dict]:
+        """Next deck song from the static ``_queue_songs`` fallback —
+        the SINGLE source shared by _compute_next_song (dispatch) and
+        _peek_next_for_display (NEXT chip / RDS preview) so the two can
+        never disagree.
+
+        Consumed-aware: songs already dispatched this session
+        (``_played_song_ids``) are skipped. The old logic did
+        ``idx(after_id) + 1`` where a not-found after_id gave
+        ``-1 + 1 = 0`` — any song playing from OUTSIDE the static list
+        (spot resume, scheduler handoff, library play) pinned BOTH the
+        NEXT chip and the EOS dispatch to ``_queue_songs[0]`` forever
+        (operator's frozen "90'S FEEL Part 02" chip + same-song replay
+        loop, observed live 2026-07-02).
+
+        Terminal semantics preserved from the legacy code:
+          • after_id found in the list → scan FORWARD only; exhausted →
+            None (reaching the end of a static playlist still stops)
+          • after_id None / unknown → scan the whole list; everything
+            consumed → head (legacy never-silent fallback)
+        """
         if not self._queue_songs:
             return None
-        if after_id is None:
-            return self._queue_songs[0]
-        idx = next((i for i, s in enumerate(self._queue_songs)
-                    if s.get("id") == after_id), -1)
-        nxt = idx + 1
-        if 0 <= nxt < len(self._queue_songs):
-            return self._queue_songs[nxt]
-        return None
+        played = self._played_song_ids or set()
+        idx = -1
+        if after_id is not None:
+            idx = next((i for i, s in enumerate(self._queue_songs)
+                        if s.get("id") == after_id), -1)
+        for j in range(idx + 1, len(self._queue_songs)):
+            s = self._queue_songs[j]
+            sid = s.get("id")
+            if sid == after_id or sid in played:
+                continue
+            return s
+        if idx >= 0:
+            return None            # end of static playlist — legacy stop
+        return self._queue_songs[0]  # all consumed/unknown — never silent
 
     def _on_engine_error(self, channel_id: int, message: str) -> None:
         if channel_id != self._playback_cid:
@@ -5467,18 +5496,10 @@ class Studio(QWidget):
         is what would actually land on the deck (overlay-style sweepers
         get skipped past since they wouldn't take the deck slot)."""
         # Scheduler-idle path: same static-queue lookup as
-        # _compute_next_song's fallback branch.
+        # _compute_next_song's fallback branch — shared helper so the
+        # preview can never diverge from what dispatch would pick.
         if not (self._scheduler is not None and self._scheduler.is_running()):
-            if not self._queue_songs:
-                return None
-            if after_id is None:
-                return self._queue_songs[0]
-            idx = next((i for i, s in enumerate(self._queue_songs)
-                        if s.get("id") == after_id), -1)
-            nxt = idx + 1
-            if 0 <= nxt < len(self._queue_songs):
-                return self._queue_songs[nxt]
-            return None
+            return self._static_next_after(after_id)
 
         # Live scheduler — use the non-destructive peek and skip-past
         # any overlay-style sweepers (they'd be eaten by the overlay
@@ -5516,10 +5537,14 @@ class Studio(QWidget):
             }
         # Peek empty (no clock assigned to current hour, or every
         # peeked slot was an overlay sweeper) → static fallback so the
-        # chip still shows something meaningful.
-        if not self._queue_songs:
-            return None
-        return self._queue_songs[0]
+        # chip still shows something meaningful. MUST be the shared
+        # consumed-aware helper: the old unconditional
+        # `return self._queue_songs[0]` here pinned the chip to the
+        # queue head on every refresh whenever the scheduler was
+        # running with no clock for the current hour — THE frozen
+        # "90'S FEEL Part 02" NEXT chip (operator screenshot
+        # 2026-07-02 13:17).
+        return self._static_next_after(after_id)
 
     # ────────────────────────────────────────────────────────────────────
     # Sweeper overlay dispatch (Phase 1 wiring — auto + manual share path)
