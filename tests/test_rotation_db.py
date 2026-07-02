@@ -652,3 +652,151 @@ def test_last_played_in_hour_validates_hour(db):
         db.get_song_last_played_in_hour(1, 25)
     with pytest.raises(ValueError, match="hour"):
         db.get_song_last_played_in_hour(1, -1)
+
+
+# ── Artist veto normalization ────────────────────────────────────────────
+
+
+def test_artist_veto_case_insensitive(db):
+    """get_artist_last_played_at matches artists case- AND
+    whitespace-insensitively (.strip().casefold() both sides) so
+    'Arijit Singh' vs 'arijit singh ' count as the same artist."""
+    conn = db._conn()
+    prefix = uuid.uuid4().hex[:8]
+    artist = f"Test Artist X {prefix}"
+    song_id = int(conn.execute(
+        "INSERT INTO songs (artist, title, is_enabled, file_path, "
+        "duration_ms) VALUES (?, ?, 1, ?, 180000)",
+        [artist, f"veto-T-{prefix}", f"/x/veto-{prefix}.mp3"]).lastrowid)
+    played_at = (datetime.now() - timedelta(minutes=30)).isoformat(
+        timespec="seconds")
+    conn.execute(
+        "INSERT INTO broadcast_log "
+        "(entry_type, song_id, played_at, duration_ms) "
+        "VALUES ('song', ?, ?, 180000)",
+        [song_id, played_at])
+    conn.commit()
+    try:
+        # Padded + lowercased needle must still find the play
+        got = db.get_artist_last_played_at(
+            f"  test artist x {prefix}  ")
+        assert got == played_at
+        # Uppercase variant too
+        assert db.get_artist_last_played_at(artist.upper()) == played_at
+        # Different artist → no match
+        assert db.get_artist_last_played_at(
+            f"someone else {prefix}") is None
+    finally:
+        conn.execute(
+            "DELETE FROM broadcast_log WHERE song_id = ?", [song_id])
+        conn.execute("DELETE FROM songs WHERE id = ?", [song_id])
+        conn.commit()
+
+
+# ── get_active_rotation_decisions (scheduler consult gate) ──────────────
+
+
+def test_get_active_rotation_decisions_gate(db, a_clock):
+    """Pending plan → inactive shape (AI has no authority on air).
+    Approved plan → active, with rest_ids / picks correctly split."""
+    conn = db._conn()
+    prefix = uuid.uuid4().hex[:8]
+    plan_date = "2026-08-21"    # synthetic future date — never a real plan
+    plan_id = db.get_or_create_ai_rotation_plan(plan_date)
+    rest_song = int(conn.execute(
+        "INSERT INTO songs (artist, title, is_enabled, file_path, "
+        "duration_ms) VALUES (?, ?, 1, ?, 180000)",
+        [f"gate-A1-{prefix}", f"gate-T1-{prefix}",
+         f"/x/gate-{prefix}-1.mp3"]).lastrowid)
+    pick_song = int(conn.execute(
+        "INSERT INTO songs (artist, title, is_enabled, file_path, "
+        "duration_ms) VALUES (?, ?, 1, ?, 180000)",
+        [f"gate-A2-{prefix}", f"gate-T2-{prefix}",
+         f"/x/gate-{prefix}-2.mp3"]).lastrowid)
+    conn.commit()
+    try:
+        db.add_rotation_decision(
+            plan_id=plan_id, decision_date=plan_date,
+            clock_id=a_clock, hour=10, song_id=rest_song,
+            action="rest", reason="gate test")
+        db.add_rotation_decision(
+            plan_id=plan_id, decision_date=plan_date,
+            clock_id=a_clock, hour=10, song_id=pick_song,
+            action="pick", reason="gate test")
+
+        # Status 'pending' → inactive
+        out = db.get_active_rotation_decisions(plan_date, a_clock, 10)
+        assert out["active"] is False
+        assert out["rest_ids"] == set()
+        assert out["picks"] == []
+
+        # Approved → active with correct split
+        db.mark_ai_rotation_plan_approved(plan_date)
+        out = db.get_active_rotation_decisions(plan_date, a_clock, 10)
+        assert out["active"] is True
+        assert out["rest_ids"] == {rest_song}
+        assert [p["song_id"] for p in out["picks"]] == [pick_song]
+        assert out["picks"][0]["action"] == "pick"
+        assert out["picks"][0]["file_path"]    # JOINed song metadata
+
+        # Hour scoping — other hours see the plan as active but empty
+        out11 = db.get_active_rotation_decisions(plan_date, a_clock, 11)
+        assert out11["active"] is True
+        assert out11["rest_ids"] == set()
+        assert out11["picks"] == []
+
+        # Missing plan → inactive
+        none_out = db.get_active_rotation_decisions(
+            "2099-12-31", a_clock, 10)
+        assert none_out["active"] is False
+    finally:
+        # Plan first — decisions FK-reference the songs
+        conn.execute(
+            "DELETE FROM ai_rotation_plans WHERE plan_date = ?",
+            [plan_date])
+        conn.execute("DELETE FROM songs WHERE id IN (?, ?)",
+                     [rest_song, pick_song])
+        conn.commit()
+
+
+# ── delete_song cascades rotation decisions ─────────────────────────────
+
+
+def test_delete_song_cleans_rotation_decisions(db, a_clock):
+    """delete_song must remove the song's ai_rotation_decisions rows
+    first (NO-ACTION FK) so the songs delete doesn't abort."""
+    conn = db._conn()
+    prefix = uuid.uuid4().hex[:8]
+    plan_date = "2026-08-22"
+    plan_id = db.get_or_create_ai_rotation_plan(plan_date)
+    song_id = int(conn.execute(
+        "INSERT INTO songs (artist, title, is_enabled, file_path, "
+        "duration_ms) VALUES (?, ?, 1, ?, 180000)",
+        [f"delsong-A-{prefix}", f"delsong-T-{prefix}",
+         f"/x/delsong-{prefix}.mp3"]).lastrowid)
+    conn.commit()
+    try:
+        db.add_rotation_decision(
+            plan_id=plan_id, decision_date=plan_date,
+            clock_id=a_clock, hour=10, song_id=song_id,
+            action="rest", reason="delete-song test")
+        # Sanity — decision row exists
+        assert int(conn.execute(
+            "SELECT COUNT(*) FROM ai_rotation_decisions "
+            "WHERE song_id = ?", [song_id]).fetchone()[0]) == 1
+
+        db.delete_song(song_id)    # must not raise (no FK abort)
+
+        assert conn.execute(
+            "SELECT id FROM songs WHERE id = ?",
+            [song_id]).fetchone() is None
+        assert int(conn.execute(
+            "SELECT COUNT(*) FROM ai_rotation_decisions "
+            "WHERE song_id = ?", [song_id]).fetchone()[0]) == 0
+    finally:
+        # Song already gone via delete_song; just the plan envelope
+        conn.execute(
+            "DELETE FROM ai_rotation_plans WHERE plan_date = ?",
+            [plan_date])
+        conn.execute("DELETE FROM songs WHERE id = ?", [song_id])
+        conn.commit()

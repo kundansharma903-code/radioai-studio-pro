@@ -16,9 +16,14 @@ Covers:
   • pick_song_for_clock picks weighted-random, respects vetoes
   • pick returns None when pool empty + when all vetoed
   • compute_plan_for_date writes decisions for active clocks
-  • compute_plan skips clocks with no slots / no category-id slots
   • compute_plan respects specific_song_id / specific_artist_id pins
-  • compute_plan idempotent — re-running wipes prior decisions
+  • compute_plan preserves approved / discarded plans (operator
+    decisions are authoritative — BUG-1 fix); only 'pending' plans
+    are reset + recomputed
+  • NULL/0-category "All Songs" slots produce decisions from the
+    all-songs pool; source/target category is never 0
+  • rest decisions are unique per (clock, hour, song) even when a
+    clock has several same-pool song slots; rested_count matches
   • Engine lifecycle start/stop/shutdown idempotent
   • Engine state transitions OFF → WARMING → ON; ERROR after exception
   • is_enabled gates on Settings key
@@ -420,6 +425,11 @@ def test_explain_surfaces_4hour_veto_reason(db, seed_world):
         # 1 hour ago — triggers 4-hour rule
         now = datetime.now()
         target = now - timedelta(hours=1)
+        # Slot hour must NOT be the hour the play landed in, or the
+        # slot_age=0 curve zeroes the weight BEFORE the 4-hour check
+        # runs and veto_reason stays None. (Was hard-coded 10 → the
+        # test failed whenever run between 11:00-11:59 local.)
+        slot_hour = (target.hour + 3) % 24
         db._conn().execute(
             "INSERT INTO broadcast_log (entry_type, song_id, "
             "played_at, duration_ms) "
@@ -431,7 +441,7 @@ def test_explain_surfaces_4hour_veto_reason(db, seed_world):
             song_category_id=s["cat_ids"]["MA"],
             song_artist=None,
             primary_category_id=s["cat_ids"]["MA"],
-            hour=10)
+            hour=slot_hour)
         assert out["weight"] == 0.0
         assert out["veto_reason"]
         assert "4h" in out["veto_reason"]
@@ -556,18 +566,69 @@ def test_compute_plan_skips_specific_song_pinned_slot(db, seed_world):
     assert morning_slot2_decisions == []
 
 
-def test_compute_plan_idempotent_reset(db, seed_world):
-    """Re-running compute_plan_for_date for the same date wipes the
-    previous decisions and re-computes from scratch."""
+def test_tick_recomputes_pending_plan(db, seed_world):
+    """A 'pending' plan (operator hasn't decided yet) is still reset +
+    recomputed on every tick — the reset path stays intact."""
     from core.rotation_ai_engine import RotationAIEngine
     eng = RotationAIEngine(db=db)
     today = date.today().isoformat()
-    eng.compute_plan_for_date(today)
+    pid1 = eng.compute_plan_for_date(today)
+    assert db.get_ai_rotation_plan(today)["status"] == "pending"
     first_count = len(db.get_rotation_decisions_for_date(today))
-    eng.compute_plan_for_date(today)
+    pid2 = eng.compute_plan_for_date(today)
+    assert pid2 == pid1
+    plan = db.get_ai_rotation_plan(today)
+    assert plan["status"] == "pending"
     second_count = len(db.get_rotation_decisions_for_date(today))
     # Same world + same algorithm → identical decision count
     assert first_count == second_count
+
+
+def test_tick_preserves_approved_plan(db, seed_world):
+    """BUG-1 fix: once the operator APPROVES today's plan, a later
+    tick/compute must NOT reset it — same plan_id, status stays
+    'approved', and the decision rows are untouched (same ids)."""
+    from core.rotation_ai_engine import RotationAIEngine
+    eng = RotationAIEngine(db=db)
+    today = date.today().isoformat()
+    pid1 = eng.compute_plan_for_date(today)
+    db.mark_ai_rotation_plan_approved(today)
+    ids_before = sorted(
+        int(d["id"]) for d in db.get_rotation_decisions_for_date(today))
+    assert ids_before, "seed world should have produced decisions"
+
+    pid2 = eng.compute_plan_for_date(today)
+
+    assert pid2 == pid1, "compute must return the existing plan_id"
+    plan = db.get_ai_rotation_plan(today)
+    assert plan["status"] == "approved"
+    assert plan["approved_at"] is not None
+    ids_after = sorted(
+        int(d["id"]) for d in db.get_rotation_decisions_for_date(today))
+    assert ids_after == ids_before, (
+        "approved plan's decisions must be preserved byte-for-byte "
+        "(same row ids, no wipe + rewrite)")
+
+
+def test_tick_preserves_discarded_plan(db, seed_world):
+    """Same rule for DISCARDED — the operator said no; the engine must
+    not resurrect the plan on the next tick. (Discard itself wipes the
+    decision rows; a later compute must not re-add any.)"""
+    from core.rotation_ai_engine import RotationAIEngine
+    eng = RotationAIEngine(db=db)
+    today = date.today().isoformat()
+    pid1 = eng.compute_plan_for_date(today)
+    db.mark_ai_rotation_plan_discarded(today)
+    assert db.get_rotation_decisions_for_date(today) == []
+
+    pid2 = eng.compute_plan_for_date(today)
+
+    assert pid2 == pid1
+    plan = db.get_ai_rotation_plan(today)
+    assert plan["status"] == "discarded"
+    assert plan["discarded_at"] is not None
+    # No recompute — decisions stay wiped
+    assert db.get_rotation_decisions_for_date(today) == []
 
 
 def test_compute_plan_updates_envelope_stats(db, seed_world):
@@ -606,6 +667,162 @@ def test_compute_plan_emits_rest_decisions_for_vetoed_primary_songs(
         assert rest_ma1, "expected rest decision for MA1 played today"
     finally:
         _clear_broadcast_log(db, [s["song_ids"]["MA1"]])
+
+
+def test_null_category_slot_produces_decisions(db, tmp_path):
+    """A Song slot with category_id NULL ("All Songs" — the operator's
+    real on-air clocks use this) must still produce decisions via the
+    all-songs pool. source/target category on those decisions must
+    never be the invalid FK value 0 (NULL is fine)."""
+    from core.rotation_ai_engine import RotationAIEngine
+    conn = db._conn()
+    prefix = uuid.uuid4().hex[:8]
+    today = date.today().isoformat()
+    weekday = date.today().weekday()
+
+    # Temp songs with REAL on-disk files, no category (NULL)
+    song_ids: list[int] = []
+    for i in range(3):
+        f = tmp_path / f"nullcat-{prefix}-{i}.mp3"
+        f.write_bytes(b"\x00" * 256)
+        cur = conn.execute(
+            "INSERT INTO songs (artist, title, category_id, "
+            "is_enabled, file_path, duration_ms) "
+            "VALUES (?, ?, NULL, 1, ?, 180000)",
+            [f"nullcat-A{i}-{prefix}", f"nullcat-T{i}-{prefix}",
+             str(f)])
+        song_ids.append(int(cur.lastrowid))
+    # Clock with ONE rotation-eligible Song slot, category_id NULL
+    cur = conn.execute(
+        "INSERT INTO clocks (name, is_active) VALUES (?, 1)",
+        [f"nullcat-clock-{prefix}"])
+    clock_id = int(cur.lastrowid)
+    conn.execute(
+        "INSERT INTO clock_slots (clock_id, slot_type, category_id, "
+        "slot_order, selection_mode) VALUES (?, 'Song', NULL, 1, ?)",
+        [clock_id, "random_any"])
+    # Grid cell today @ hour 3 (raw INSERT like seed_world — never
+    # deletes real operator rows; later rowid wins the grid dict key)
+    conn.execute(
+        "INSERT INTO auto_schedule (clock_id, day_of_week, "
+        "hour_start, hour_end) VALUES (?, ?, 3, 4)",
+        [clock_id, weekday])
+    conn.commit()
+
+    try:
+        eng = RotationAIEngine(db=db)
+        plan_id = eng.compute_plan_for_date(today)
+        assert plan_id > 0
+        decisions = db.get_rotation_decisions_for_date(today)
+        mine = [d for d in decisions
+                if int(d["clock_id"]) == clock_id]
+        assert mine, (
+            "NULL-category slot produced NO decisions — all-songs "
+            "pool path is broken")
+        # At least one pick decision must exist (library has enabled
+        # songs incl. our 3 never-played temp ones → eligible)
+        assert any(d["action"] == "pick" for d in mine)
+        # Categories must be NULL or a real id — NEVER 0
+        for d in mine:
+            assert d["source_category_id"] != 0, d
+            assert d["target_category_id"] != 0, d
+            # All-songs slots have no promote-target notion
+            if d["action"] in ("pick", "promote"):
+                assert d["target_category_id"] is None
+    finally:
+        # Plan first (decisions FK-reference songs), then grid/clock/songs
+        conn.execute(
+            "DELETE FROM ai_rotation_plans WHERE plan_date = ?",
+            [today])
+        conn.execute(
+            "DELETE FROM auto_schedule WHERE clock_id = ?", [clock_id])
+        conn.execute("DELETE FROM clocks WHERE id = ?", [clock_id])
+        conn.execute(
+            "DELETE FROM songs WHERE id IN ("
+            + ",".join("?" * len(song_ids)) + ")", song_ids)
+        conn.commit()
+
+
+def test_rest_rows_unique_per_song(db):
+    """A clock with TWO Song slots sharing the same category pool at
+    one hour must emit exactly ONE rest row per (clock, hour, song) —
+    and the envelope's rested_count counts unique songs, not slots."""
+    from core.rotation_ai_engine import RotationAIEngine
+    conn = db._conn()
+    prefix = uuid.uuid4().hex[:8]
+    today = date.today().isoformat()
+    weekday = date.today().weekday()
+    hour = 4
+
+    cur = conn.execute(
+        "INSERT INTO categories (name, color) VALUES (?, ?)",
+        [f"restdedupe-{prefix}", "#06b6d4"])
+    cat_id = int(cur.lastrowid)
+    song_ids: list[int] = []
+    for i in range(3):
+        cur = conn.execute(
+            "INSERT INTO songs (artist, title, category_id, "
+            "is_enabled, file_path, duration_ms) "
+            "VALUES (?, ?, ?, 1, ?, 180000)",
+            [f"restdd-A{i}-{prefix}", f"restdd-T{i}-{prefix}",
+             cat_id, f"/x/restdd-{prefix}-{i}.mp3"])
+        song_ids.append(int(cur.lastrowid))
+    rested_song = song_ids[0]
+    cur = conn.execute(
+        "INSERT INTO clocks (name, is_active) VALUES (?, 1)",
+        [f"restdedupe-clock-{prefix}"])
+    clock_id = int(cur.lastrowid)
+    # TWO same-pool Song slots in the same clock (same category)
+    for order in (1, 2):
+        conn.execute(
+            "INSERT INTO clock_slots (clock_id, slot_type, "
+            "category_id, slot_order, selection_mode) "
+            "VALUES (?, 'Song', ?, ?, ?)",
+            [clock_id, cat_id, order, "random_from_category"])
+    conn.execute(
+        "INSERT INTO auto_schedule (clock_id, day_of_week, "
+        "hour_start, hour_end) VALUES (?, ?, ?, ?)",
+        [clock_id, weekday, hour, hour + 1])
+    conn.commit()
+
+    try:
+        # Force a rest condition — rested_song played TODAY in hour H
+        # (slot_age=0 → hard veto → rest decision)
+        _seed_broadcast_play(db, rested_song, hour=hour, days_ago=0)
+        eng = RotationAIEngine(db=db)
+        eng.compute_plan_for_date(today)
+        decisions = db.get_rotation_decisions_for_date(today)
+        rest_rows = [
+            d for d in decisions
+            if d["action"] == "rest"
+            and int(d["clock_id"]) == clock_id
+            and int(d["hour"]) == hour
+            and int(d["song_id"]) == rested_song]
+        assert len(rest_rows) == 1, (
+            f"expected exactly ONE rest row for "
+            f"(clock={clock_id}, hour={hour}, song={rested_song}), "
+            f"got {len(rest_rows)} — same-pool slots must dedupe")
+        # Envelope rested_count == unique rest rows across the plan
+        plan = db.get_ai_rotation_plan(today)
+        all_rest = [d for d in decisions if d["action"] == "rest"]
+        rest_keys = {(int(d["clock_id"]), int(d["hour"]),
+                      int(d["song_id"])) for d in all_rest}
+        assert len(all_rest) == len(rest_keys), (
+            "duplicate (clock, hour, song) rest rows in plan")
+        assert plan["rested_count"] == len(all_rest)
+    finally:
+        _clear_broadcast_log(db, [rested_song])
+        conn.execute(
+            "DELETE FROM ai_rotation_plans WHERE plan_date = ?",
+            [today])
+        conn.execute(
+            "DELETE FROM auto_schedule WHERE clock_id = ?", [clock_id])
+        conn.execute("DELETE FROM clocks WHERE id = ?", [clock_id])
+        conn.execute(
+            "DELETE FROM songs WHERE id IN ("
+            + ",".join("?" * len(song_ids)) + ")", song_ids)
+        conn.execute("DELETE FROM categories WHERE id = ?", [cat_id])
+        conn.commit()
 
 
 # ════════════════════════════════════════════════════════════════════════════

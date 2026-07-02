@@ -70,6 +70,7 @@ KEY_ENGINE_ENABLED   = "rotation_ai_engine_enabled"     # '1' | '0'
 KEY_LAST_TICK_AT     = "rotation_ai_last_tick_at"       # ISO ts
 KEY_LAST_ERROR       = "rotation_ai_last_error"          # str or ""
 KEY_LAST_PLAN_DATE   = "rotation_ai_last_plan_date"      # YYYY-MM-DD
+KEY_LAST_PURGE_DATE  = "rotation_ai_last_purge_date"     # YYYY-MM-DD
 
 
 # ── Engine states (string enum) ────────────────────────────────────────────
@@ -310,9 +311,11 @@ class RotationAIEngine(QObject):
             slot_weight = self.SLOT_AGE_WEIGHTS.get(
                 age_days, self.WEIGHT_DEFAULT)
 
-        # ── 2. Primary boost
+        # ── 2. Primary boost — only when the clock has a REAL primary
+        # category (NULL/0 = "All Songs" slot → uniform ×1.0, no boost)
+        pri = int(primary_category_id or 0)
         boost = (self.PRIMARY_BOOST
-                 if int(song_category_id or -1) == int(primary_category_id)
+                 if pri > 0 and int(song_category_id or -1) == pri
                  else 1.0)
         weight = slot_weight * boost
 
@@ -386,8 +389,9 @@ class RotationAIEngine(QObject):
             except (ValueError, TypeError):
                 out["slot_weight"] = self.WEIGHT_DEFAULT
 
+        pri = int(primary_category_id or 0)
         boost = (self.PRIMARY_BOOST
-                 if int(song_category_id or -1) == int(primary_category_id)
+                 if pri > 0 and int(song_category_id or -1) == pri
                  else 1.0)
         out["boost"] = boost
         out["weight"] = out["slot_weight"] * boost
@@ -421,11 +425,17 @@ class RotationAIEngine(QObject):
                         pass
         return out
 
-    def candidate_pool(self, primary_category_id: int) -> list:
+    def candidate_pool(self, primary_category_id) -> list:
         """Return enabled songs in the sister-pool of the given
-        primary category. Pool = {primary} ∪ sisters."""
-        pool_ids = self._db.get_sister_pool_for_category(
-            int(primary_category_id))
+        primary category. Pool = {primary} ∪ sisters.
+
+        A NULL/0 primary category means an "All Songs" slot (the
+        operator's real on-air clocks use this) — the pool is the
+        whole enabled library instead of disabling the feature."""
+        pid = int(primary_category_id or 0)
+        if pid <= 0:
+            return self._db.get_all_enabled_songs()
+        pool_ids = self._db.get_sister_pool_for_category(pid)
         return self._db.get_songs_in_categories(pool_ids)
 
     def pick_song_for_clock(self, *,
@@ -449,9 +459,15 @@ class RotationAIEngine(QObject):
         SchedulerEngine then reverts to its native random+separation
         pick (operator's Q4 = (b) safety fallback)."""
         now = now or datetime.now()
-        songs = self.candidate_pool(primary_category_id)
+        primary = int(primary_category_id or 0)
+        songs = self.candidate_pool(primary)
         if not songs:
             return None
+        if primary <= 0:
+            log.info(
+                f"[rotation-ai] pick_song_for_clock clock={clock_id} "
+                f"hour={hour}: NULL/0 category — all-songs pool "
+                f"({len(songs)} candidates)")
         weights: list[float] = []
         eligible: list[dict] = []
         for s in songs:
@@ -459,7 +475,7 @@ class RotationAIEngine(QObject):
                 song_id=int(s["id"]),
                 song_category_id=s.get("category_id"),
                 song_artist=s.get("artist"),
-                primary_category_id=int(primary_category_id),
+                primary_category_id=primary,
                 hour=int(hour),
                 now=now)
             if w > 0:
@@ -486,6 +502,21 @@ class RotationAIEngine(QObject):
             Settings().set(KEY_LAST_ERROR, "")
         except Exception:
             pass
+        # Daily maintenance — 14-day retention purge of old plan
+        # envelopes (+ CASCADE decisions). Sentinel-guarded so it runs
+        # once per day; a purge failure must never kill the tick.
+        try:
+            last_purge = (Settings().get(KEY_LAST_PURGE_DATE, "")
+                          or "").strip()
+            if last_purge != plan_date:
+                purged = self._db.purge_old_rotation_decisions()
+                Settings().set(KEY_LAST_PURGE_DATE, plan_date)
+                if purged:
+                    log.info(
+                        f"[rotation-ai] retention purge removed "
+                        f"{purged} plan(s) older than 14 days")
+        except Exception as exc:
+            log.warning(f"[rotation-ai] retention purge failed: {exc}")
         self._set_state(STATE_ON)
         plan = self._db.get_ai_rotation_plan(plan_date)
         summary = {
@@ -509,7 +540,21 @@ class RotationAIEngine(QObject):
         """Walk every (clock, hour) cell in auto_schedule for the
         weekday of plan_date. For each clock's rotation-eligible song
         slot, simulate the AI pick + flag rest decisions. Persist to
-        ai_rotation_decisions. Returns plan_id."""
+        ai_rotation_decisions. Returns plan_id.
+
+        Operator decisions are authoritative: if today's plan has
+        already been approved / auto-applied / discarded, the plan and
+        its decisions are left untouched (recomputing would silently
+        wipe the operator's call — BUG-1). Only a 'pending' (or
+        absent) plan is reset + recomputed."""
+        existing = self._db.get_ai_rotation_plan(plan_date)
+        if existing and (str(existing.get("status") or "").lower()
+                          in ("approved", "auto_applied", "discarded")):
+            log.info(
+                f"[rotation-ai] compute_plan {plan_date}: plan already "
+                f"'{existing['status']}' — preserving operator "
+                f"decision, skipping recompute")
+            return int(existing["id"])
         # Wipe + reset the day's plan envelope
         plan_id = self._db.reset_ai_rotation_plan(plan_date)
         target_day = _date.fromisoformat(plan_date)
@@ -532,6 +577,11 @@ class RotationAIEngine(QObject):
         rested = 0
         promoted = 0
         clocks_touched: set = set()
+        all_songs_slots = 0
+        # Dedupe guard — one 'rest' row per (clock, hour, song) even
+        # when a clock has several song slots sharing the same pool
+        # (BUG: rested_count was inflated once per song-slot).
+        rest_seen: set = set()
 
         for hour, clock_id in cells:
             try:
@@ -548,14 +598,22 @@ class RotationAIEngine(QObject):
                 # Only rotation-eligible song slots
                 if (slot_dict.get("slot_type", "").lower() != "song"):
                     continue
+                # NULL/0 category = "All Songs" slot — the operator's
+                # real on-air clocks use this. Instead of skipping
+                # (which left plans with 0 decisions), run the
+                # algorithm over the whole enabled library with no
+                # primary boost (primary_category_id=0 sentinel).
                 cat_id = slot_dict.get("category_id")
-                if cat_id is None or int(cat_id) <= 0:
-                    continue
+                primary_cat = int(cat_id) if cat_id else 0
+                if primary_cat < 0:
+                    primary_cat = 0
                 # Skip specific-song / specific-artist slots — operator
                 # pinned those explicitly, AI must not override
                 if (slot_dict.get("specific_song_id")
                         or slot_dict.get("specific_artist_id")):
                     continue
+                if primary_cat == 0:
+                    all_songs_slots += 1
                 # Compute decisions for this (clock, hour, primary_cat)
                 slot_idx = int(slot_dict.get("slot_order") or 0)
                 r, p = self._decide_for_slot(
@@ -564,13 +622,20 @@ class RotationAIEngine(QObject):
                     clock_id=int(clock_id),
                     hour=int(hour),
                     slot_idx=slot_idx,
-                    primary_category_id=int(cat_id),
+                    primary_category_id=primary_cat,
                     sim_now=sim_now,
+                    rest_seen=rest_seen,
                 )
                 rested += r
                 promoted += p
                 if r > 0 or p > 0:
                     clocks_touched.add(int(clock_id))
+
+        if all_songs_slots:
+            log.info(
+                f"[rotation-ai] compute_plan {plan_date}: "
+                f"{all_songs_slots} slot(s) had NULL/0 category — "
+                f"used all-songs candidate pool (no primary boost)")
 
         self._db.update_ai_rotation_plan_stats(
             plan_id, rested=rested, promoted=promoted,
@@ -584,16 +649,30 @@ class RotationAIEngine(QObject):
                            hour: int,
                            slot_idx: int,
                            primary_category_id: int,
-                           sim_now: datetime) -> tuple:
+                           sim_now: datetime,
+                           rest_seen: Optional[set] = None) -> tuple:
         """Run the algorithm once for one (clock, hour, primary) tuple.
         Writes rest + pick decisions to the DB. Returns
         ``(rested_count, promoted_count)`` so the plan envelope's
-        aggregate counters stay accurate."""
+        aggregate counters stay accurate.
+
+        ``primary_category_id`` = 0 means an "All Songs" slot — pool
+        is the whole enabled library, no primary boost, and the pick
+        is always action='pick' (there is no sister/promote notion).
+
+        ``rest_seen`` is a caller-owned set of (clock_id, hour,
+        song_id) tuples — a song is rested at most ONCE per (clock,
+        hour) even when the clock has several song slots sharing the
+        same pool, so rested_count counts unique songs."""
+        all_songs = int(primary_category_id or 0) <= 0
         songs = self.candidate_pool(primary_category_id)
         if not songs:
             return (0, 0)
+        if rest_seen is None:
+            rest_seen = set()
 
-        # Split pool into primary vs sister + score everything
+        # Split pool into primary vs sister + score everything.
+        # All-songs mode: every song counts as primary (no sisters).
         primary_songs: list[tuple[dict, float, dict]] = []
         sister_songs:  list[tuple[dict, float, dict]] = []
         for s in songs:
@@ -604,7 +683,9 @@ class RotationAIEngine(QObject):
                 primary_category_id=primary_category_id,
                 hour=hour, now=sim_now)
             triple = (s, explain["weight"], explain)
-            if int(s.get("category_id") or -1) == primary_category_id:
+            if (all_songs
+                    or int(s.get("category_id") or -1)
+                        == primary_category_id):
                 primary_songs.append(triple)
             else:
                 sister_songs.append(triple)
@@ -614,13 +695,24 @@ class RotationAIEngine(QObject):
         rested_count = 0
         for s, w, ex in primary_songs:
             if w == 0.0:
+                key = (int(clock_id), int(hour), int(s["id"]))
+                if key in rest_seen:
+                    continue    # already rested for this (clock, hour)
+                rest_seen.add(key)
                 reason = self._rest_reason(ex)
+                if all_songs:
+                    # song's own category (may be NULL) — 0 is not a
+                    # valid categories(id) FK value
+                    song_cat = s.get("category_id")
+                    src_cat = int(song_cat) if song_cat else None
+                else:
+                    src_cat = primary_category_id
                 self._db.add_rotation_decision(
                     plan_id=plan_id, decision_date=plan_date,
                     clock_id=clock_id, hour=hour, slot_idx=slot_idx,
                     song_id=int(s["id"]),
                     action="rest",
-                    source_category_id=primary_category_id,
+                    source_category_id=src_cat,
                     target_category_id=None,
                     reason=reason)
                 rested_count += 1
@@ -634,7 +726,11 @@ class RotationAIEngine(QObject):
             [t[0] for t in eligible],
             weights=[t[1] for t in eligible], k=1)[0]
         pick_cat = int(pick.get("category_id") or 0)
-        action = "promote" if pick_cat != primary_category_id else "pick"
+        if all_songs:
+            action = "pick"
+        else:
+            action = ("promote" if pick_cat != primary_category_id
+                      else "pick")
         promoted_count = 1 if action == "promote" else 0
         # Reason — find this song's explain block
         pick_explain = next(
@@ -646,8 +742,9 @@ class RotationAIEngine(QObject):
             clock_id=clock_id, hour=hour, slot_idx=slot_idx,
             song_id=int(pick["id"]),
             action=action,
-            source_category_id=pick_cat,
-            target_category_id=primary_category_id,
+            source_category_id=(pick_cat if pick_cat > 0 else None),
+            target_category_id=(None if all_songs
+                                 else primary_category_id),
             reason=reason)
         return (rested_count, promoted_count)
 
@@ -670,7 +767,9 @@ class RotationAIEngine(QObject):
         cat = int(song.get("category_id") or 0)
         age = explain.get("slot_age_days")
         boost = explain.get("boost", 1.0)
-        if cat != primary_category_id:
+        if int(primary_category_id or 0) <= 0:
+            origin = "all songs"
+        elif cat != primary_category_id:
             origin = "sister category"
         else:
             origin = "primary"
@@ -687,7 +786,8 @@ class RotationAIEngine(QObject):
         try:
             return {k: slot[k] for k in slot.keys()}
         except (TypeError, AttributeError):
-            return dict(slot) if isinstance(slot, dict) else {}
+            return ({k: slot[k] for k in slot.keys()}
+                    if isinstance(slot, dict) else {})
 
     def _set_state(self, new_state: str) -> None:
         if new_state == self._state:

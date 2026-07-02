@@ -417,7 +417,7 @@ class _DecisionRow(QFrame):
             except Exception as exc:
                 log.debug(f"tooltip last7 failed sid={sid}: {exc}")
             try:
-                stats = db._song_play_stats(int(sid))
+                stats = db.get_song_play_stats(int(sid))
                 all_time = int(stats.get("play_count") or 0)
             except Exception as exc:
                 log.debug(f"tooltip all_time failed sid={sid}: {exc}")

@@ -50,7 +50,9 @@ Lifecycle contract
 from __future__ import annotations
 
 import logging
+import os
 import threading
+import time
 from datetime import datetime, date
 from typing import Optional
 
@@ -82,6 +84,19 @@ class SchedulerEngine(QObject):
     # clock is assigned to the current cell. Deduped — re-emits only
     # when the resolved clock genuinely changes from the previous tick.
     active_clock_changed = pyqtSignal(int, str)
+    # Phase 2 (2026-05-17) — single canonical "queue changed" signal.
+    # Fires whenever the dispatch queue / preview SHOULD be refreshed by
+    # UI consumers (Up Coming panel, NEXT chip, RDS). Sources:
+    #   • pick_next_item advanced the cursor (a real dispatch happened)
+    #   • schedule_reloaded (day rollover or force-reload)
+    #   • active_clock_changed (hour-boundary, different clock now active)
+    # Studio also re-emits its own queue_changed proxy for in-Studio
+    # mutations (pending spot/SOTG appends, drains, drag/drop). UI panels
+    # subscribe to ONE signal source instead of scattered hooks. Replaces
+    # the manual `_load_upcoming_queue()` calls peppered through Studio
+    # — those calls remain as a defence-in-depth backstop but the signal
+    # path is now the primary refresh trigger.
+    queue_changed      = pyqtSignal()
 
     # Lifecycle defaults
     DEFAULT_TICK_INTERVAL_MS = 1000
@@ -139,6 +154,16 @@ class SchedulerEngine(QObject):
         # _pick_song can read them without changing the picker signature
         self._current_pick_clock_id: Optional[int] = None
         self._current_pick_hour: Optional[int] = None
+
+        # Rotation-plan decision memo (BUG-2/BUG-3 fix). peek_next
+        # simulates 5 picks per queue refresh on the 1 Hz scheduler
+        # thread — the approved-decision lookup must not re-query the
+        # DB each time. Keyed on (date, clock_id, hour); refetched only
+        # when the key changes (hour rollover / clock change / new day).
+        self._rot_dec_cache_key: Optional[tuple] = None
+        self._rot_dec_cache: dict = {
+            "active": False, "rest_ids": set(), "picks": []}
+        self._rot_dec_cache_at: float = 0.0   # monotonic ts of last fetch
 
     def set_rotation_engine(self, engine) -> None:
         """Install a RotationAIEngine handle. Pass None to detach
@@ -295,7 +320,14 @@ class SchedulerEngine(QObject):
             self.active_clock_changed.emit(int(new_id), new_name)
         except Exception:
             # Cross-thread emit failures are non-fatal — the next
-            # transition will retry.
+            # tick (or transition) will retry.
+            pass
+        # Phase 2 (2026-05-17) — clock change → different slot list
+        # applies; peek_next will return different items. Trigger
+        # queue refresh so the Up Coming panel + NEXT chip re-render.
+        try:
+            self.queue_changed.emit()
+        except Exception:
             pass
 
     def current_active_clock(self) -> tuple[Optional[int], str]:
@@ -310,6 +342,29 @@ class SchedulerEngine(QObject):
         Useful for the Studio header to seed its indicator at
         construction without waiting for the first tick."""
         return self._active_clock_id, self._active_clock_name
+
+    # ════════════════════════════════════════════════════════════════════
+    # CRITICAL INVARIANT — _suppress_queue_emit gate (2026-05-17 lock)
+    # ════════════════════════════════════════════════════════════════════
+    # When peek_next runs simulated dispatches, it suppresses
+    # queue_changed emissions to prevent a signal storm.
+    #
+    # Without this gate: every peek_next(5) would emit queue_changed
+    # 5 times -> Studio's _on_scheduler_queue_changed handler re-calls
+    # peek_next -> 5 more emits -> exponential cascade -> Qt event
+    # queue floods -> UI freezes ("NEXT chip frozen" symptom observed
+    # 2026-05-17 and root-caused).
+    #
+    # DO NOT REMOVE this flag or the gate check in pick_next_item.
+    # If you need to add a new caller that walks the dispatch loop
+    # non-destructively (like peek_next does), it MUST also set this
+    # flag True during its simulation and restore False after.
+    #
+    # The cursor IS still advanced inside the simulated loop and
+    # restored in peek_next's finally block — only the public-signal
+    # side effect is gated by this flag.
+    # ════════════════════════════════════════════════════════════════════
+    _suppress_queue_emit: bool = False
 
     def _dispatch_due_events(self) -> None:
         """Phase D4: real spot triggering.
@@ -340,7 +395,16 @@ class SchedulerEngine(QObject):
                 self._fired_breaks.clear()
             else:
                 self._fired_breaks.clear()
+                # New day → yesterday's rotation-plan decisions are
+                # stale; force a refetch on the next pick.
+                self._rot_dec_cache_key = None
                 self.schedule_reloaded.emit()
+                # Phase 2 — reload changes the whole event picture;
+                # surface as queue_changed for UI consumers.
+                try:
+                    self.queue_changed.emit()
+                except Exception:
+                    pass
                 log.info(
                     f"scheduler reloaded {len(self._loaded_breaks)} "
                     f"breaks for day {now.weekday()}")
@@ -394,7 +458,7 @@ class SchedulerEngine(QObject):
         # Convert sqlite3.Row → plain dicts (Row is bound to its connection
         # and we want to read these from the scheduler thread without
         # holding the connection cursor)
-        self._loaded_breaks = [dict(r) for r in rows]
+        self._loaded_breaks = [{k: r[k] for k in r.keys()} for r in rows]
         self._loaded_date = now.date()
 
     @staticmethod
@@ -515,6 +579,20 @@ class SchedulerEngine(QObject):
             self._clock_slot_cursor = (idx + 1) % n
             item["clock_id"] = clock_id
             item["slot_idx"] = idx
+            # Phase 2 (2026-05-17) — cursor advanced; the queue's
+            # "what's next" view has materially changed. UI consumers
+            # listening on queue_changed re-render with the new peek_next.
+            # SUPPRESSED while peek_next runs (it advances the cursor
+            # inside try/finally for simulation; emitting there causes
+            # a feedback storm because Studio's handler re-calls
+            # peek_next → 5 more emits → exponential). Real commits
+            # (via _compute_next_song's call path) fire the signal.
+            if not self._suppress_queue_emit:
+                try:
+                    self.queue_changed.emit()
+                except Exception as exc:
+                    log.debug(
+                        f"queue_changed emit (advance) failed: {exc}")
             return item
         return None
 
@@ -583,6 +661,14 @@ class SchedulerEngine(QObject):
         saved_cursor = self._clock_slot_cursor
         saved_hour_key = self._active_hour_key
         saved_fired_breaks = set(self._fired_breaks)
+        # Phase 2 — block queue_changed emission while we simulate
+        # dispatches. Without this gate every peek_next would emit
+        # `n` redundant signals, and Studio's `_on_scheduler_queue_changed`
+        # handler re-calls peek_next → feedback storm (2026-05-17 bug
+        # observed live: "NEXT chip frozen" with high queue_changed
+        # event traffic).
+        saved_suppress = self._suppress_queue_emit
+        self._suppress_queue_emit = True
 
         out: list[dict] = []
         try:
@@ -599,6 +685,7 @@ class SchedulerEngine(QObject):
             self._clock_slot_cursor = saved_cursor
             self._active_hour_key = saved_hour_key
             self._fired_breaks = saved_fired_breaks
+            self._suppress_queue_emit = saved_suppress
         return out
 
     # ── Per-type pickers ──────────────────────────────────────────────────
@@ -620,6 +707,51 @@ class SchedulerEngine(QObject):
         v = slot["category_id"] if "category_id" in slot.keys() else None
         return int(v) if v else None
 
+    def _active_rotation_decisions(self) -> dict:
+        """Cached lookup of today's APPROVED rotation-plan decisions
+        for the current pick context (BUG-2/BUG-3 fix).
+
+        Returns {'active': bool, 'rest_ids': set[int], 'picks': list}.
+        Inactive shape when: no pick context (direct _pick_song calls),
+        no rotation engine installed, engine disabled, plan missing /
+        pending / discarded, or ANY error (broadcast safety — the AI
+        must never take the station down; log.debug and carry on).
+
+        Memoised per (date, clock_id, hour) on the instance so
+        peek_next's 5 simulated picks per refresh cost one query total.
+        Signal-free, Qt-free, read-only — safe on the scheduler thread
+        and inside peek simulations.
+        """
+        inactive = {"active": False, "rest_ids": set(), "picks": []}
+        try:
+            clock_id = self._current_pick_clock_id
+            hour     = self._current_pick_hour
+            if clock_id is None or hour is None:
+                return inactive
+            if (self._rotation_engine is None
+                    or not self._rotation_engine.is_enabled()):
+                return inactive
+            now = getattr(self, "_current_pick_now", None)
+            pick_date = (now.date() if isinstance(now, datetime)
+                         else date.today()).isoformat()
+            key = (pick_date, int(clock_id), int(hour))
+            # 60s TTL so a plan approved mid-hour goes live within a
+            # minute (key alone would cache "inactive" until rollover).
+            fresh = (time.monotonic() - self._rot_dec_cache_at) < 60.0
+            if key == self._rot_dec_cache_key and fresh:
+                return self._rot_dec_cache
+            decisions = self._db.get_active_rotation_decisions(
+                pick_date, int(clock_id), int(hour))
+            self._rot_dec_cache_key = key
+            self._rot_dec_cache = decisions
+            self._rot_dec_cache_at = time.monotonic()
+            return decisions
+        except Exception as exc:
+            log.debug(
+                f"_active_rotation_decisions failed: {exc} "
+                f"— treating rotation plan as inactive")
+            return inactive
+
     def _pick_song(self, slot) -> Optional[dict]:
         """Song pick — Phase F-Final C3 dispatch order:
 
@@ -640,7 +772,7 @@ class SchedulerEngine(QObject):
         if sid:
             row = self._db.get_song(int(sid))
             if row:
-                return self._song_row_to_item(dict(row))
+                return self._song_row_to_item({k: row[k] for k in row.keys()})
 
         # 2) specific artist — random from artist's catalog
         aid = slot["specific_artist_id"] if "specific_artist_id" in slot.keys() else None
@@ -656,7 +788,8 @@ class SchedulerEngine(QObject):
             except Exception:
                 rows = []
             if rows:
-                return self._song_row_to_item(dict(random.choice(rows)))
+                _rc = random.choice(rows)
+                return self._song_row_to_item({k: _rc[k] for k in _rc.keys()})
 
         # 3) filter_json — Jazler-style filter spec
         fj = slot["filter_json"] if "filter_json" in slot.keys() else None
@@ -664,17 +797,63 @@ class SchedulerEngine(QObject):
         if fj:
             songs = self._songs_matching_filter_json(fj)
 
-        # 3.5) Phase E5 — Rotation AI consult. Only fires when:
+        # 3.4) Honor the operator-approved daily plan (BUG-2 fix).
+        #      When today's plan is approved/auto_applied, its pick/
+        #      promote decisions for this (clock, hour) ARE what airs —
+        #      the live consult (3.5) drops to a secondary fallback.
+        #      Operator pins (steps 1-2) and filter_json matches still
+        #      win: this only fires when `songs` is empty. Playability
+        #      (enabled + file on disk) and the scheduler's existing
+        #      separation vetoes still apply — no new veto invented.
+        category_id = self._slot_category_id(slot)
+        rot = self._active_rotation_decisions()
+        rest_ids: set = rot["rest_ids"] if rot["active"] else set()
+        if not songs and rot["active"] and rot["picks"]:
+            try:
+                recent_artists  = self._recent_artists(
+                    self.SEPARATION_SAME_ARTIST_MIN)
+                recent_song_ids = self._recent_song_ids(
+                    self.SEPARATION_SAME_SONG_MIN)
+                playable = [
+                    p for p in rot["picks"]
+                    if p.get("file_path")
+                    and os.path.exists(p["file_path"])
+                    and int(p["song_id"]) not in recent_song_ids
+                    and (p.get("artist") or "") not in recent_artists
+                ]
+                if playable:
+                    chosen = random.choice(playable)
+                    log.info(
+                        f"[rotation] plan pick honored "
+                        f"song_id={chosen['song_id']} "
+                        f"action={chosen.get('action')} "
+                        f"clock={self._current_pick_clock_id} "
+                        f"hour={self._current_pick_hour}")
+                    return self._song_row_to_item({
+                        "id":          chosen["song_id"],
+                        "file_path":   chosen["file_path"],
+                        "title":       chosen.get("title"),
+                        "artist":      chosen.get("artist"),
+                        "duration_ms": chosen.get("duration_ms"),
+                    })
+            except Exception as exc:
+                log.debug(
+                    f"_pick_song: plan-pick honor failed: {exc} "
+                    f"— falling through to consult/ladder")
+
+        # 3.5) Phase E5 — Rotation AI consult (live weighted re-roll).
+        #      Secondary to the plan picks above — only reached when the
+        #      plan yielded nothing usable. Fires when:
         #      • rotation_engine is set (MainWindow installed it)
-        #      • slot has a category_id (eligible for sister pooling)
         #      • no filter_json + no specific_song / specific_artist (those
         #        are operator pins — AI must not override)
         #      • engine reports is_enabled (Settings toggle ON)
         #      • today's plan is approved or auto_applied (operator
         #        gave the green light, OR 5-PM safety net fired)
-        category_id = self._slot_category_id(slot)
-        if (not songs and category_id is not None
-                and self._rotation_engine is not None):
+        #      NULL-category slots consult too (BUG-4 fix): the engine's
+        #      pick_song_for_clock handles NULL/0 category itself via
+        #      the all-songs pool.
+        if not songs and self._rotation_engine is not None:
             try:
                 if self._rotation_engine.is_enabled():
                     from datetime import date as _date
@@ -685,15 +864,15 @@ class SchedulerEngine(QObject):
                         ai_pick = self._rotation_engine.pick_song_for_clock(
                             clock_id=int(self._current_pick_clock_id or 0),
                             hour=int(self._current_pick_hour or 0),
-                            primary_category_id=int(category_id),
-                            now=self._current_pick_now)
+                            primary_category_id=int(category_id or 0),
+                            now=getattr(self, "_current_pick_now", None))
                         if ai_pick:
                             log.info(
                                 f"[scheduler] rotation AI pick "
                                 f"song_id={ai_pick.get('id')} "
                                 f"clock={self._current_pick_clock_id} "
                                 f"hour={self._current_pick_hour}")
-                            return self._song_row_to_item(dict(ai_pick))
+                            return self._song_row_to_item({k: ai_pick[k] for k in ai_pick.keys()})
             except Exception as exc:
                 log.debug(
                     f"_pick_song: rotation AI consult failed: {exc} "
@@ -732,6 +911,21 @@ class SchedulerEngine(QObject):
         if not songs:
             return None
 
+        # REST exclusion (BUG-3 fix): an active plan's rested songs
+        # must not air via the normal ladder either. Applied at the
+        # candidate-list level, before separation. Never-stall rule:
+        # if resting empties the pool, keep the unfiltered set —
+        # broadcast must never go silent because of the AI.
+        if rest_ids:
+            unrested = [s for s in songs
+                        if int(s["id"]) not in rest_ids]
+            if unrested:
+                songs = unrested
+            else:
+                log.warning(
+                    "[rotation] all candidates rested — "
+                    "falling back unfiltered")
+
         recent_artists = self._recent_artists(self.SEPARATION_SAME_ARTIST_MIN)
         recent_song_ids = self._recent_song_ids(self.SEPARATION_SAME_SONG_MIN)
         eligible = [
@@ -741,7 +935,8 @@ class SchedulerEngine(QObject):
         ]
         chosen = random.choice(eligible) if eligible else random.choice(songs)
         return self._song_row_to_item(
-            chosen if isinstance(chosen, dict) else dict(chosen))
+            chosen if isinstance(chosen, dict)
+            else {k: chosen[k] for k in chosen.keys()})
 
     @staticmethod
     def _song_row_to_item(row: dict) -> dict:
@@ -801,7 +996,7 @@ class SchedulerEngine(QObject):
                 pass
         sql += " LIMIT 240"
         try:
-            return [dict(r) for r in self._db._conn().execute(
+            return [{k: r[k] for k in r.keys()} for r in self._db._conn().execute(
                 sql, params).fetchall()]
         except Exception as exc:
             log.debug(f"_songs_matching_filter_json failed: {exc}")
@@ -940,6 +1135,14 @@ class SchedulerEngine(QObject):
         }
 
     def _pick_sweeper(self, slot) -> Optional[dict]:
+        """Pick a playable sweeper for the slot. 2026-05-17 hardening:
+        filters out sweepers with missing/empty file_path AND files
+        that don't exist on disk — broken rows used to slip through,
+        Studio's dispatch loop then skipped them, eventually exhausted
+        its safety budget, and the broadcast went idle ("software stops
+        playing anything"). Returning None here lets the scheduler's
+        slot walker advance to the next slot cleanly."""
+        import os
         import random
         mode = self._slot_mode(slot)
         item_id = self._slot_item_id(slot)
@@ -948,12 +1151,36 @@ class SchedulerEngine(QObject):
             row = self._db._conn().execute(
                 "SELECT * FROM sweepers WHERE id = ? AND is_enabled = 1",
                 [item_id]).fetchone()
-            return self._sweeper_to_item(row) if row else None
+            if not row:
+                return None
+            fp = row["file_path"] if "file_path" in row.keys() else None
+            if not fp or not os.path.exists(fp):
+                log.warning(
+                    f"_pick_sweeper: specific sweeper id={item_id} "
+                    f"has missing/empty file_path={fp!r} — slot skipped")
+                return None
+            return self._sweeper_to_item(row)
 
-        rows = list(self._db.get_sweepers_active())
-        if not rows:
+        # Random — filter to playable rows so a broken sweeper can't
+        # cascade Studio's _compute_next_song into the broken-skip
+        # budget loop.
+        all_rows = list(self._db.get_sweepers_active())
+        playable = []
+        for r in all_rows:
+            try:
+                fp = r["file_path"] if "file_path" in r.keys() else None
+            except Exception:
+                fp = None
+            if fp and os.path.exists(fp):
+                playable.append(r)
+        if not playable:
+            if all_rows:
+                log.warning(
+                    f"_pick_sweeper: {len(all_rows)} active sweepers "
+                    f"exist but none have a playable file_path — "
+                    f"slot skipped (operator: check Sweepers Library)")
             return None
-        return self._sweeper_to_item(random.choice(rows))
+        return self._sweeper_to_item(random.choice(playable))
 
     @staticmethod
     def _sweeper_to_item(row) -> dict:
@@ -965,6 +1192,13 @@ class SchedulerEngine(QObject):
             "artist":      "SWEEPER",
             "duration_ms": int(row["duration_ms"] or 0)
                            if row and "duration_ms" in row.keys() else 0,
+            # 2026-05-17 — surface the sweeper's `position` field so
+            # Studio's overlay-vs-deck decision in _compute_next_song
+            # works correctly. Without this, overlay-positioned
+            # sweepers (Start of Song / Before End / Bridge at End /
+            # Custom) always fell through to the deck-load branch.
+            "position":    (row["position"]
+                            if row and "position" in row.keys() else "") or "",
         }
 
     def _pick_station_id(self, slot) -> Optional[dict]:

@@ -23,7 +23,10 @@ Public signals:
   screen_requested(str) — "control_panel" / "ai_magic" /
                           "scheduling_automation" / "review_daily_plan"
   studio_clicked()      — header Open Studio button
-  refresh_engine_clicked()
+  refresh_engine_clicked() — emitted only when no engine handle was
+                          passed (headless/test); with a live engine
+                          the hub gates on is_enabled() and queues the
+                          tick onto the engine's worker thread itself
   stop_engine_clicked()
   create_group_clicked()
   edit_group_clicked(int)
@@ -47,6 +50,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
 )
 
+from core import dialogs
 from core.settings import Settings
 from ui.widgets._tokens import (
     inter, mono, rgba,
@@ -322,6 +326,11 @@ class SchedulingAutomationHub(QWidget):
     studio_clicked        = pyqtSignal()
     refresh_engine_clicked = pyqtSignal()
     stop_engine_clicked   = pyqtSignal()
+    # Private — queued onto the engine's worker thread so a manual
+    # Refresh never runs plan-compute on the UI thread nor races the
+    # engine's own hourly QTimer tick (both serialize on the engine's
+    # event loop).
+    _tick_requested       = pyqtSignal()
     create_group_clicked  = pyqtSignal()
     edit_group_clicked    = pyqtSignal(int)
     ungroup_clicked       = pyqtSignal(int)
@@ -409,6 +418,14 @@ class SchedulingAutomationHub(QWidget):
                     self._on_engine_state_changed)
                 self._engine.tick_completed.connect(
                     self._on_tick_completed)
+                # Manual Refresh dispatch — engine.tick is a bound
+                # method on a QObject living on the worker thread, so
+                # a QueuedConnection posts the call to the engine's
+                # event loop instead of running it here on the UI
+                # thread.
+                self._tick_requested.connect(
+                    self._engine.tick,
+                    Qt.ConnectionType.QueuedConnection)
             except Exception as exc:
                 log.debug(f"engine signal wiring: {exc}")
 
@@ -782,7 +799,7 @@ class SchedulingAutomationHub(QWidget):
             f"border: 1px solid {rgba(CYAN, 0.45)}; border-radius: 10px; }}"
             f"QPushButton:hover {{ background: {rgba(CYAN, 0.12)}; }}"
         )
-        refresh.clicked.connect(self.refresh_engine_clicked.emit)
+        refresh.clicked.connect(self._on_refresh_clicked)
 
         stop = QPushButton("⏹   Stop AI Engine", self)
         stop.setGeometry(1240, 208, 124, 36)
@@ -1105,6 +1122,33 @@ class SchedulingAutomationHub(QWidget):
                           | Qt.AlignmentFlag.AlignVCenter)
 
     # ── Engine signal handlers ──────────────────────────────────────
+
+    def _on_refresh_clicked(self) -> None:
+        """Manual Refresh. Gate on the operator's enable toggle, then
+        queue ONE tick onto the engine's worker thread — never call
+        ``self._engine.tick()`` directly here: that would run a full
+        plan compute on the UI thread, racing the engine's own hourly
+        QTimer tick (two threads interleaving reset + decision writes
+        on the same plan). Repaint arrives via the existing
+        tick_completed wiring."""
+        if self._engine is None:
+            # Headless/test construction — fall back to the public
+            # host signal (legacy Phase B path).
+            self.refresh_engine_clicked.emit()
+            return
+        try:
+            enabled = self._engine.is_enabled()
+        except Exception as exc:
+            log.debug(f"is_enabled check failed: {exc}")
+            enabled = False
+        if not enabled:
+            dialogs.info(
+                self, "Engine is OFF",
+                "Rotation AI is currently stopped, so there is no "
+                "plan to refresh. Enable the engine first, then hit "
+                "Refresh to recompute today's plan.")
+            return
+        self._tick_requested.emit()
 
     def _on_engine_state_changed(self, new_state: str) -> None:
         """Engine fired engine_state_changed — repaint the dot + state
