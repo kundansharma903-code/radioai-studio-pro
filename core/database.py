@@ -127,11 +127,15 @@ class Database:
           - clock_slots.item_id is a soft reference (no FK constraint), but
             we still NULL it to prevent the scheduler from trying to play a
             ghost id.
+          - ai_rotation_decisions.song_id is a NO-ACTION FK (foreign_keys=ON
+            would abort the delete) → DELETE the decision rows; they are a
+            short-lived daily plan artifact, not precious history.
           - songs row itself is deleted last.
 
         All steps run in a single transaction; a single rollback on failure.
         """
         sid = int(song_id)
+        self._ensure_ai_rotation_tables()   # before BEGIN (commits internally)
         conn = self._conn()
         try:
             conn.execute("BEGIN")
@@ -139,6 +143,9 @@ class Database:
             conn.execute("UPDATE broadcast_log SET song_id = NULL WHERE song_id = ?", [sid])
             conn.execute("UPDATE ai_daily_log  SET song_id = NULL WHERE song_id = ?", [sid])
             conn.execute("UPDATE ai_decisions  SET song_id = NULL WHERE song_id = ?", [sid])
+            # Rotation AI decision rows reference songs(id) with NO ACTION —
+            # must go before the songs row or the delete aborts
+            conn.execute("DELETE FROM ai_rotation_decisions WHERE song_id = ?", [sid])
             # Soft reference in clock_slots (item_id == song id when slot is locked)
             conn.execute(
                 "UPDATE clock_slots SET item_id = 0 "
@@ -1783,6 +1790,62 @@ class Database:
             """, [int(clock_id), (plan_date or "").strip()]).fetchall()
         return [{k: r[k] for k in r.keys()} for r in rows]
 
+    def get_active_rotation_decisions(self, plan_date: str,
+                                         clock_id: int,
+                                         hour: int) -> dict:
+        """Read-only consult helper for SchedulerEngine._pick_song
+        (BUG-2/BUG-3 fix): the decisions the operator actually
+        approved for one (date, clock, hour) tuple.
+
+        Returns:
+            {'active': False, 'rest_ids': set(), 'picks': []}
+                when no plan exists for the date OR its status is not
+                'approved'/'auto_applied' (pending/discarded = the AI
+                has no authority on air);
+            {'active': True,
+             'rest_ids': {song_id, ...},        # action='rest' rows
+             'picks':    [{song_id, title, artist, file_path,
+                           duration_ms, action}, ...]}
+                                                # 'pick'/'promote' rows
+        Picks are JOINed against songs with is_enabled=1 and a
+        non-empty file_path so the scheduler can air them directly.
+        SELECT-only — never writes."""
+        self._ensure_ai_rotation_tables()
+        out: dict = {"active": False, "rest_ids": set(), "picks": []}
+        plan = self.get_ai_rotation_plan(plan_date)
+        if not plan or plan.get("status") not in (
+                "approved", "auto_applied"):
+            return out
+        out["active"] = True
+        rows = self._conn().execute(
+            """
+            SELECT  d.song_id, d.action,
+                    s.title, s.artist, s.file_path, s.duration_ms
+            FROM    ai_rotation_decisions d
+            JOIN    songs s ON s.id = d.song_id
+            WHERE   d.plan_id  = ?
+              AND   d.clock_id = ?
+              AND   d.hour     = ?
+              AND   d.song_id IS NOT NULL
+              AND   s.is_enabled = 1
+            """,
+            [int(plan["id"]), int(clock_id), int(hour)]).fetchall()
+        for r in rows:
+            action = (r["action"] or "").strip().lower()
+            if action == "rest":
+                out["rest_ids"].add(int(r["song_id"]))
+            elif action in ("pick", "promote"):
+                if r["file_path"]:
+                    out["picks"].append({
+                        "song_id":     int(r["song_id"]),
+                        "title":       r["title"],
+                        "artist":      r["artist"],
+                        "file_path":   r["file_path"],
+                        "duration_ms": r["duration_ms"],
+                        "action":      action,
+                    })
+        return out
+
     def purge_old_rotation_decisions(self, retention_days: int = 14) -> int:
         """Delete plan envelopes + cascade-delete decisions older than
         ``retention_days``. Returns count of plans deleted. Run by the
@@ -1822,6 +1885,21 @@ class Database:
         rows = self._conn().execute(sql, ids).fetchall()
         return [{k: r[k] for k in r.keys()} for r in rows]
 
+    def get_all_enabled_songs(self) -> list:
+        """Return ALL enabled songs with a real on-disk file — same
+        column shape as get_songs_in_categories. Used by the rotation
+        engine when a clock's Song slot has NULL/0 category ("All
+        Songs" slot): the candidate pool is the whole library."""
+        rows = self._conn().execute(
+            "SELECT s.id, s.title, s.artist, s.category_id, "
+            "  s.file_path, s.duration_ms, s.year, s.bpm, "
+            "  s.energy, s.vocal "
+            "FROM songs s "
+            "WHERE s.is_enabled = 1 "
+            "AND s.file_path IS NOT NULL AND s.file_path != '' "
+            "ORDER BY s.id ASC").fetchall()
+        return [{k: r[k] for k in r.keys()} for r in rows]
+
     def get_song_last_played_at(self, song_id: int):
         """Return ISO timestamp of the last time this song played
         anywhere, or None if never. Used by RotationAIEngine for the
@@ -1834,20 +1912,48 @@ class Database:
             return None
         return str(row["last_at"])
 
+    def get_last_played_map(self) -> dict:
+        """Bulk companion to get_song_last_played_at — ONE query for the
+        whole library. Returns {song_id: ISO timestamp of most recent
+        play}; songs that have never played are simply absent. Used by
+        the Songs Library screen so the Last Played column doesn't need
+        ~400 per-row queries."""
+        rows = self._conn().execute(
+            "SELECT song_id, MAX(played_at) AS last_at "
+            "FROM broadcast_log "
+            "WHERE song_id IS NOT NULL AND entry_type = 'song' "
+            "AND played_at IS NOT NULL "
+            "GROUP BY song_id").fetchall()
+        return {int(r["song_id"]): str(r["last_at"]) for r in rows}
+
     def get_artist_last_played_at(self, artist: str):
         """ISO timestamp of the last time any song by this artist
-        played, or None. Used for the 1-hour same-artist rule."""
+        played, or None. Used for the 1-hour same-artist rule.
+
+        Matching is normalized with .strip().casefold() on BOTH sides
+        (Python-side, since SQLite's NOCASE is ASCII-only) so
+        "Arijit Singh", "arijit singh" and "Arijit Singh " count as
+        the same artist. Stored data is never modified."""
         if not artist:
             return None
-        row = self._conn().execute(
-            "SELECT MAX(bl.played_at) AS last_at "
+        needle = str(artist).strip().casefold()
+        if not needle:
+            return None
+        rows = self._conn().execute(
+            "SELECT s.artist AS artist, MAX(bl.played_at) AS last_at "
             "FROM broadcast_log bl "
             "JOIN songs s ON s.id = bl.song_id "
-            "WHERE s.artist = ? AND bl.entry_type = 'song' "
-            "AND bl.played_at IS NOT NULL", [artist]).fetchone()
-        if row is None or row["last_at"] is None:
-            return None
-        return str(row["last_at"])
+            "WHERE s.artist IS NOT NULL AND bl.entry_type = 'song' "
+            "AND bl.played_at IS NOT NULL "
+            "GROUP BY s.artist").fetchall()
+        best = None
+        for r in rows:
+            if str(r["artist"]).strip().casefold() != needle:
+                continue
+            last_at = str(r["last_at"])
+            if best is None or last_at > best:
+                best = last_at
+        return best
 
     def get_song_last_played_in_hour(self, song_id: int, hour: int):
         """Return the ISO date (YYYY-MM-DD) of the last time this song
@@ -2315,7 +2421,7 @@ class Database:
                       p.updated_at DESC, p.name
             """
         ).fetchall()
-        return [dict(r) for r in rows]
+        return [{k: r[k] for k in r.keys()} for r in rows]
 
     def get_playlist_first_tracks(
         self, playlist_id: int, limit: int = 5
@@ -2333,7 +2439,7 @@ class Database:
             """,
             [int(playlist_id), int(limit)],
         ).fetchall()
-        return [dict(r) for r in rows]
+        return [{k: r[k] for k in r.keys()} for r in rows]
 
     def get_playlist(self, playlist_id: int) -> Optional[sqlite3.Row]:
         """Single playlist row by id, or None. Returns the canonical
@@ -2362,7 +2468,7 @@ class Database:
             """,
             [int(playlist_id)],
         ).fetchall()
-        return [dict(r) for r in rows]
+        return [{k: r[k] for k in r.keys()} for r in rows]
 
     def set_playlist_scheduled(
         self, playlist_id: int, scheduled_day: Optional[str] = None,
@@ -3588,8 +3694,8 @@ class Database:
         if not row:
             return None
         d = {k: row[k] for k in row.keys()}
-        d["spot_files"] = [dict(r) for r in self.get_spot_files(campaign_id)]
-        d["schedule"]   = [dict(r) for r in self.get_break_schedule(campaign_id)]
+        d["spot_files"] = [{k: r[k] for k in r.keys()} for r in self.get_spot_files(campaign_id)]
+        d["schedule"]   = [{k: r[k] for k in r.keys()} for r in self.get_break_schedule(campaign_id)]
         return d
 
     def add_campaign(self, data: dict) -> int:
@@ -4266,15 +4372,34 @@ class Database:
 
     def delete_category(self, category_id: int, reassign_to: int = None) -> int:
         """Delete a category. Reassign its songs to *reassign_to* (or NULL).
-        Returns the number of songs that were reassigned."""
+        Returns the number of songs that were reassigned.
+
+        Rotation AI cleanup: ai_rotation_decisions.source/target_category_id
+        reference categories(id) with NO ACTION (foreign_keys=ON) → those
+        decision rows must be deleted first or the category delete aborts.
+        sister_group_members declares ON DELETE CASCADE, but we delete
+        explicitly too so the cleanup doesn't depend on FK enforcement."""
+        cid = int(category_id)
+        self._ensure_ai_rotation_tables()
         conn = self._conn()
         # Reassign first
         cur = conn.execute(
             "UPDATE songs SET category_id = ? WHERE category_id = ?",
-            [reassign_to, int(category_id)],
+            [reassign_to, cid],
         )
         moved = cur.rowcount or 0
-        conn.execute("DELETE FROM categories WHERE id = ?", [int(category_id)])
+        # Rotation AI references (NO-ACTION FKs) — must go before the
+        # categories row
+        conn.execute(
+            "DELETE FROM ai_rotation_decisions "
+            "WHERE source_category_id = ? OR target_category_id = ?",
+            [cid, cid],
+        )
+        conn.execute(
+            "DELETE FROM sister_group_members WHERE category_id = ?",
+            [cid],
+        )
+        conn.execute("DELETE FROM categories WHERE id = ?", [cid])
         conn.commit()
         return moved
 

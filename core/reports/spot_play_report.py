@@ -245,7 +245,7 @@ def _fetch_campaign(db: Database, campaign_id: int) -> dict:
     if row is None:
         raise SpotPlayReportError(
             f"Campaign id={campaign_id} not found")
-    return dict(row)
+    return {k: row[k] for k in row.keys()}
 
 
 def _fetch_spot_files(db: Database, campaign_id: int) -> list[dict]:
@@ -256,7 +256,7 @@ def _fetch_spot_files(db: Database, campaign_id: int) -> list[dict]:
         "WHERE  campaign_id = ? "
         "ORDER  BY display_order ASC, id ASC",
         [int(campaign_id)]).fetchall()
-    return [dict(r) for r in rows]
+    return [{k: r[k] for k in r.keys()} for r in rows]
 
 
 def _fetch_scheduled_plays(db: Database, campaign_id: int,
