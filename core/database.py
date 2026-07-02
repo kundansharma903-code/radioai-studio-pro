@@ -1926,6 +1926,15 @@ class Database:
             "GROUP BY song_id").fetchall()
         return {int(r["song_id"]): str(r["last_at"]) for r in rows}
 
+    # Placeholder "artists" that are really MISSING metadata — 115+
+    # bulk-imported songs share "Unknown Artist", so treating them as
+    # one artist made a single play rest the whole pool for an hour
+    # (rotation audit 2026-07-02). Placeholders are exempt from the
+    # same-artist separation everywhere.
+    PLACEHOLDER_ARTISTS = frozenset(
+        {"", "unknown artist", "unknown", "various", "various artists",
+         "va", "n/a", "-"})
+
     def get_artist_last_played_at(self, artist: str):
         """ISO timestamp of the last time any song by this artist
         played, or None. Used for the 1-hour same-artist rule.
@@ -1933,11 +1942,13 @@ class Database:
         Matching is normalized with .strip().casefold() on BOTH sides
         (Python-side, since SQLite's NOCASE is ASCII-only) so
         "Arijit Singh", "arijit singh" and "Arijit Singh " count as
-        the same artist. Stored data is never modified."""
+        the same artist. Placeholder artists (Unknown Artist etc.) are
+        NOT a real artist — always None, so untagged songs never veto
+        each other. Stored data is never modified."""
         if not artist:
             return None
         needle = str(artist).strip().casefold()
-        if not needle:
+        if not needle or needle in self.PLACEHOLDER_ARTISTS:
             return None
         rows = self._conn().execute(
             "SELECT s.artist AS artist, MAX(bl.played_at) AS last_at "

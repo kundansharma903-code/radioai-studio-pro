@@ -4622,11 +4622,18 @@ class Studio(QWidget):
                     f"[studio] crossfade→spot fire failed: {exc}")
             return True
 
-        try:
-            nxt = self._compute_next_song(after_id=cur_id)
-        except Exception as exc:
-            log.warning(f"[studio] crossfade pick-next: {exc}")
-            return False
+        # Pinned post-break songs first — the crossfade path must
+        # honor the tease promise too, or only the FIRST pinned song
+        # (consumed at spot-EOS) is guaranteed and every later
+        # transition re-rolls the scheduler (BUG found 2026-07-02
+        # while verifying the first on-air tease).
+        nxt = self._pop_next_teased_song()
+        if nxt is None:
+            try:
+                nxt = self._compute_next_song(after_id=cur_id)
+            except Exception as exc:
+                log.warning(f"[studio] crossfade pick-next: {exc}")
+                return False
         if not nxt:
             return False
         item_type = (nxt.get("item_type") or "song").strip().lower()

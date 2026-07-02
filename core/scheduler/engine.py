@@ -1340,7 +1340,17 @@ class SchedulerEngine(QObject):
             ).fetchall()
         except Exception:
             return set()
-        return {r[0] for r in rows if r[0]}
+        # Placeholder artists (Unknown Artist etc.) are missing
+        # metadata, not a real artist — 115+ untagged songs must not
+        # separation-block each other (rotation audit 2026-07-02).
+        try:
+            from core.database import Database
+            placeholders = Database.PLACEHOLDER_ARTISTS
+        except Exception:
+            placeholders = frozenset()
+        return {r[0] for r in rows
+                if r[0] and str(r[0]).strip().casefold()
+                not in placeholders}
 
     def _recent_song_ids(self, minutes: int) -> set:
         from datetime import datetime as _dt, timedelta as _td
