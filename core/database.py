@@ -3457,6 +3457,118 @@ class Database:
             "AND hour_start <= ? AND hour_end > ?", [d, h, h])
         conn.commit()
 
+    # ── Category Auto-Grid (dayparts) — 2026-07-02 ──────────────────────
+    # Operator tags a category with air-time hours; core/auto_grid_builder
+    # synthesises permanent AUTO clocks + fills empty grid cells daily.
+
+    def _ensure_auto_grid_tables(self) -> None:
+        conn = self._conn()
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS category_dayparts ("
+            " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            " category_id INTEGER NOT NULL,"
+            " day_of_week INTEGER,"          # NULL = every day (0=Mon..6=Sun)
+            " hour_start INTEGER NOT NULL,"
+            " hour_end INTEGER NOT NULL)")
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS auto_grid_clocks ("
+            " cat_key TEXT PRIMARY KEY,"     # e.g. '1' or '1+4'
+            " clock_id INTEGER NOT NULL)")
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS auto_grid_cells ("
+            " day_of_week INTEGER NOT NULL,"
+            " hour INTEGER NOT NULL,"
+            " clock_id INTEGER NOT NULL,"
+            " PRIMARY KEY (day_of_week, hour))")
+        conn.commit()
+
+    def set_category_dayparts(self, category_id: int,
+                              parts: list) -> None:
+        """Replace this category's air-time tags. `parts` =
+        [(day_of_week_or_None, hour_start, hour_end), ...]. Exact-id
+        DELETE per the destructive-op protocol."""
+        self._ensure_auto_grid_tables()
+        conn = self._conn()
+        cid = int(category_id)
+        conn.execute("BEGIN")
+        conn.execute(
+            "DELETE FROM category_dayparts WHERE category_id = ?", [cid])
+        for dow, h1, h2 in parts or []:
+            conn.execute(
+                "INSERT INTO category_dayparts "
+                "(category_id, day_of_week, hour_start, hour_end) "
+                "VALUES (?, ?, ?, ?)",
+                [cid, None if dow is None else int(dow),
+                 int(h1), int(h2)])
+        conn.commit()
+
+    def get_category_dayparts(self, category_id: int) -> list:
+        self._ensure_auto_grid_tables()
+        rows = self._conn().execute(
+            "SELECT day_of_week, hour_start, hour_end "
+            "FROM category_dayparts WHERE category_id = ? "
+            "ORDER BY hour_start", [int(category_id)]).fetchall()
+        return [{k: r[k] for k in r.keys()} for r in rows]
+
+    def get_all_category_dayparts(self) -> list:
+        """Every daypart tag joined with its category — the builder's
+        input. Disabled/deleted categories drop out naturally."""
+        self._ensure_auto_grid_tables()
+        rows = self._conn().execute(
+            "SELECT dp.category_id, dp.day_of_week, dp.hour_start, "
+            "dp.hour_end, c.name AS category_name "
+            "FROM category_dayparts dp "
+            "JOIN categories c ON c.id = dp.category_id "
+            "ORDER BY dp.hour_start").fetchall()
+        return [{k: r[k] for k in r.keys()} for r in rows]
+
+    def get_auto_grid_clock_id(self, cat_key: str):
+        self._ensure_auto_grid_tables()
+        row = self._conn().execute(
+            "SELECT clock_id FROM auto_grid_clocks WHERE cat_key = ?",
+            [str(cat_key)]).fetchone()
+        return int(row[0]) if row else None
+
+    def set_auto_grid_clock_id(self, cat_key: str, clock_id: int) -> None:
+        self._ensure_auto_grid_tables()
+        conn = self._conn()
+        conn.execute(
+            "INSERT INTO auto_grid_clocks (cat_key, clock_id) "
+            "VALUES (?, ?) ON CONFLICT(cat_key) "
+            "DO UPDATE SET clock_id = excluded.clock_id",
+            [str(cat_key), int(clock_id)])
+        conn.commit()
+
+    def get_auto_grid_cell_records(self) -> dict:
+        """(day_of_week, hour) -> clock_id for cells THIS feature
+        placed. Anything not in here is operator-manual and sacred."""
+        self._ensure_auto_grid_tables()
+        rows = self._conn().execute(
+            "SELECT day_of_week, hour, clock_id "
+            "FROM auto_grid_cells").fetchall()
+        return {(int(r[0]), int(r[1])): int(r[2]) for r in rows}
+
+    def record_auto_grid_cell(self, day_of_week: int, hour: int,
+                              clock_id: int) -> None:
+        self._ensure_auto_grid_tables()
+        conn = self._conn()
+        conn.execute(
+            "INSERT INTO auto_grid_cells (day_of_week, hour, clock_id) "
+            "VALUES (?, ?, ?) ON CONFLICT(day_of_week, hour) "
+            "DO UPDATE SET clock_id = excluded.clock_id",
+            [int(day_of_week), int(hour), int(clock_id)])
+        conn.commit()
+
+    def remove_auto_grid_cell_record(self, day_of_week: int,
+                                     hour: int) -> None:
+        self._ensure_auto_grid_tables()
+        conn = self._conn()
+        conn.execute(
+            "DELETE FROM auto_grid_cells "
+            "WHERE day_of_week = ? AND hour = ?",
+            [int(day_of_week), int(hour)])
+        conn.commit()
+
     def clear_all_auto_schedule(self) -> int:
         """Wipe the entire grid. Returns rows removed.
         Refuses if WHERE-style clauses leak — uses unconditional DELETE."""

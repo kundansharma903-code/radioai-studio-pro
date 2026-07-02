@@ -266,6 +266,17 @@ def main():
     except Exception as exc:
         log.warning(f"[boot] database health check failed: {exc}")
     db = Database()
+    # Category Auto-Grid boot reconcile: if the app was closed when a
+    # new day started, this catch-up fills today's cells from the
+    # category daypart tags before any screen/engine reads the grid.
+    # Guarded — a failure never blocks launch (the weekly grid simply
+    # keeps its last state).
+    try:
+        from core.auto_grid_builder import build_grid as _agb
+        _ag = _agb(db)
+        log.info(f"[boot] auto-grid reconcile: {_ag}")
+    except Exception as exc:
+        log.warning(f"[boot] auto-grid reconcile failed: {exc}")
     db_ok = db.verify()
     song_count = 0
     if db_ok:

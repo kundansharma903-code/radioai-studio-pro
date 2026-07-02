@@ -398,6 +398,18 @@ class SchedulerEngine(QObject):
                 # New day → yesterday's rotation-plan decisions are
                 # stale; force a refetch on the next pick.
                 self._rot_dec_cache_key = None
+                # Category Auto-Grid: reconcile the weekly grid with
+                # the category daypart tags BEFORE anything reads it
+                # today (plan compute, clock resolution). Guarded —
+                # a builder failure must never kill the tick, and the
+                # weekly grid keeps working on last build regardless.
+                try:
+                    from core.auto_grid_builder import build_grid
+                    res = build_grid(self._db)
+                    if res.get("placed") or res.get("cleared"):
+                        log.info(f"day-rollover auto-grid: {res}")
+                except Exception as exc:
+                    log.warning(f"auto-grid on rollover failed: {exc}")
                 self.schedule_reloaded.emit()
                 # Phase 2 — reload changes the whole event picture;
                 # surface as queue_changed for UI consumers.
