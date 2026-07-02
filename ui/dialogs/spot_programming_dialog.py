@@ -1094,7 +1094,7 @@ class SpotProgrammingDialog(BaseDialog):
         if self._campaign_id is not None:
             try:
                 self._db._ensure_campaign_schedule_columns()
-                rows = [dict(r) for r in
+                rows = [{k: r[k] for k in r.keys()} for r in
                         self._db.get_break_schedule(self._campaign_id)]
             except Exception as exc:
                 log.error(f"get_break_schedule failed: {exc}")

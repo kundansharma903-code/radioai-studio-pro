@@ -1509,7 +1509,13 @@ class SongsLibrary(QWidget):
     def _load_songs(self):
         try:
             rows = self._db.get_songs(limit=400)  # show all
-            self._all_songs = [self._row_to_dict(r) for r in rows]
+            try:
+                last_played_map = self._db.get_last_played_map()
+            except Exception as exc:
+                log.error(f"get_last_played_map failed: {exc}")
+                last_played_map = {}
+            self._all_songs = [
+                self._row_to_dict(r, last_played_map) for r in rows]
             # Count comes from dashboard stats so the sidebar always shows
             # the real total (in case the result set is filtered/limited later)
             try:
@@ -1525,7 +1531,7 @@ class SongsLibrary(QWidget):
         if self._all_songs:
             self._select_song(self._all_songs[0]["id"])
 
-    def _row_to_dict(self, r) -> dict:
+    def _row_to_dict(self, r, last_played_map: dict = None) -> dict:
         return {
             "id":           r["id"],
             "title":        r["title"] or "",
@@ -1538,7 +1544,7 @@ class SongsLibrary(QWidget):
             "vocal":        r["vocal"] or "",
             "album":        r["album"] if "album" in r.keys() else "",
             "is_enabled":   r["is_enabled"] if "is_enabled" in r.keys() else 1,
-            "last_played":  None,  # filled later if available
+            "last_played":  (last_played_map or {}).get(r["id"]),
         }
 
     def _populate_table(self):
@@ -1892,7 +1898,40 @@ class SongsLibrary(QWidget):
                 visible = (s.get("energy", "") == sel)
             elif key == "vocal" and not sel.endswith("(All)"):
                 visible = (s.get("vocal", "") == sel)
+            elif key == "bpm" and not sel.endswith("(All)"):
+                visible = self._bpm_in_range(s.get("bpm", 0), sel)
+            elif key == "enabled":
+                enabled = bool(s.get("is_enabled", 1))
+                if sel == "Only Enabled":
+                    visible = enabled
+                elif sel == "Disabled":
+                    visible = not enabled
+                # "All" → leave visible = True
             row.setVisible(visible)
+
+    @staticmethod
+    def _bpm_in_range(bpm, label: str) -> bool:
+        """True if `bpm` falls inside the dropdown range label
+        ("60-90", "90-120", "120-150", "150+"). Songs with no/zero BPM
+        are excluded from every explicit range."""
+        try:
+            b = int(bpm or 0)
+        except (TypeError, ValueError):
+            return False
+        if b <= 0:
+            return False
+        if label.endswith("+"):
+            try:
+                return b >= int(label[:-1])
+            except ValueError:
+                return False
+        if "-" in label:
+            lo, _, hi = label.partition("-")
+            try:
+                return int(lo) <= b <= int(hi)
+            except ValueError:
+                return False
+        return False
 
     # ── Public accessors for report tiles ────────────────────────────────
 

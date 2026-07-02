@@ -1485,6 +1485,37 @@ class SOTGAssign(QWidget):
 
         self._rows_inner.setFixedSize(self.RW - 32, max(y, 1))
 
+    def _sharp_time_conflicts(self, date_str: str, hhmm: str) -> bool:
+        """True if the sharp time falls in the same 10-minute break slot
+        as an active campaign's scheduled break on that date. Advisory
+        only — any error returns False so saving is never blocked."""
+        try:
+            total = _hhmm_to_minutes(hhmm or "")
+            if total is None:
+                return False
+            weekday = datetime.strptime(date_str, "%Y-%m-%d").date().weekday()
+            slot = f"{total // 60:02d}:{(total % 60) // 10 * 10:02d}"
+            rows = self._db.execute(
+                """
+                SELECT COUNT(*) AS n
+                FROM   campaign_schedule cs
+                JOIN   campaigns c ON cs.campaign_id = c.id
+                WHERE  cs.day_of_week = ?
+                AND    cs.break_time = ?
+                AND    c.is_active = 1
+                AND   (c.start_date IS NULL OR c.start_date = ''
+                        OR c.start_date <= ?)
+                AND   (c.end_date IS NULL OR c.end_date = ''
+                        OR c.end_date = 'Never'
+                        OR c.end_date >= ?)
+                """,
+                [weekday, slot, date_str, date_str],
+            )
+            return bool(rows and rows[0]["n"] > 0)
+        except Exception:
+            log.debug("sharp-time conflict check failed", exc_info=True)
+            return False
+
     def _on_row_save(self, link_id: int) -> None:
         row = next(
             (r for r in self._row_widgets if r.link_id() == link_id),
@@ -1492,6 +1523,10 @@ class SOTGAssign(QWidget):
         if row is None:
             return
         data = row.current_form()
+        status = ("CONFLICT"
+                  if self._sharp_time_conflicts(
+                      self._scheduled_date, data.get("sharp_time") or "")
+                  else "READY")
         try:
             self._db.upsert_sotg_assignment(
                 show_id=self._selected_show_id,
@@ -1502,7 +1537,7 @@ class SOTGAssign(QWidget):
                 file_duration_ms=data.get("file_duration_ms") or 0,
                 sharp_time=data.get("sharp_time"),
                 priority=data.get("priority"),
-                status="READY",
+                status=status,
             )
         except ValueError as exc:
             dialogs.warning(

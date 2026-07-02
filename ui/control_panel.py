@@ -14,6 +14,7 @@ Layout (absolute positioning, 1440×900):
 """
 
 import logging
+import time
 from datetime import datetime
 
 from PyQt6.QtCore import (
@@ -614,6 +615,9 @@ class ControlPanel(QWidget):
         self._clock_sec_lbl  = None
         self._dow_lbl        = None
         self._date_lbl       = None
+        self._uptime_lbl     = None
+        # Monotonic program-start reference for the footer uptime line.
+        self._start_monotonic = time.monotonic()
 
         self._build_header()
         self._build_page_title()
@@ -791,10 +795,11 @@ class ControlPanel(QWidget):
         l.setFont(mono(10, bold=False, letter_spacing=0.3))
         l.setStyleSheet(f"color: {TEXT_MUTED}; background: transparent;")
 
-        l = QLabel("Program running 14 minutes", self)
-        l.setGeometry(240, 870, 250, 14)
-        l.setFont(inter(10, QFont.Weight.Medium, letter_spacing=0.3))
-        l.setStyleSheet(f"color: {TEXT_MUTED}; background: transparent;")
+        self._uptime_lbl = QLabel("Program running 0 minutes", self)
+        self._uptime_lbl.setGeometry(240, 870, 250, 14)
+        self._uptime_lbl.setFont(inter(10, QFont.Weight.Medium, letter_spacing=0.3))
+        self._uptime_lbl.setStyleSheet(f"color: {TEXT_MUTED}; background: transparent;")
+        self._update_uptime()
 
         # Settings link bottom right
         gear = QLabel("⚙", self)
@@ -825,6 +830,16 @@ class ControlPanel(QWidget):
             self._dow_lbl.setText(n.strftime("%A").upper())
         if self._date_lbl:
             self._date_lbl.setText(n.strftime("%B %d, %Y").upper())
+        self._update_uptime()
+
+    def _update_uptime(self):
+        """Refresh the footer uptime line from the monotonic start time.
+        Cheap — no DB, integer minutes only. Called on the existing 1s tick."""
+        if not self._uptime_lbl:
+            return
+        minutes = int((time.monotonic() - self._start_monotonic) // 60)
+        unit = "minute" if minutes == 1 else "minutes"
+        self._uptime_lbl.setText(f"Program running {minutes} {unit}")
 
     def _refresh_card_data(self):
         """Inject real DB counts over the placeholder strings."""

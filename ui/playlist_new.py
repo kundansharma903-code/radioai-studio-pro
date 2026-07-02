@@ -920,7 +920,7 @@ class _LibraryBrowser(QFrame):
                 offset=self._page * self.PAGE_SIZE,
                 limit=self.PAGE_SIZE,
             )
-            self._rows = [dict(r) for r in rows]
+            self._rows = [{k: r[k] for k in r.keys()} for r in rows]
         except Exception as exc:
             log.warning(f"search_songs failed: {exc}")
             self._rows = []
@@ -1110,6 +1110,46 @@ class _QueueModel(QAbstractListModel):
 
     def supportedDragActions(self):
         return Qt.DropAction.MoveAction
+
+    # ── Drag/drop internal-move plumbing ───────────────────────────
+    # Qt's default DnD pipeline drives mimeData()/dropMimeData(), never
+    # moveRows() directly. We carry the source row in a private mime type
+    # and route the drop back through the existing moveRows() so the
+    # reorder + queue_changed signal (→ autosave) stay in one place.
+
+    _MIME = "application/x-radioai-queue-row"
+
+    def mimeTypes(self):
+        return [self._MIME]
+
+    def mimeData(self, indexes):
+        rows = sorted({i.row() for i in indexes if i.isValid()})
+        md = QMimeData()
+        if rows:
+            md.setData(self._MIME, str(rows[0]).encode("ascii"))
+        return md
+
+    def dropMimeData(self, data, action, row, column, parent):
+        if action != Qt.DropAction.MoveAction:
+            return False
+        if not data.hasFormat(self._MIME):
+            return False
+        try:
+            src = int(bytes(data.data(self._MIME)).decode("ascii"))
+        except (ValueError, TypeError):
+            return False
+        # Resolve the insertion index Qt handed us. row == -1 means the
+        # drop landed on/after the last item → append to the end.
+        if row < 0:
+            dest = parent.row() if parent.isValid() else len(self._tracks)
+        else:
+            dest = row
+        self.moveRows(QModelIndex(), src, 1, QModelIndex(), dest)
+        # Always return False: we complete the reorder in-place via
+        # moveRows(). Returning True would make QAbstractItemView's
+        # InternalMove pipeline call removeRows() on the (now stale)
+        # source row afterwards, deleting the wrong track.
+        return False
 
     # ── Mutation API ───────────────────────────────────────────────
 

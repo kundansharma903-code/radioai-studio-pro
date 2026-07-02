@@ -540,7 +540,8 @@ class _AudioFilesPanel(QFrame):
 # Main dialog
 # ════════════════════════════════════════════════════════════════════════════
 
-CAMPAIGN_TYPES = ["Commercial", "Station ID", "Sponsor", "News Break", "Promo"]
+CAMPAIGN_TYPES = ["Commercial", "Station ID", "Sponsor", "News Break", "Promo",
+                  "Custom"]
 PRIORITIES     = ["Low", "Medium", "High", "Always"]
 PLAYBACK_ORDERS = ["In Rotation", "Sequential", "Random", "Specific Order"]
 CATEGORIES = ["Commercial", "Station ID", "News Break", "Sponsor", "Promo",
@@ -962,6 +963,11 @@ class AddCampaignDialog(BaseDialog):
             idx = self._category_combo.findText(cat)
             if idx >= 0:
                 self._category_combo.setCurrentIndex(idx)
+        # Pre-select the Campaign Type pill matching the saved category so
+        # the persisted type isn't lost on the next Save.
+        saved_type = row.get("category") or ""
+        if saved_type and any(p.value() == saved_type for p in self._type_pills):
+            self._on_type_selected(saved_type)
         if self._priority_combo:
             pri = row.get("priority") or ""
             idx = self._priority_combo.findText(pri)
@@ -1140,10 +1146,15 @@ class AddCampaignDialog(BaseDialog):
         avail = self._availability.value() if self._availability else "active"
         is_active = 1 if avail == "active" else 0
 
+        # Campaign Type pills are the source of truth for the campaign's
+        # category (the two concepts map to the same `category` column). The
+        # selected pill wins so the user's choice is actually persisted.
+        category = self._selected_type or self._category_combo.currentText()
+
         data = {
             "name":             title,
             "description":      self._comments_input.toPlainText().strip(),
-            "category":         self._category_combo.currentText(),
+            "category":         category,
             "priority":         self._priority_combo.currentText(),
             "programming_mode": self._mode_combo.currentText(),
             "playback_order":   self._playback_combo.currentText(),

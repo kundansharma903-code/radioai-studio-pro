@@ -1464,7 +1464,7 @@ class Stitcher(QWidget):
                 except Exception:
                     song = None
                 if song:
-                    rows.append(dict(song))
+                    rows.append({k: song[k] for k in song.keys()})
         if not rows:
             try:
                 fb = self._db._conn().execute(
@@ -1472,7 +1472,7 @@ class Stitcher(QWidget):
                     "FROM songs WHERE is_enabled = 1 "
                     "ORDER BY id DESC LIMIT ?",
                     [SAMPLE_PREVIEW_COUNT]).fetchall()
-                rows = [dict(r) for r in fb]
+                rows = [{k: r[k] for k in r.keys()} for r in fb]
             except Exception:
                 rows = []
         # Cycle accent colors by index for visual variety.

@@ -66,7 +66,7 @@ from core import dialogs
 
 from PyQt6.QtCore import (
     Qt, QRect, QRectF, QPoint, QPointF, QSize, QTimer, QModelIndex,
-    QAbstractListModel, pyqtSignal, QEvent,
+    QAbstractListModel, QMimeData, pyqtSignal, QEvent,
 )
 from PyQt6.QtGui import (
     QPainter, QColor, QPen, QBrush, QLinearGradient, QFont,
@@ -632,8 +632,57 @@ class _QueueModel(QAbstractListModel):
     def flags(self, idx: QModelIndex):
         f = super().flags(idx)
         if idx.isValid():
-            f |= Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled
+            f |= (Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled
+                  | Qt.ItemFlag.ItemIsDragEnabled)
+        else:
+            f |= Qt.ItemFlag.ItemIsDropEnabled
         return f
+
+    def supportedDropActions(self):
+        return Qt.DropAction.MoveAction
+
+    def supportedDragActions(self):
+        return Qt.DropAction.MoveAction
+
+    # ── Drag/drop internal-move plumbing ─────────────────────────────────
+    # Qt's default DnD pipeline drives mimeData()/dropMimeData(), never
+    # moveRows() directly. We carry the source row in a private mime type
+    # and route the drop back through the existing moveRows() so the
+    # reorder + queue_changed signal (→ dirty/save) stay in one place.
+
+    _MIME = "application/x-radioai-queue-row"
+
+    def mimeTypes(self):
+        return [self._MIME]
+
+    def mimeData(self, indexes):
+        rows = sorted({i.row() for i in indexes if i.isValid()})
+        md = QMimeData()
+        if rows:
+            md.setData(self._MIME, str(rows[0]).encode("ascii"))
+        return md
+
+    def dropMimeData(self, data, action, row, column, parent):
+        if action != Qt.DropAction.MoveAction:
+            return False
+        if not data.hasFormat(self._MIME):
+            return False
+        try:
+            src = int(bytes(data.data(self._MIME)).decode("ascii"))
+        except (ValueError, TypeError):
+            return False
+        # Resolve the insertion index Qt handed us. row == -1 means the
+        # drop landed on/after the last item → append to the end.
+        if row < 0:
+            dest = parent.row() if parent.isValid() else len(self._rows)
+        else:
+            dest = row
+        self.moveRows(QModelIndex(), src, 1, QModelIndex(), dest)
+        # Always return False: we complete the reorder in-place via
+        # moveRows(). Returning True would make QAbstractItemView's
+        # InternalMove pipeline call removeRows() on the (now stale)
+        # source row afterwards, deleting the wrong track.
+        return False
 
     # ── Python-side mutators ─────────────────────────────────────────────
 

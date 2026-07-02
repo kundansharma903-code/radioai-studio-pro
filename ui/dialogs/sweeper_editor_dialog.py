@@ -649,7 +649,7 @@ class SweeperEditorDialog(BaseDialog):
                 "SELECT * FROM sweepers WHERE id = ?", [sid]).fetchone()
             if row is None:
                 return {}
-            return dict(row)
+            return {k: row[k] for k in row.keys()}
         except Exception as exc:
             log.error(f"fetch_existing(id={sid}) failed: {exc}")
             return {}

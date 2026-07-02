@@ -342,14 +342,14 @@ class JingleEditorDialog(BaseDialog):
                 "SELECT * FROM jingles WHERE id = ?", [jid]).fetchone()
             if row is None:
                 return {}
-            return dict(row)
+            return {k: row[k] for k in row.keys()}
         except Exception as exc:
             log.error(f"fetch_existing(id={jid}) failed: {exc}")
             return {}
 
     def _fetch_links(self, jid: int) -> list[dict]:
         try:
-            return [dict(r) for r in
+            return [{k: r[k] for k in r.keys()} for r in
                     self._db.get_jingle_linked_spots(int(jid))]
         except Exception as exc:
             log.error(f"fetch_links(id={jid}) failed: {exc}")

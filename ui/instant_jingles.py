@@ -1261,6 +1261,16 @@ class InstantJingles(QWidget):
             sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
             sc.activated.connect(handler)
 
+        # Number-key hotkeys 1-9 / 0 trigger the matching pad instantly
+        # (Jazler convention). Digit d maps to 1-based pad_index:
+        # 1..9 → 1..9, 0 → 10. Reuses the left-click play path.
+        for digit in range(0, 10):
+            pad_index = digit if digit != 0 else 10
+            sc = QShortcut(QKeySequence(str(digit)), self)
+            sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            sc.activated.connect(
+                lambda idx=pad_index: self._play_pad_by_index(idx))
+
     # ── HEADER ───────────────────────────────────────────────────────────
 
     def _build_header(self):
@@ -2110,6 +2120,16 @@ class InstantJingles(QWidget):
     def _on_nav_down(self):   self._move_selection(0,  1)
     def _on_nav_left(self):   self._move_selection(-1, 0)
     def _on_nav_right(self):  self._move_selection( 1, 0)
+
+    def _play_pad_by_index(self, pad_index: int):
+        """Number-key hotkey dispatch. Resolves the pad at the given 1-based
+        pad_index in the current pallet, then reuses the left-click play path.
+        No-op if the slot is empty/absent (guards against crash)."""
+        pad = next((p for p in self._pads
+                    if p.get("pad_index") == pad_index), None)
+        if not pad:
+            return
+        self._on_pad_left_clicked(pad["id"])
 
     def _move_selection(self, dx: int, dy: int):
         pallet = next((p for p in self._pallets

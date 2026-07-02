@@ -335,7 +335,7 @@ class ForceClocks(QWidget):
 
     def _refresh(self) -> None:
         try:
-            overrides = [dict(r) for r in self._db.list_force_clocks()]
+            overrides = [{k: r[k] for k in r.keys()} for r in self._db.list_force_clocks()]
         except Exception as exc:
             log.warning(f"list_force_clocks failed: {exc}")
             overrides = []
@@ -377,7 +377,7 @@ class ForceClocks(QWidget):
         self._refresh()
 
     def _on_add_override(self) -> None:
-        clocks = [dict(c) for c in self._db.get_all_clocks()]
+        clocks = [{k: c[k] for k in c.keys()} for c in self._db.get_all_clocks()]
         if not clocks:
             dialogs.info(self, "No clocks",
                                     "Create a clock first via Clock Editor.")

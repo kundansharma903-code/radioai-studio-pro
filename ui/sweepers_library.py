@@ -665,6 +665,7 @@ class _AudioScrubber(QFrame):
         self._title = "—"
         self._meta = ""
         self._pos = 0.5
+        self._playing = False
         self.setFixedHeight(SCRUBBER_H)
         self.setStyleSheet(
             f"background: #0a0c18; "
@@ -674,6 +675,10 @@ class _AudioScrubber(QFrame):
     def set_track(self, title: str, meta: str = ""):
         self._title = title or "—"
         self._meta = meta or ""
+        self.update()
+
+    def set_playing(self, playing: bool):
+        self._playing = bool(playing)
         self.update()
 
     def mousePressEvent(self, e):
@@ -690,10 +695,11 @@ class _AudioScrubber(QFrame):
         p.setBrush(QColor(rgba(RED, 0.20)))
         p.setPen(QPen(QColor(rgba(RED, 0.40)), 1))
         p.drawEllipse(12, 12, 26, 26)
-        p.setPen(QColor(RED_LIGHT))
+        p.setPen(QColor(GREEN_LIGHT if self._playing else RED_LIGHT))
         p.setFont(inter(11, QFont.Weight.Bold))
         p.drawText(QRectF(12, 12, 26, 26),
-                   Qt.AlignmentFlag.AlignCenter, "▶")
+                   Qt.AlignmentFlag.AlignCenter,
+                   "■" if self._playing else "▶")
         # Title + meta
         p.setPen(QColor(TEXT_PRI))
         p.setFont(inter(11, QFont.Weight.DemiBold))
@@ -864,16 +870,28 @@ class SweepersLibrary(QWidget):
     sweeper_selected   = pyqtSignal(int)
     add_sweeper_clicked = pyqtSignal()      # for future 108:2 dialog hook
 
+    # 15s preview cap matches the Jingles Library convention. Long
+    # enough to hear the sweeper, short enough that an accidental
+    # click doesn't spew audio.
+    PREVIEW_DURATION_MS = 15000
+    PREVIEW_VOLUME = 80          # monitor-loudness, not on-air
+
     def __init__(self, db, parent=None, engine=None):
         super().__init__(parent)
         self._db = db
-        self._engine = engine               # not wired yet — preview deferred
+        self._engine = engine               # AudioEngine — wired for preview play
 
         # State
         self._sweepers: list[dict] = []
         self._row_widgets: list[_SweeperRow] = []
         self._selected_id: Optional[int] = None
         self._position_filter: str = "All Positions"
+
+        # Preview-channel state — single channel; switching sweepers
+        # cleans up the previous one.
+        self._preview_cid: Optional[int] = None
+        self._preview_sweeper_id: Optional[int] = None
+        self._preview_timer: Optional[QTimer] = None
 
         # Refs
         self._table_layout: Optional[QVBoxLayout] = None
@@ -900,6 +918,15 @@ class SweepersLibrary(QWidget):
         self._build_status_bar()
 
         self._load_sweepers()
+
+        # Engine EOS hookup so the scrubber ■→▶ resets when the preview
+        # ends naturally (15s cap typically beats it).
+        if self._engine is not None and hasattr(self._engine, "playback_ended"):
+            try:
+                self._engine.playback_ended.connect(
+                    self._on_engine_playback_ended)
+            except Exception as exc:
+                log.debug(f"engine signal hookup failed: {exc}")
 
         # Live clock
         self._tick()
@@ -1398,7 +1425,108 @@ class SweepersLibrary(QWidget):
                  f"(editor dialog not yet wired)")
 
     def _on_scrubber_play(self):
-        log.info("[sweepers] scrubber ▶ — preview wiring deferred")
+        """Scrubber ▶ button — toggle a 15-second preview of the
+        currently-selected sweeper."""
+        if self._selected_id is None:
+            return
+        if (self._preview_cid is not None
+                and self._preview_sweeper_id == int(self._selected_id)):
+            self._stop_preview()
+            return
+        self._start_preview(int(self._selected_id))
+
+    # ── PREVIEW ──────────────────────────────────────────────────────────
+
+    def _start_preview(self, sweeper_id: int) -> None:
+        """Spin up a single-channel preview for the given sweeper. Any
+        currently-playing preview is killed first so the operator never
+        gets two voices through monitor."""
+        if self._engine is None:
+            log.warning("[sweepers] preview skipped — no AudioEngine wired")
+            return
+        sweeper = next((s for s in self._sweepers
+                        if int(s["id"]) == int(sweeper_id)), None)
+        if sweeper is None:
+            return
+        path = sweeper.get("file_path") or ""
+        import os as _os
+        if not path or not _os.path.exists(path):
+            log.warning(
+                f"[sweepers] preview skipped — file missing: {path!r}")
+            return
+
+        # Kill any prior preview (different sweeper, or stale).
+        if self._preview_cid is not None:
+            self._stop_preview()
+
+        try:
+            cid = self._engine.load_file(path)
+        except Exception as exc:
+            log.warning(f"[sweepers] preview load_file failed: {exc}")
+            return
+        try:
+            self._engine.set_volume(cid, self.PREVIEW_VOLUME)
+        except Exception as exc:
+            log.debug(f"[sweepers] set_volume failed: {exc}")
+        try:
+            self._engine.play(cid)
+        except Exception as exc:
+            log.warning(f"[sweepers] play failed: {exc}")
+            try:
+                self._engine.cleanup(cid)
+            except Exception:
+                pass
+            return
+
+        self._preview_cid = cid
+        self._preview_sweeper_id = int(sweeper_id)
+
+        # 15s auto-stop timer (matches Jingles Library convention).
+        if self._preview_timer is None:
+            self._preview_timer = QTimer(self)
+            self._preview_timer.setSingleShot(True)
+            self._preview_timer.timeout.connect(self._stop_preview)
+        self._preview_timer.stop()
+        self._preview_timer.start(self.PREVIEW_DURATION_MS)
+
+        # Visual cue: scrubber flips ▶ → ■.
+        if self._scrubber:
+            self._scrubber.set_playing(True)
+
+        log.info(
+            f"[sweepers] preview started ch={cid} id={sweeper_id} "
+            f"({_fmt_duration(sweeper.get('duration_ms') or 0)} cap "
+            f"{self.PREVIEW_DURATION_MS}ms)")
+
+    def _stop_preview(self) -> None:
+        """Tear down the preview channel + reset visual state.
+        Idempotent — safe when nothing is playing."""
+        if self._preview_cid is None:
+            return
+        cid = self._preview_cid
+        if self._preview_timer is not None:
+            self._preview_timer.stop()
+        try:
+            self._engine.cleanup(cid)
+        except Exception as exc:
+            log.debug(f"[sweepers] preview cleanup error: {exc}")
+        self._preview_cid = None
+        self._preview_sweeper_id = None
+        if self._scrubber:
+            self._scrubber.set_playing(False)
+        log.info(f"[sweepers] preview stopped (ch={cid})")
+
+    def _on_engine_playback_ended(self, channel_id: int) -> None:
+        """Reset the scrubber when the engine reports natural EOS for
+        our preview channel. Other channels are not ours — guard."""
+        if channel_id == self._preview_cid:
+            self._stop_preview()
+
+    def hideEvent(self, e):
+        # Stop any preview when navigating away so a stray channel
+        # never lingers through the monitor.
+        self._stop_preview()
+        super().hideEvent(e)
 
     # ── CLOCK ────────────────────────────────────────────────────────────
 
