@@ -865,7 +865,18 @@ class SchedulerEngine(QObject):
         #      NULL-category slots consult too (BUG-4 fix): the engine's
         #      pick_song_for_clock handles NULL/0 category itself via
         #      the all-songs pool.
-        if not songs and self._rotation_engine is not None:
+        #      PERF (2026-07-02): the consult walks the WHOLE category
+        #      pool with per-song history queries (~0.44s on a 316-song
+        #      category). peek_next(5) display refreshes were paying
+        #      5x that on the UI thread — sluggish app + starved 1Hz
+        #      tick (frozen break countdown, missed spot windows). The
+        #      consult is now DISPATCH-ONLY: peek simulations (flagged
+        #      by _suppress_queue_emit) use the fast ladder instead —
+        #      preview labels stay accurate (category pool is the
+        #      same), only the AI-grade weighting is deferred to the
+        #      real pick.
+        if (not songs and self._rotation_engine is not None
+                and not self._suppress_queue_emit):
             try:
                 if self._rotation_engine.is_enabled():
                     from datetime import date as _date
