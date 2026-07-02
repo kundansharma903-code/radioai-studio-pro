@@ -255,8 +255,9 @@ def test_live_at_tick_refreshes_via_existing_1hz_timer(qtbot,
 
 def test_studio_without_scheduler_does_not_crash(qtbot):
     """Decorative fallback — Studio constructed with scheduler=None
-    must still render 5 cards. _upcoming_preview stays empty, the
-    legacy _queue_songs[:5] fallback runs."""
+    must still render 5 cards. Since the 2026-07-02 queue fix the
+    preview itself carries the static-queue song cards (so a pending
+    spot can never leave the tray without songs)."""
     db = Database()
     s = Studio(db=db, engine=None, scheduler=None,
                instant_jingle_engine=None)
@@ -264,7 +265,8 @@ def test_studio_without_scheduler_does_not_crash(qtbot):
 
     cards = s._upcoming._cards
     assert len(cards) == 5
-    assert s._upcoming_preview == []
+    assert all((c.get("_item_type") or "song") == "song"
+               for c in s._upcoming_preview)
     # _on_tick is wired to the 1Hz timer — must not raise even when
     # there's no scheduler.
     s._on_tick()

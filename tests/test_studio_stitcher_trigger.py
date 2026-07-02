@@ -1,28 +1,27 @@
 """
-Studio v3 ↔ Stitcher pre-break trigger wiring.
+Studio v3 ↔ Stitcher BREAK-TEASE wiring (2026-07-02 sequenced model).
 
-When the scheduler's ``break_approaching`` signal fires + the
-operator has the Stitcher module enabled with ``trigger_before_every_break``,
-Studio should assemble a hook sequence and route it through the
-shared StitcherEngine. This file pins:
+Industry model (RadioBOSS teasers / StationPlaylist hooks): the
+"Coming Up Next" montage is its OWN sequenced element built from the
+songs that will ACTUALLY air after the break:
 
-  • Disabled module → no fire.
-  • Enabled but no audio paths / no hooks → no fire (assembler
-    returns []).
-  • Enabled + valid config → engine.play_block called with a
-    sequence shape (opening + N hooks + separator-between + closing).
-  • Refire guard — break_approaching can pulse multiple times for the
-    same break, the engine fires only once within the guard window.
-  • Engine already running → next pulse skips (no stacking).
-  • Deck ducks via engine.fade_volume_to + restores via the on_done
-    callback.
-  • Fallback path — when fewer than min_hooks_required hooks are
-    available, the assembled sequence is just [fallback].
+    song (natural EOS) → tease block (standalone, deck silent)
+    → spot chain → the teased songs, in pinned order
 
-Mocks: minimal `_FakeStitcherEngine` recording play_block + a
-`_FakeAudioEngine` recording fade_volume_to. The DB layer is real
-(tests snapshot + restore stitcher_config) so the wiring exercises
-the end-to-end config path.
+This file pins:
+  • Arm gates — module disabled / trigger off → no tease pinned.
+  • _arm_stitcher_tease pins up to 3 SONG cards from the visible
+    Up Coming preview (spot/SOTG cards skipped), hydrated from DB.
+  • _maybe_play_tease_first plays the block standalone (NO deck duck),
+    marks tease-playing, and respects the refire guard + running guard.
+  • Assembler-empty → tease skipped, returns False (spot fires direct).
+  • Tease-done continuation fires the pending spot chain.
+  • _pop_next_teased_song returns pinned songs in order, skipping
+    missing files.
+  • _drain_pending_dispatches clears the tease pin.
+  • Up Coming preview keeps SONG cards visible when a spot is pending
+    and the scheduler peek is empty (the "queue tray empties" bug).
+  • Sequence assembler unit behaviours (shape / fallback / caps).
 """
 
 from __future__ import annotations
@@ -53,6 +52,7 @@ class _RecordingSignal:
 class _FakeStitcher:
     def __init__(self):
         self.calls: list[dict] = []
+        self.stops = 0
         self._running = False
 
     def play_block(self, sequence, target_vol=85, on_step=None,
@@ -65,6 +65,7 @@ class _FakeStitcher:
         self._running = True
 
     def stop(self):
+        self.stops += 1
         self._running = False
 
     @property
@@ -75,8 +76,6 @@ class _FakeStitcher:
 class _FakeAudioEngine:
     def __init__(self):
         self.calls: list[tuple] = []
-        # Studio's __init__ wires these on the real engine — provide
-        # signal-shaped attrs so connect() doesn't AttributeError.
         self.position_changed = _RecordingSignal()
         self.playback_ended   = _RecordingSignal()
         self.error_occurred   = _RecordingSignal()
@@ -113,10 +112,8 @@ def db():
 
 @pytest.fixture
 def cfg_snapshot(db):
-    """Snapshot stitcher_config row before each test — restore after
-    so the dev DB stays clean. Sets a known baseline (module_enabled=1
-    + trigger_before_every_break=1) so assertions about the gate
-    behaviour are deterministic."""
+    """Baseline stitcher_config (enabled + before-every-break) with
+    restore-after so the (shielded copy) DB stays deterministic."""
     before = db.get_stitcher_config()
     db.update_stitcher_config({
         "module_enabled": True,
@@ -134,151 +131,217 @@ def cfg_snapshot(db):
 
 @pytest.fixture
 def studio(qtbot, db):
-    """Studio with FakeAudioEngine + FakeStitcher; no real scheduler.
-    Tests drive the scheduler signal manually via _on_scheduler_break_warn."""
     from ui.studio import Studio
     eng = _FakeAudioEngine()
     sti = _FakeStitcher()
     s = Studio(db=db, engine=eng, scheduler=None,
                instant_jingle_engine=None, sweeper_engine=None,
-               stitcher_engine=sti) if "stitcher_engine" in \
-                  Studio.__init__.__code__.co_varnames \
-               else Studio(db=db, engine=eng, scheduler=None)
+               stitcher_engine=sti)
     qtbot.addWidget(s)
-    # Studio.__init__ doesn't currently take a stitcher_engine kwarg —
-    # inject it directly the way MainWindow would in production.
-    s._stitcher_engine = sti
     yield s, eng, sti
 
 
-# ── Trigger gates ──────────────────────────────────────────────────────
+def _real_song_cards(db, n=3) -> list[dict]:
+    """n real (shield-copy) songs with hooks + on-disk files, shaped
+    like Up-Coming preview cards."""
+    rows = db._conn().execute(
+        "SELECT id, title, artist, file_path, duration_ms FROM songs "
+        "WHERE is_enabled = 1 AND hook_in_ms > 0 AND file_path != '' "
+        "ORDER BY id LIMIT 40").fetchall()
+    cards = []
+    for r in rows:
+        if r["file_path"] and os.path.exists(r["file_path"]):
+            cards.append({
+                "_item_type": "song", "id": int(r["id"]),
+                "title": r["title"], "artist": r["artist"],
+                "file_path": r["file_path"],
+                "duration_ms": int(r["duration_ms"] or 0),
+            })
+        if len(cards) >= n:
+            break
+    if len(cards) < n:
+        pytest.skip("shield DB lacks hooked on-disk songs")
+    return cards
 
 
-def test_no_fire_when_module_disabled(qtbot, db, cfg_snapshot, studio):
+# ── Arm gates ──────────────────────────────────────────────────────────
+
+
+def test_no_arm_when_module_disabled(qtbot, db, cfg_snapshot, studio):
     s, eng, sti = studio
     db.update_stitcher_config({"module_enabled": False})
+    s._upcoming_preview = _real_song_cards(db)
     s._on_scheduler_break_warn(30)
-    assert sti.calls == []
+    assert s._teased_songs == []
 
 
-def test_no_fire_when_trigger_before_every_break_off(qtbot, db, cfg_snapshot, studio):
+def test_no_arm_when_trigger_before_every_break_off(qtbot, db, cfg_snapshot, studio):
     s, eng, sti = studio
     db.update_stitcher_config({
         "module_enabled": True,
         "trigger_before_every_break": False,
     })
+    s._upcoming_preview = _real_song_cards(db)
     s._on_scheduler_break_warn(30)
+    assert s._teased_songs == []
+
+
+def test_arm_pins_visible_preview_songs_in_order(qtbot, db, cfg_snapshot, studio):
+    """Arm must pin the SONG cards the operator sees (spot/SOTG cards
+    skipped), hydrated with hook cue points, order preserved."""
+    s, eng, sti = studio
+    cards = _real_song_cards(db)
+    s._upcoming_preview = (
+        [{"_item_type": "spot", "id": 999, "title": "AD"}] + cards)
+    s._on_scheduler_break_warn(30)
+    assert [t["id"] for t in s._teased_songs] == [c["id"] for c in cards]
+    assert all("hook_in_ms" in t for t in s._teased_songs)
+
+
+def test_arm_is_idempotent_while_armed(qtbot, db, cfg_snapshot, studio):
+    s, eng, sti = studio
+    cards = _real_song_cards(db)
+    s._upcoming_preview = cards
+    s._on_scheduler_break_warn(30)
+    first = [t["id"] for t in s._teased_songs]
+    s._upcoming_preview = list(reversed(cards))
+    s._on_scheduler_break_warn(25)      # re-pulse — must not re-pin
+    assert [t["id"] for t in s._teased_songs] == first
+
+
+# ── Tease playback (standalone, before the spot chain) ─────────────────
+
+
+def _arm(s, db):
+    s._upcoming_preview = _real_song_cards(db)
+    s._arm_stitcher_tease()
+    assert s._teased_songs, "arm precondition failed"
+
+
+def test_tease_plays_standalone_no_duck(qtbot, db, cfg_snapshot, studio, monkeypatch):
+    """EOS-time tease: block routed to the stitcher engine with NO
+    deck duck (the deck is silent at EOS — sequenced element model)."""
+    s, eng, sti = studio
+    _arm(s, db)
+    seq = [{"file_path": "/x.mp3", "play_full": True, "label": "FALLBACK"}]
+    monkeypatch.setattr(StitcherEngine, "assemble_sequence",
+                        staticmethod(lambda _cfg, _songs: seq))
+    s._pending_spots.append(4242)
+    assert s._maybe_play_tease_first(anchor_id=11) is True
+    assert len(sti.calls) == 1
+    assert s._stitcher_tease_playing is True
+    fades = [c for c in eng.calls if c[0] == "fade"]
+    assert fades == [], "sequenced tease must NOT duck the deck"
+
+
+def test_tease_skipped_when_assembler_empty(qtbot, db, cfg_snapshot, studio, monkeypatch):
+    s, eng, sti = studio
+    _arm(s, db)
+    monkeypatch.setattr(StitcherEngine, "assemble_sequence",
+                        staticmethod(lambda _cfg, _songs: []))
+    assert s._maybe_play_tease_first(anchor_id=11) is False
     assert sti.calls == []
 
 
-def test_no_fire_when_assembled_sequence_is_empty(qtbot, db, cfg_snapshot, studio):
-    """Audio paths empty + no hooks present → assembler returns [],
-    Studio must NOT call play_block."""
+def test_tease_skipped_when_engine_running(qtbot, db, cfg_snapshot, studio):
     s, eng, sti = studio
-    db.update_stitcher_config({
-        "opening_audio":  "",
-        "separator_audio": "",
-        "closing_audio":  "",
-        "fallback_audio": "",
-    })
-    s._on_scheduler_break_warn(30)
-    assert sti.calls == []
-
-
-def test_no_fire_when_engine_already_running(qtbot, db, cfg_snapshot, studio):
-    s, eng, sti = studio
+    _arm(s, db)
     sti._running = True
-    s._on_scheduler_break_warn(30)
-    assert sti.calls == []
+    assert s._maybe_play_tease_first(anchor_id=11) is False
 
 
-def test_refire_guard_blocks_within_window(qtbot, db, cfg_snapshot, studio, monkeypatch):
-    """break_approaching can pulse multiple times for the same break.
-    The refire guard must clamp to one fire per window."""
+def test_refire_guard_blocks_second_tease(qtbot, db, cfg_snapshot, studio, monkeypatch):
     s, eng, sti = studio
-    # Stub assemble_sequence + DB so the trigger reaches play_block.
+    _arm(s, db)
     seq = [{"file_path": "/x.mp3", "play_full": True, "label": "FALLBACK"}]
     monkeypatch.setattr(StitcherEngine, "assemble_sequence",
                         staticmethod(lambda _cfg, _songs: seq))
-    monkeypatch.setattr(s, "_collect_upcoming_songs_for_stitcher",
-                        lambda count: [{"id": 1, "file_path": "/x.mp3"}])
-    s._on_scheduler_break_warn(30)
+    assert s._maybe_play_tease_first(anchor_id=11) is True
+    # complete the first block + re-arm
+    sti._running = False
+    s._stitcher_tease_playing = False
+    _arm(s, db)
+    assert s._maybe_play_tease_first(anchor_id=12) is False, \
+        "second tease within _STITCHER_REFIRE_GUARD_S must be blocked"
     assert len(sti.calls) == 1
-    s._on_scheduler_break_warn(28)   # second pulse within guard window
-    assert len(sti.calls) == 1, \
-        "Refire guard must keep the count at 1 within _STITCHER_REFIRE_GUARD_S"
 
 
-# ── Happy path: assembled sequence + deck duck/restore ────────────────
-
-
-def test_fire_routes_sequence_to_stitcher_engine(qtbot, db, cfg_snapshot, studio, monkeypatch):
+def test_tease_done_fires_pending_spot_chain(qtbot, db, cfg_snapshot, studio, monkeypatch):
+    """on_done → _stitcher_tease_done signal → the pending spot pops
+    and fires with the resume anchor preserved."""
     s, eng, sti = studio
-    seq = [
-        {"file_path": "/op.mp3", "play_full": True, "label": "OPENING"},
-        {"file_path": "/h1.mp3", "seek_sec": 1.0,    "label": "Hook 1"},
-        {"file_path": "/sep.mp3", "play_full": True, "label": "SEP"},
-        {"file_path": "/h2.mp3", "seek_sec": 2.0,    "label": "Hook 2"},
-        {"file_path": "/cl.mp3", "play_full": True, "label": "CLOSING"},
+    _arm(s, db)
+    seq = [{"file_path": "/x.mp3", "play_full": True, "label": "FALLBACK"}]
+    monkeypatch.setattr(StitcherEngine, "assemble_sequence",
+                        staticmethod(lambda _cfg, _songs: seq))
+    fired: list[int] = []
+    monkeypatch.setattr(s, "_do_scheduler_spot_due",
+                        lambda cid: fired.append(int(cid)))
+    s._pending_spots.append(4242)
+    assert s._maybe_play_tease_first(anchor_id=11) is True
+    sti._running = False
+    sti.calls[0]["on_done"]()          # engine's completion callback
+    assert fired == [4242]
+    assert s._stitcher_tease_playing is False
+    assert s._pre_spot_song_id == 11
+
+
+# ── Pinned post-break songs ────────────────────────────────────────────
+
+
+def test_pop_next_teased_song_order_and_missing_file_skip(qtbot, db, cfg_snapshot, studio, tmp_path):
+    s, eng, sti = studio
+    ok1 = tmp_path / "a.mp3"; ok1.write_bytes(b"\x00")
+    ok2 = tmp_path / "b.mp3"; ok2.write_bytes(b"\x00")
+    s._teased_songs = [
+        {"id": 1, "title": "A", "file_path": str(ok1)},
+        {"id": 2, "title": "GONE", "file_path": r"Z:\missing.mp3"},
+        {"id": 3, "title": "B", "file_path": str(ok2)},
     ]
-    monkeypatch.setattr(StitcherEngine, "assemble_sequence",
-                        staticmethod(lambda _cfg, _songs: seq))
-    monkeypatch.setattr(s, "_collect_upcoming_songs_for_stitcher",
-                        lambda count: [{"id": 1, "file_path": "/h1.mp3"},
-                                       {"id": 2, "file_path": "/h2.mp3"}])
-    # Pretend the deck is active so the duck path runs.
-    s._playback_cid = 99
-    s._on_scheduler_break_warn(30)
-    assert len(sti.calls) == 1
-    payload = sti.calls[0]
-    labels = [step.get("label") for step in payload["sequence"]]
-    assert "OPENING" in labels
-    assert "CLOSING" in labels
-    assert labels.count("SEP") == 1
-    assert payload["target_vol"] == 85
+    assert s._pop_next_teased_song()["id"] == 1
+    assert s._pop_next_teased_song()["id"] == 3    # missing skipped
+    assert s._pop_next_teased_song() is None
 
 
-def test_fire_ducks_deck_then_restores_on_done(qtbot, db, cfg_snapshot, studio, monkeypatch):
+def test_drain_clears_tease_pin(qtbot, db, cfg_snapshot, studio):
     s, eng, sti = studio
-    seq = [{"file_path": "/x.mp3", "play_full": True, "label": "FALLBACK"}]
-    monkeypatch.setattr(StitcherEngine, "assemble_sequence",
-                        staticmethod(lambda _cfg, _songs: seq))
-    monkeypatch.setattr(s, "_collect_upcoming_songs_for_stitcher",
-                        lambda count: [{"id": 1, "file_path": "/x.mp3"}])
-    s._playback_cid = 99
-    s._on_scheduler_break_warn(30)
-    fades = [c for c in eng.calls if c[0] == "fade"]
-    # First fade is the duck — target should be the duck volume.
-    assert fades, "Expected a fade_volume_to call to duck the deck"
-    assert fades[0][2] == s._STITCHER_DECK_DUCK_VOL
-    # Fire the on_done callback the engine would normally invoke at end.
-    on_done = sti.calls[0]["on_done"]
-    assert on_done is not None
-    on_done()
-    fades = [c for c in eng.calls if c[0] == "fade"]
-    # Second fade is the restore — target should be the master volume.
-    assert len(fades) >= 2
-    assert fades[1][2] == s.DEFAULT_VOLUME or fades[1][2] == \
-           int(getattr(s, "_master_volume", s.DEFAULT_VOLUME))
+    _arm(s, db)
+    s._pending_spots.append(4242)
+    s._drain_pending_dispatches(reason="test")
+    assert s._teased_songs == []
+    assert s._pending_spots == []
 
 
-def test_fire_skips_duck_when_deck_idle(qtbot, db, cfg_snapshot, studio, monkeypatch):
+# ── Queue display — the "tray empties on spot" bug ─────────────────────
+
+
+def test_preview_keeps_songs_when_spot_pending_and_peek_empty(qtbot, db, cfg_snapshot, studio, monkeypatch, tmp_path):
+    """BUG (operator 2026-07-02): a pending spot with an empty
+    scheduler peek used to leave the preview with ONLY the spot card —
+    the songs tray 'emptied'. Song cards must always be present."""
     s, eng, sti = studio
-    seq = [{"file_path": "/x.mp3", "play_full": True, "label": "FALLBACK"}]
-    monkeypatch.setattr(StitcherEngine, "assemble_sequence",
-                        staticmethod(lambda _cfg, _songs: seq))
-    monkeypatch.setattr(s, "_collect_upcoming_songs_for_stitcher",
-                        lambda count: [{"id": 1, "file_path": "/x.mp3"}])
-    s._playback_cid = None
-    s._on_scheduler_break_warn(30)
-    fades = [c for c in eng.calls if c[0] == "fade"]
-    assert fades == [], \
-        "No deck active → no duck call should fire"
-    assert len(sti.calls) == 1, \
-        "Stitcher must still fire even if the deck is idle"
+    f = tmp_path / "q.mp3"; f.write_bytes(b"\x00")
+    s._queue_songs = [
+        {"id": 71, "title": "QA", "artist": "x",
+         "file_path": str(f), "duration_ms": 1000},
+        {"id": 72, "title": "QB", "artist": "x",
+         "file_path": str(f), "duration_ms": 1000},
+    ]
+    monkeypatch.setattr(
+        s, "_pending_spot_to_card",
+        lambda cid: {"_item_type": "spot", "id": cid, "title": "AD"})
+    s._pending_spots.append(555)
+    s._load_upcoming_queue()
+    types = [(c.get("_item_type") or "song")
+             for c in s._upcoming_preview]
+    assert "spot" in types, "pending spot must appear in the preview"
+    assert "song" in types, \
+        "song cards must survive a pending spot (tray must not empty)"
+    assert types.index("spot") < types.index("song"), \
+        "spot shows on top, songs below"
 
 
-# ── Sequence assembler unit tests ───────────────────────────────────────
+# ── Sequence assembler unit tests (unchanged behaviour) ────────────────
 
 
 def test_assemble_sequence_returns_empty_when_no_audio_paths(tmp_path):
@@ -322,7 +385,6 @@ def test_assemble_sequence_inserts_separator_between_hooks(tmp_path):
     labels = [s.get("label") for s in seq]
     assert labels[0] == "OPENING"
     assert labels[-1] == "CLOSING"
-    # 3 hooks → 2 separators between them
     assert labels.count("SEP") == 2
 
 
@@ -341,8 +403,6 @@ def test_assemble_sequence_caps_at_max_hooks(tmp_path):
             "title": f"T{i}",
         })
     seq = StitcherEngine.assemble_sequence(cfg, songs)
-    # Filter to non-OPENING / non-CLOSING / non-SEP entries — those
-    # are the hooks. Should be exactly max_hooks (=2).
     hooks = [s for s in seq if s.get("label") not in
              ("OPENING", "CLOSING", "SEP", "FALLBACK")]
     assert len(hooks) == 2

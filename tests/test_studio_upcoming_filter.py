@@ -142,7 +142,9 @@ def test_upcoming_renders_placeholders_when_queue_exhausted(qtbot, studio):
         except (KeyError, TypeError, ValueError):
             pass
 
-    studio._refresh_upcoming_panel()
+    # Production flow: a play-start triggers _load_upcoming_queue
+    # (build-time filter) before the render refresh.
+    studio._load_upcoming_queue()
 
     titles = _card_titles(studio)
     # All 5 cards should be placeholders (empty title because _song is None)

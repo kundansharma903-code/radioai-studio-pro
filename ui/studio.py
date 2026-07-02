@@ -3727,6 +3727,10 @@ class Studio(QWidget):
     # the Transcription Engine can enqueue the assignment for
     # background summarisation. Carries the assignment_id (int).
     sotg_drop_fired    = pyqtSignal(int)
+    # Emitted (from the StitcherEngine's worker thread) when the
+    # break-tease montage finishes — queued back onto the Qt main
+    # thread so _on_stitcher_tease_done can continue the spot chain.
+    _stitcher_tease_done = pyqtSignal()
 
     DEFAULT_VOLUME = 85
     FADE_OUT_MS = 3000
@@ -3935,6 +3939,16 @@ class Studio(QWidget):
         # without flickering or double-rendering. -2 sentinel means
         # "never set" so the first resolved state always emits.
         self._displayed_active_clock_id: int = -2
+        # Break-tease state (2026-07-02, industry model — RadioBOSS/
+        # StationPlaylist): when a spot joins the pending FIFO, the
+        # NEXT up-to-3 songs from the visible queue are PINNED here.
+        # At song EOS the stitcher montage of exactly these songs
+        # plays STANDALONE (deck silent) before the spot chain, and
+        # after the break these pinned songs air in order — the tease
+        # promises only what will actually play.
+        self._teased_songs: list[dict] = []
+        self._stitcher_tease_playing: bool = False
+        self._stitcher_tease_done.connect(self._on_stitcher_tease_done)
         # Played-songs tracking — tracks song ids that have been
         # dispatched (play-started) since Studio launch. Used by the
         # Up Coming panel's fallback path to filter out songs that
@@ -5040,7 +5054,11 @@ class Studio(QWidget):
                     f"{pending} ({len(self._pending_spots)} more spots)")
                 self._do_scheduler_spot_due(pending)
                 return
-            next_song = self._compute_next_song(after_id=anchor_id)
+            # Promised post-break songs first (break-tease pin), then
+            # the normal queue resume.
+            next_song = self._pop_next_teased_song()
+            if next_song is None:
+                next_song = self._compute_next_song(after_id=anchor_id)
             if next_song is not None:
                 log.info(f"[studio] spot EOS → resume queue: "
                          f"{next_song.get('title')!r}")
@@ -5077,7 +5095,9 @@ class Studio(QWidget):
                     f"{pending} ({len(self._pending_spots)} more spots)")
                 self._do_scheduler_spot_due(pending)
                 return
-            next_song = self._compute_next_song(after_id=anchor_id)
+            next_song = self._pop_next_teased_song()
+            if next_song is None:
+                next_song = self._compute_next_song(after_id=anchor_id)
             if next_song is not None:
                 log.info(
                     f"[studio] sotg EOS → resume queue: "
@@ -5136,6 +5156,13 @@ class Studio(QWidget):
                 self._do_sotg_fire(pending)
                 return
             if self._pending_spots:
+                # Break-tease (industry model): the "Coming Up Next"
+                # montage plays as its OWN element on the now-silent
+                # deck BEFORE the spot chain. _on_stitcher_tease_done
+                # continues to the spot when the block ends.
+                if self._maybe_play_tease_first(
+                        (pre_track or {}).get("id")):
+                    return
                 pending = int(self._pending_spots.pop(0))
                 if pre_track is not None:
                     self._pre_spot_song_id = pre_track.get("id")
@@ -5145,7 +5172,11 @@ class Studio(QWidget):
                 self._do_scheduler_spot_due(pending)
                 return
             cur_id = (pre_track or {}).get("id")
-            next_song = self._compute_next_song(after_id=cur_id)
+            # Promised post-break songs air in pinned order before the
+            # queue takes over again.
+            next_song = self._pop_next_teased_song()
+            if next_song is None:
+                next_song = self._compute_next_song(after_id=cur_id)
             if next_song is not None:
                 log.info(f"[studio] auto-advance → {next_song.get('title')!r}")
                 self._on_queue_song_play(next_song)
@@ -5679,6 +5710,13 @@ class Studio(QWidget):
                 and self._playback_kind in ("deck", "spot", "sotg")
                 and self._current_track is not None):
             self._pending_spots.append(int(campaign_id))
+            # Arm the break tease NOW, while the pre-spot preview still
+            # shows the songs that will follow the break — they get
+            # pinned for the montage AND for post-break dispatch.
+            try:
+                self._arm_stitcher_tease()
+            except Exception as exc:
+                log.debug(f"[studio] tease arm on spot enqueue: {exc}")
             # Also refresh the Up Coming panel — the new spot needs
             # to appear at the top of the visible queue immediately.
             try:
@@ -6047,48 +6085,37 @@ class Studio(QWidget):
         self._refresh_history()
         self._update_status_pills()
 
-    # ── Stitcher trigger state (idempotency) ─────────────────────────────
-    _STITCHER_REFIRE_GUARD_S = 120   # don't re-fire within 2 min of last fire
-    _STITCHER_DECK_DUCK_VOL = 20     # deck volume during stitcher block
-    _STITCHER_DUCK_FADE_MS = 600
+    # ── Stitcher break-tease (2026-07-02 — sequenced industry model) ─────
+    # Old model (duck the deck + play the block OVER the song, hooks
+    # from a fresh random peek) is GONE. New model matches RadioBOSS /
+    # StationPlaylist: the tease is its own sequenced element built
+    # from the songs that will ACTUALLY air after the break:
+    #   song (natural EOS) → tease block (standalone, deck silent)
+    #   → spot chain → the teased songs, in order (pinned).
+    _STITCHER_REFIRE_GUARD_S = 120   # don't re-tease within 2 min
 
     def _on_scheduler_break_warn(self, seconds_until: int) -> None:
         log.info(f"[studio] scheduler: break_approaching in {seconds_until}s")
-        # Pre-break trigger for the Stitcher block. Wired to the same
-        # break-approaching signal that drives the Next Break panel —
-        # the engine fires once per break (idempotency guard via
-        # _last_stitcher_fire_ts) when the operator has the module
-        # enabled + 'before every break' trigger active.
+        # Early arm — pin the post-break songs while they're still
+        # visible in the Up Coming preview. Re-armed (idempotent) when
+        # the spot actually joins the pending FIFO.
         try:
-            self._maybe_fire_stitcher_block(int(seconds_until))
+            self._arm_stitcher_tease()
         except Exception as exc:
-            log.warning(f"[studio] stitcher fire path failed: {exc}")
+            log.warning(f"[studio] stitcher arm failed: {exc}")
 
-    def _maybe_fire_stitcher_block(self, seconds_until: int) -> None:
-        """Pre-break Stitcher fire path. Decision tree:
-          1. Engine wired? (decorative ctor / tests get None)
-          2. Engine NOT already running? (don't stack blocks)
-          3. Refire guard cleared? (≥2 min since last fire)
-          4. stitcher_config.module_enabled + trigger_before_every_break?
-          5. Sequence assembles to a non-empty list (enough hooks +
-             audio paths configured)?
-        On every guard miss, log + return. On pass, duck the deck +
-        fire the engine + restore on done."""
+    def _arm_stitcher_tease(self) -> None:
+        """Pin the up-to-3 songs that will air AFTER the pending break
+        and keep them for (a) the tease montage and (b) post-break
+        dispatch. Sources the VISIBLE Up Coming preview first — the
+        tease must promise exactly what the operator/listener sees —
+        falling back to the consumed-aware static-queue walk.
+        Config-gated (module_enabled + trigger_before_every_break).
+        Idempotent while a tease is already armed."""
+        if self._teased_songs or self._stitcher_tease_playing:
+            return
         if self._stitcher_engine is None:
             return
-        try:
-            if self._stitcher_engine.is_running:
-                log.debug("[stitcher] already running — skip break-fire")
-                return
-        except Exception:
-            pass
-        # Refire dedupe — break_approaching may pulse multiple times.
-        import time as _time
-        now = _time.time()
-        last = getattr(self, "_last_stitcher_fire_ts", 0.0)
-        if (now - float(last or 0.0)) < self._STITCHER_REFIRE_GUARD_S:
-            return
-        # Config gate
         try:
             cfg = self._db.get_stitcher_config()
         except Exception as exc:
@@ -6098,126 +6125,149 @@ class Studio(QWidget):
             return
         if not int(cfg.get("trigger_before_every_break") or 0):
             return
-        # Resolve next-N upcoming songs from scheduler peek; each must
-        # carry file_path + hook_in_ms + hook_out_ms for the assembler
-        # to honor it as a valid hook.
-        max_hooks = int(cfg.get("max_hooks") or 4)
-        songs_with_hooks = self._collect_upcoming_songs_for_stitcher(
-            count=max_hooks)
-        if not songs_with_hooks:
+
+        picked: list[dict] = []
+        seen: set = set()
+        # 1st choice: song cards already visible in Up Coming.
+        for card in list(getattr(self, "_upcoming_preview", []) or []):
+            if (card.get("_item_type") or "song") != "song":
+                continue
+            sid = int(card.get("id") or 0)
+            if sid <= 0 or sid in seen:
+                continue
+            picked.append(dict(card))
+            seen.add(sid)
+            if len(picked) >= 3:
+                break
+        # Fallback: walk the static queue exactly like dispatch would.
+        if len(picked) < 3:
+            after = (self._current_track or {}).get("id")
+            probe = self._static_next_after(after)
+            while probe is not None and len(picked) < 3:
+                sid = int(probe.get("id") or 0)
+                if sid > 0 and sid not in seen:
+                    picked.append(dict(probe))
+                    seen.add(sid)
+                probe = self._static_next_after(sid)
+        if not picked:
             return
-        from core.stitcher_engine import StitcherEngine
-        sequence = StitcherEngine.assemble_sequence(cfg, songs_with_hooks)
+        # Hydrate hooks + canonical file paths in ONE query, keeping
+        # the display order.
+        try:
+            ids = [int(s["id"]) for s in picked]
+            qmarks = ",".join("?" * len(ids))
+            rows = self._db._conn().execute(
+                f"SELECT id, title, artist, file_path, duration_ms, "
+                f"hook_in_ms, hook_out_ms FROM songs "
+                f"WHERE id IN ({qmarks})", ids).fetchall()
+            by_id = {int(r["id"]): {k: r[k] for k in r.keys()}
+                     for r in rows}
+            picked = [by_id[i] for i in ids if i in by_id]
+        except Exception as exc:
+            log.debug(f"[stitcher] tease hydrate failed: {exc}")
+        self._teased_songs = picked
+        log.info(
+            f"[stitcher] tease armed — post-break songs pinned: "
+            f"{[s.get('title') for s in picked]}")
+        try:
+            self._load_upcoming_queue()
+        except Exception:
+            pass
+
+    def _maybe_play_tease_first(self, anchor_id) -> bool:
+        """At song EOS with a spot pending: play the tease montage as
+        its OWN element on the silent deck, then continue to the spot
+        chain via _on_stitcher_tease_done. Returns True when the block
+        started (caller must return); False → caller proceeds straight
+        to the spot (tease never blocks the break)."""
+        if not self._teased_songs or self._stitcher_tease_playing:
+            return False
+        if self._stitcher_engine is None:
+            return False
+        try:
+            if self._stitcher_engine.is_running:
+                return False
+        except Exception:
+            return False
+        import time as _time
+        now = _time.time()
+        last = getattr(self, "_last_stitcher_fire_ts", 0.0)
+        if (now - float(last or 0.0)) < self._STITCHER_REFIRE_GUARD_S:
+            return False
+        try:
+            cfg = self._db.get_stitcher_config()
+            from core.stitcher_engine import StitcherEngine
+            sequence = StitcherEngine.assemble_sequence(
+                cfg, self._teased_songs)
+        except Exception as exc:
+            log.warning(f"[stitcher] tease assemble failed: {exc}")
+            return False
         if not sequence:
-            log.info(
-                "[stitcher] break-fire skipped — no valid sequence "
-                "(check audio paths + hook cue points)")
-            return
-        # Duck the deck so the stitcher block is hearable above the song.
-        self._duck_deck_for_stitcher()
+            log.info("[stitcher] tease skipped — no valid sequence "
+                     "(hooks/audio paths); spot fires directly")
+            return False
+        self._stitcher_tease_playing = True
+        self._pre_spot_song_id = anchor_id
         try:
             self._stitcher_engine.play_block(
                 sequence, target_vol=85,
-                on_done=self._on_stitcher_block_done,
+                on_done=self._stitcher_tease_done.emit,
             )
-            self._last_stitcher_fire_ts = now
-            log.info(
-                f"[stitcher] break-fire — {len(sequence)} parts "
-                f"({seconds_until}s before break)")
         except Exception as exc:
-            log.error(f"[stitcher] play_block failed: {exc}",
-                      exc_info=True)
-            # On failure restore the deck immediately so the operator
-            # isn't left with a permanently-ducked broadcast.
-            self._restore_deck_after_stitcher()
+            log.error(f"[stitcher] tease play failed: {exc}")
+            self._stitcher_tease_playing = False
+            return False
+        self._last_stitcher_fire_ts = now
+        log.info(
+            f"[stitcher] tease block ON AIR (standalone) — "
+            f"{len(sequence)} parts promising "
+            f"{[s.get('title') for s in self._teased_songs]}")
+        return True
 
-    def _collect_upcoming_songs_for_stitcher(
-            self, count: int) -> list[dict]:
-        """Pull up to *count* upcoming songs (scheduler peek when
-        wired, recent-songs fallback otherwise) and resolve each row's
-        full file_path + hook cue points for the assembler."""
-        ids: list[int] = []
-        if (self._scheduler is not None
-                and hasattr(self._scheduler, "peek_next")):
-            try:
-                items = self._scheduler.peek_next(count) or []
-            except Exception:
-                items = []
-            for it in items:
-                if (it or {}).get("item_type") != "song":
-                    continue
-                rid = it.get("item_id") or it.get("song_id")
-                if rid is None:
-                    continue
-                ids.append(int(rid))
-        if not ids:
-            # Fallback — last N enabled songs (so a greenfield AUTO
-            # mode with no scheduler still has SOMETHING to assemble).
-            try:
-                rows = self._db._conn().execute(
-                    "SELECT id FROM songs WHERE is_enabled = 1 "
-                    "ORDER BY id DESC LIMIT ?", [int(count)]
-                ).fetchall()
-                ids = [int(r[0]) for r in rows]
-            except Exception:
-                ids = []
-        if not ids:
-            return []
-        out: list[dict] = []
-        try:
-            qmarks = ",".join("?" * len(ids))
-            rows = self._db._conn().execute(
-                f"SELECT id, title, artist, file_path, hook_in_ms, "
-                f"hook_out_ms FROM songs WHERE id IN ({qmarks})", ids
-            ).fetchall()
-            by_id = {int(r["id"]): {k: r[k] for k in r.keys()} for r in rows}
-            for sid in ids:
-                if sid in by_id:
-                    out.append(by_id[sid])
-        except Exception as exc:
-            log.debug(f"[stitcher] song hydrate failed: {exc}")
-        return out
-
-    def _duck_deck_for_stitcher(self) -> None:
-        """Fade the deck volume down so the stitcher block isn't
-        drowned by the song. Stash the pre-duck volume so we can
-        restore exactly. No-op when the deck is idle."""
-        if self._engine is None or self._playback_cid is None:
+    def _on_stitcher_tease_done(self) -> None:
+        """Main-thread continuation after the tease block ends —
+        fire the pending chain (SOTG > Spot), else resume the queue."""
+        self._stitcher_tease_playing = False
+        anchor = self._pre_spot_song_id
+        log.info("[stitcher] tease done → firing break chain")
+        if self._pending_sotgs:
+            pending = self._pending_sotgs.pop(0)
+            self._pre_sotg_song_id = anchor
+            self._do_sotg_fire(pending)
             return
-        try:
-            self._pre_stitcher_volume = int(getattr(
-                self, "_master_volume", self.DEFAULT_VOLUME))
-            self._engine.fade_volume_to(
-                self._playback_cid,
-                self._STITCHER_DECK_DUCK_VOL,
-                self._STITCHER_DUCK_FADE_MS,
-            )
-        except Exception as exc:
-            log.debug(f"[stitcher] duck failed: {exc}")
-
-    def _restore_deck_after_stitcher(self) -> None:
-        """Inverse of _duck_deck_for_stitcher. Always called on
-        on_done so the deck never stays ducked even when the engine
-        errors mid-block."""
-        if self._engine is None or self._playback_cid is None:
+        if self._pending_spots:
+            pending = int(self._pending_spots.pop(0))
+            self._pre_spot_song_id = anchor
+            self._do_scheduler_spot_due(pending)
             return
-        target = int(getattr(self, "_pre_stitcher_volume",
-                             self.DEFAULT_VOLUME) or self.DEFAULT_VOLUME)
-        try:
-            self._engine.fade_volume_to(
-                self._playback_cid, target,
-                self._STITCHER_DUCK_FADE_MS,
-            )
-        except Exception as exc:
-            log.debug(f"[stitcher] restore failed: {exc}")
+        # Pending drained mid-block (stop-next etc.) → resume queue.
+        nxt = self._pop_next_teased_song()
+        if nxt is None:
+            nxt = self._compute_next_song(after_id=anchor)
+        if nxt is not None:
+            self._on_queue_song_play(nxt)
+            return
+        self._current_track = None
+        self._apply_idle_state()
+        self._update_status_pills()
 
-    def _on_stitcher_block_done(self) -> None:
-        """Stitcher engine finished playback — restore the deck.
-        Runs from the stitcher's worker thread; the fade call goes
-        through the AudioEngine's BASS slide which is thread-safe at
-        the BASS layer."""
-        log.info("[stitcher] block done → restoring deck volume")
-        self._restore_deck_after_stitcher()
+    def _pop_next_teased_song(self) -> Optional[dict]:
+        """Next pinned post-break song (skips unplayable files).
+        Returns None when the tease list is exhausted — callers fall
+        through to the normal queue."""
+        while self._teased_songs:
+            s = self._teased_songs.pop(0)
+            fp = s.get("file_path")
+            if fp and os.path.exists(fp):
+                log.info(
+                    f"[stitcher] playing promised post-break song "
+                    f"{s.get('title')!r} ({len(self._teased_songs)} "
+                    f"more pinned)")
+                return dict(s)
+            log.warning(
+                f"[stitcher] pinned song {s.get('title')!r} missing "
+                f"file — skipped")
+        return None
 
     def _on_scheduler_next_break_in(self, seconds: int) -> None:
         if hasattr(self, "_next_break") and self._next_break is not None:
@@ -7022,6 +7072,25 @@ class Studio(QWidget):
                 log.warning(
                     f"[studio] preview-spot card render failed: {exc}")
 
+        # 4.5 Pinned post-break songs (break tease). Shown right after
+        # the break block so the operator sees EXACTLY what the tease
+        # promised, in order.
+        teased_ids: set = set()
+        for s in list(self._teased_songs):
+            try:
+                teased_ids.add(int(s.get("id") or 0))
+                translated.append({
+                    "_item_type":  "song",
+                    "_teased":     True,
+                    "id":          s.get("id"),
+                    "title":       s.get("title") or "—",
+                    "artist":      s.get("artist") or "",
+                    "file_path":   s.get("file_path"),
+                    "duration_ms": int(s.get("duration_ms") or 0),
+                })
+            except Exception as exc:
+                log.warning(f"[studio] teased card render failed: {exc}")
+
         # 5. Songs / sweepers / jingles from the scheduler. CRITICAL:
         # this section MUST run even when sections 1-4 fail — the
         # operator-reported "songs disappear during SOTG playback"
@@ -7035,6 +7104,9 @@ class Studio(QWidget):
                 items = []
             for it in items[:5]:
                 try:
+                    iid = int(it.get("item_id") or 0)
+                    if iid and iid in teased_ids:
+                        continue      # already shown as a pinned card
                     translated.append({
                         "_item_type":  it.get("item_type") or "song",
                         "id":          it.get("item_id"),
@@ -7047,6 +7119,30 @@ class Studio(QWidget):
                     log.warning(
                         f"[studio] scheduler-peek card translate "
                         f"failed: {exc}")
+
+        # 6. BUG fix (operator 2026-07-02): when a spot/SOTG lands but
+        # the scheduler peek has no songs (idle scheduler / no clock
+        # this hour), the preview used to contain ONLY the spot card —
+        # which suppressed _refresh_upcoming_panel's static fallback
+        # and the whole songs tray "emptied". Guarantee song cards are
+        # always present by appending the consumed-aware static queue.
+        has_song = any(
+            (c.get("_item_type") or "song") == "song" for c in translated)
+        if not has_song and self._queue_songs:
+            for s in self._queue_songs:
+                sid = int(s.get("id") or 0)
+                if sid in self._played_song_ids or sid in teased_ids:
+                    continue
+                translated.append({
+                    "_item_type":  "song",
+                    "id":          s.get("id"),
+                    "title":       s.get("title") or "—",
+                    "artist":      s.get("artist") or "",
+                    "file_path":   s.get("file_path"),
+                    "duration_ms": int(s.get("duration_ms") or 0),
+                })
+                if len(translated) >= 8:
+                    break
 
         self._upcoming_preview = translated
         self._refresh_upcoming_panel()
@@ -7200,13 +7296,23 @@ class Studio(QWidget):
         explicitly opted out of auto-firing dispatches."""
         n_spots = len(self._pending_spots)
         n_sotgs = len(self._pending_sotgs)
-        if not (n_spots or n_sotgs):
+        n_tease = len(self._teased_songs)
+        if not (n_spots or n_sotgs or n_tease
+                or self._stitcher_tease_playing):
             return
         self._pending_spots.clear()
         self._pending_sotgs.clear()
+        # Tease pin dies with the break it promised.
+        self._teased_songs.clear()
+        if self._stitcher_tease_playing and self._stitcher_engine:
+            try:
+                self._stitcher_engine.stop()
+            except Exception:
+                pass
+            self._stitcher_tease_playing = False
         log.info(
             f"[studio] {reason} dropped {n_spots} pending spot(s) "
-            f"+ {n_sotgs} pending SOTG(s)")
+            f"+ {n_sotgs} pending SOTG(s) + {n_tease} teased song(s)")
         # Re-render so the operator sees the queue clear immediately.
         try:
             self._load_upcoming_queue()
