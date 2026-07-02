@@ -37,9 +37,21 @@ def setup_logging(debug: bool = False) -> None:
 
     root = logging.getLogger()
     root.setLevel(level)
-    # Avoid duplicate handlers on re-import
-    if not root.handlers:
+    # Attach by TYPE, not by "any handler present" — the frozen
+    # (PyInstaller) app arrives here with a pre-existing root handler,
+    # so the old `if not root.handlers:` guard silently skipped BOTH
+    # handlers and the packaged exe never wrote radioai.log at all
+    # (discovered 2026-07-02: zero production logs since packaging).
+    have_file = any(
+        isinstance(h, logging.handlers.RotatingFileHandler)
+        for h in root.handlers)
+    if not have_file:
         root.addHandler(fh)
+    have_console = any(
+        isinstance(h, logging.StreamHandler)
+        and not isinstance(h, logging.handlers.RotatingFileHandler)
+        for h in root.handlers)
+    if not have_console:
         root.addHandler(ch)
 
 
