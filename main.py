@@ -176,6 +176,37 @@ def main():
     else:
         log.warning(f"App icon missing at {icon_path}")
 
+    # 3b. Single-instance guard — a broadcast machine must never run
+    # two copies of this app (two audio engines fighting the sound
+    # card + two writers on one SQLite DB = the corruption class we
+    # fought on 2026-07-02). A second launch asks the FIRST instance
+    # to bring its window to the front, then exits immediately —
+    # BEFORE the splash, the DB connection, or bass_init.
+    from PyQt6.QtNetwork import QLocalServer, QLocalSocket
+    _SI_KEY = "RadioAIStudioPro.SingleInstance"
+    _probe = QLocalSocket()
+    _probe.connectToServer(_SI_KEY)
+    if _probe.waitForConnected(300):
+        _probe.write(b"RAISE")
+        _probe.flush()
+        _probe.waitForBytesWritten(300)
+        _probe.disconnectFromServer()
+        log.info(
+            "[boot] another RadioAI instance is already running — "
+            "asked it to come to the front; exiting this copy")
+        sys.exit(0)
+    # Clear a stale socket left by a crashed previous instance, then
+    # claim the name. If listen still fails, log + continue unguarded
+    # (a guard failure must never stop the broadcast app itself).
+    QLocalServer.removeServer(_SI_KEY)
+    _si_server = QLocalServer()
+    if _si_server.listen(_SI_KEY):
+        log.info("[boot] single-instance guard active")
+    else:
+        log.warning(
+            f"[boot] single-instance listen failed "
+            f"({_si_server.errorString()}) — continuing unguarded")
+
     # 4. Splash screen — shown immediately, before any heavy init.
     # Stays visible through every init step below; status text +
     # progress bar update as each step completes; fades out + closes
@@ -340,6 +371,28 @@ def main():
 
     # Fade out the splash + transfer focus to the main window
     splash.finish_animated(window)
+
+    # Single-instance: when a second copy is launched, it connects to
+    # our QLocalServer and we bring THIS window to the front.
+    def _on_second_instance_ping():
+        try:
+            conn = _si_server.nextPendingConnection()
+            if conn is not None:
+                conn.readAll()
+                conn.disconnectFromServer()
+        except Exception:
+            pass
+        try:
+            window.showNormal()
+            window.raise_()
+            window.activateWindow()
+            log.info("[boot] second launch detected — window raised")
+        except Exception as exc:
+            log.debug(f"[boot] window raise failed: {exc}")
+    try:
+        _si_server.newConnection.connect(_on_second_instance_ping)
+    except Exception:
+        pass
 
     # 9. Event loop
     exit_code = app.exec()
