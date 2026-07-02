@@ -17,7 +17,9 @@ Shared pytest fixtures for the audio engine test suite.
 from __future__ import annotations
 
 import os
+import shutil
 import sys
+import tempfile
 
 import pytest
 
@@ -36,6 +38,50 @@ from core.audio_engine import bass_init, bass_free
 from core.database import Database
 
 
+# ── Live-DB shield (MUST run before any Database connection) ────────────────
+
+@pytest.fixture(scope="session", autouse=True)
+def _live_db_shield():
+    """Run the ENTIRE test session against a disposable COPY of the dev
+    DB — never the live operator file.
+
+    Why: two real corruption incidents (2026-07-01 + 2026-07-02) were
+    caused by test processes dying mid-WAL-write on the LIVE DB (the
+    known BASS teardown segfault flake, force-killed runs, and tests
+    running concurrently with the on-air app). With this shield a
+    crashed run can only ever corrupt a throwaway temp file; fixture
+    litter and teardown deletions also stop touching operator data.
+
+    Mechanics: Database._conn() reads the module global DB_PATH at
+    connect time and connections are created lazily, so patching the
+    globals here (before the first test runs) redirects every
+    connection for the whole session. The copy is byte-identical, so
+    tests that rely on real library data (394 songs etc.) see exactly
+    what they saw before."""
+    import core.database as _cdb
+    import core.constants as _cconst
+    live = str(_cdb.DB_PATH)
+    if not os.path.exists(live):
+        yield
+        return
+    tmpdir = tempfile.mkdtemp(prefix="radioai_testdb_")
+    copy = os.path.join(tmpdir, "radioai_test.db")
+    shutil.copy2(live, copy)
+    for ext in ("-wal", "-shm"):
+        if os.path.exists(live + ext):
+            shutil.copy2(live + ext, copy + ext)
+    _cdb.DB_PATH = copy
+    _cconst.DB_PATH = copy
+    try:
+        import core.paths as _cpaths
+        _cpaths.DB_PATH = copy
+    except Exception:
+        pass
+    print(f"\n[conftest] live-DB shield: session redirected to {copy}")
+    yield
+    shutil.rmtree(tmpdir, ignore_errors=True)
+
+
 # ── Qt / BASS lifecycle ─────────────────────────────────────────────────────
 
 @pytest.fixture(scope="session")
@@ -46,9 +92,10 @@ def qapp_args():
 
 
 @pytest.fixture(scope="session", autouse=True)
-def _bass(qapp):
+def _bass(qapp, _live_db_shield):
     """BASS_Init at session start, BASS_Free at session end. Depends on
-    `qapp` so QApplication exists before BASS (signals can dispatch)."""
+    `qapp` so QApplication exists before BASS (signals can dispatch),
+    and on the live-DB shield so no test can ever open the real DB."""
     assert bass_init(), "bass_init() failed at session start"
     yield
     bass_free()
