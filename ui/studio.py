@@ -3739,7 +3739,8 @@ class Studio(QWidget):
     LIBRARY_JINGLE_PAD_OFFSET = 1_000_000
 
     def __init__(self, db, parent=None, engine=None, scheduler=None,
-                 instant_jingle_engine=None, sweeper_engine=None):
+                 instant_jingle_engine=None, sweeper_engine=None,
+                 stitcher_engine=None):
         super().__init__(parent)
         self._db = db
         self._engine = engine
@@ -3751,6 +3752,13 @@ class Studio(QWidget):
         # manual sweeper plays from the Libraries panel and scheduler-
         # dispatched sweeper slots both go through the same overlay path.
         self._sweeper_engine = sweeper_engine
+        # Stitcher block player — the "Coming Up Next" hook montage.
+        # Without this kwarg the attribute never existed on the live
+        # Studio, so _maybe_fire_stitcher_block raised AttributeError
+        # (swallowed) on every break and the stitcher NEVER fired on
+        # air (observed live 2026-07-02). None default keeps decorative
+        # /test ctors green; MainWindow injects the shared instance.
+        self._stitcher_engine = stitcher_engine
         # Jingle pad cache: list of dicts {id, label, file_path,
         # duration_ms, volume, behaviour} — populated from
         # db.get_jingle_pads_active() at construction, capped at 9 to

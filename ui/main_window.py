@@ -557,7 +557,9 @@ class MainWindow(QMainWindow):
                 self._db, parent=None,
                 engine=self._engine, scheduler=self._scheduler,
                 instant_jingle_engine=self._instant_jingle_engine,
-                sweeper_engine=self._sweeper_engine)
+                sweeper_engine=self._sweeper_engine,
+                stitcher_engine=self._stitcher_engine
+                if hasattr(self, "_stitcher_engine") else None)
             self.studio.breadcrumb_clicked.connect(self._on_breadcrumb)
             # SOTG drop FIRED → Transcription Engine enqueue. Real-time
             # post-FIRED summarisation (operator's Q1 = (a)).
