@@ -14,7 +14,7 @@ Studio dispatcher:
   • Assignments past _SOTG_MISS_THRESHOLD_S get stamped MISSED.
   • Priority semantics:
       - HIGH on song → fade outgoing deck, play SOTG on fresh channel
-      - LOW on song → defer (_pending_sotg_assignment) until EOS
+      - LOW on song → append to _pending_sotgs FIFO until EOS
       - On idle deck (or HIGH after fade)→ play immediately
       - On paid spot → defer until spot EOS (paid spot wins)
   • SOTG EOS path resumes the song queue from _pre_sotg_song_id.
@@ -287,9 +287,9 @@ def test_due_low_on_song_defers_until_eos(
     s._current_track = {"id": 88, "title": "Test Song"}
 
     s._sotg_check_tick()
-    # Should NOT have fired yet — cached as pending
-    assert s._pending_sotg_assignment is not None
-    assert s._pending_sotg_assignment["assignment_id"] == 200
+    # Should NOT have fired yet — appended to pending FIFO list
+    assert len(s._pending_sotgs) == 1
+    assert s._pending_sotgs[0]["assignment_id"] == 200
     assert s._playback_kind == "deck"   # still on song
     # No load call yet
     assert all(c[0] != "load" for c in eng.calls)
@@ -306,7 +306,7 @@ def test_due_during_paid_spot_defers_regardless_of_priority(
     s._current_track = {"id": 0, "title": "Ad"}
 
     s._sotg_check_tick()
-    assert s._pending_sotg_assignment is not None
+    assert len(s._pending_sotgs) == 1
     # SOTG must NOT have started its own channel
     assert s._playback_kind == "spot"
 
@@ -405,16 +405,18 @@ def test_sotg_eos_resumes_queue(
     assert s._sotg_active_aid is None
 
 
-def test_crossfade_dispatch_absorbs_pending_sotg(
+def test_crossfade_dispatch_defers_when_pending_sotg(
         qapp, db, qtbot, monkeypatch, synthetic_assignment):
-    """Regression-guard for the 2026-05-14 LOW-priority-never-played
-    bug. With Studio Settings crossfade enabled, the outgoing song's
-    natural EOS gets eaten by the crossfade-tail branch of the EOS
-    handler — meaning path (d)'s pending-SOTG check never runs.
+    """Operator-gated 2026-05-17 — when a SOTG or Spot is pending,
+    _dispatch_crossfade_overlap DEFERS the entire transition. The song
+    plays to its natural EOS, and EOS path (d) fires the pending SOTG
+    on a clean fresh channel with NO music overlap.
 
-    Fix: _dispatch_crossfade_overlap fires pending SOTG (and pending
-    paid spot) BEFORE loading the next song.
-    """
+    Replaces the prior "absorb" behavior which had been the source of
+    the "spot overlay on music" complaint. The deferred flow preserves
+    the 2026-05-14 LOW-priority-never-played fix because EOS path (d)
+    drains _pending_sotgs in priority order (already covered by
+    test_song_eos_fires_pending_sotg_before_auto_advance)."""
     eng = _FakeAudioEngine()
     s = _build_studio(db, eng, monkeypatch, qtbot,
                        today_assignments=[])
@@ -423,43 +425,34 @@ def test_crossfade_dispatch_absorbs_pending_sotg(
         lambda aid, fired_at=None: None)
     monkeypatch.setattr(db, "log_play", lambda **k: None)
 
-    # Simulate a song currently on deck, mid-fade-out
     s._playback_kind = "deck"
     s._playback_cid = 50
     s._current_track = {"id": 88, "title": "Outgoing Song"}
     s._master_volume = 75
-    s._pending_sotg_assignment = dict(synthetic_assignment)
-    s._pending_sotg_assignment["assignment_id"] = 909
-    s._pending_sotg_assignment["priority"] = "Low"
-
-    # Sentinel — _compute_next_song must NOT be called because SOTG
-    # took the place of the next song.
-    compute_calls: list = []
-    monkeypatch.setattr(
-        s, "_compute_next_song",
-        lambda after_id: compute_calls.append(after_id))
+    pending_dict = dict(synthetic_assignment)
+    pending_dict["assignment_id"] = 909
+    pending_dict["priority"] = "Low"
+    s._pending_sotgs = [pending_dict]
 
     fired = s._dispatch_crossfade_overlap()
-    assert fired is True   # crossfade WAS dispatched (with SOTG)
-    assert compute_calls == [], (
-        "_compute_next_song must NOT run when pending SOTG absorbs "
-        "the crossfade slot")
-    # Outgoing channel marked for crossfade-tail cleanup
-    assert s._fading_cid == 50
-    # SOTG is now on the deck
-    assert s._playback_kind == "sotg"
-    assert s._sotg_active_aid == 909
-    # Pre-SOTG anchor captured for the post-SOTG queue resume
-    assert s._pre_sotg_song_id == 88
-    # Pending cleared
-    assert s._pending_sotg_assignment is None
+    # Deferred — returns False, no side effects.
+    assert fired is False
+    # Song's state unchanged — playing on deck.
+    assert s._playback_kind == "deck"
+    assert s._playback_cid == 50
+    # Pending SOTG still queued, will fire on EOS.
+    assert len(s._pending_sotgs) == 1
+    assert s._pending_sotgs[0]["assignment_id"] == 909
+    # No engine activity (no load, no play, no fade).
+    assert all(c[0] not in ("load", "play", "fade") for c in eng.calls), (
+        f"engine should be untouched on deferral; got {eng.calls}")
 
 
-def test_crossfade_dispatch_absorbs_pending_spot(
+def test_crossfade_dispatch_defers_when_pending_spot(
         qapp, db, qtbot, monkeypatch):
-    """Same regression for paid spots — the priority ladder says
-    paid spot > SOTG > Song, so they get the same crossfade hook."""
-    from datetime import date as _ddate
+    """Same deferral for paid spots — _dispatch_crossfade_overlap
+    returns False without side effects when a spot is queued. The
+    spot fires on the song's natural EOS via path (d)."""
     eng = _FakeAudioEngine()
     monkeypatch.setattr(
         db, "get_sotg_assignments_for_date",
@@ -469,7 +462,6 @@ def test_crossfade_dispatch_absorbs_pending_spot(
                 instant_jingle_engine=_FakeIJE())
     qtbot.addWidget(s)
 
-    # Fake the spot-dispatch path so we don't need a real campaign row.
     spot_fired_with: list = []
     monkeypatch.setattr(
         s, "_do_scheduler_spot_due",
@@ -477,15 +469,18 @@ def test_crossfade_dispatch_absorbs_pending_spot(
 
     s._playback_kind = "deck"
     s._playback_cid = 60
-    s._current_track = {"id": 99, "title": "About-to-fade Song"}
-    s._pending_spot_campaign_id = 444
+    s._current_track = {"id": 99, "title": "Playing Song"}
+    s._pending_spots = [444]
 
     fired = s._dispatch_crossfade_overlap()
-    assert fired is True
-    assert spot_fired_with == [444]
-    assert s._fading_cid == 60
-    assert s._pre_spot_song_id == 99
-    assert s._pending_spot_campaign_id is None
+    # Deferred — no fire, no state change.
+    assert fired is False
+    assert spot_fired_with == []
+    assert s._playback_kind == "deck"
+    assert s._playback_cid == 60
+    assert s._pending_spots == [444]
+    assert all(c[0] not in ("load", "play", "fade") for c in eng.calls), (
+        f"engine untouched on deferral; got {eng.calls}")
 
 
 def test_song_eos_fires_pending_sotg_before_auto_advance(
@@ -504,9 +499,10 @@ def test_song_eos_fires_pending_sotg_before_auto_advance(
     s._playback_kind = "deck"
     s._playback_cid = 21
     s._current_track = {"id": 77, "title": "Outgoing Song"}
-    s._pending_sotg_assignment = dict(synthetic_assignment)
-    s._pending_sotg_assignment["priority"] = "Low"
-    s._pending_sotg_assignment["assignment_id"] = 808
+    pending_dict = dict(synthetic_assignment)
+    pending_dict["priority"] = "Low"
+    pending_dict["assignment_id"] = 808
+    s._pending_sotgs = [pending_dict]
     s._auto_advance_enabled = True
 
     # Avoid _compute_next_song being called this path
@@ -524,3 +520,5 @@ def test_song_eos_fires_pending_sotg_before_auto_advance(
     assert compute_calls == []
     # Pre-SOTG anchor = the song id that just ended
     assert s._pre_sotg_song_id == 77
+
+

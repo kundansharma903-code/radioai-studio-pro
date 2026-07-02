@@ -34,8 +34,33 @@ class MainWindow(QMainWindow):
         # lifecycle contract. closeEvent() AND QApplication.aboutToQuit
         # both invoke _cleanup_engine() (idempotent belt-and-suspenders)
         # before main.py runs bass_free().
+        #
+        # ════════════════════════════════════════════════════════════════
+        # CRITICAL INVARIANT #1 — route_via_mixer MUST stay False
+        # ════════════════════════════════════════════════════════════════
+        # Phase 5.3 BASSmix migration attempted 2026-05-17 surfaced
+        # stutter + pause bugs that couldn't be cracked in session.
+        # Operator decision: "abhi original par switch kar do, baad
+        # mein dekhnege". Mixer infrastructure stays in the tree
+        # (core/audio/_bassmix.py, core/audio/mixer_bus.py,
+        # core/audio/vendor/bassmix.dll) but is FULLY DORMANT while
+        # this flag is False.
+        #
+        # DO NOT FLIP THIS TO True without:
+        #   1. Running scripts/diag_mixer_stutter.py first (5-variant
+        #      isolation test — operator must hear clean playback in
+        #      Variant 2 BEFORE attempting full integration)
+        #   2. Diagnosing the root cause that defeated the earlier
+        #      attempt (see HANDOVER_2026_05_17.md incident #26)
+        #   3. Operator's explicit "BASSmix retry karte hain" greenlight
+        #
+        # ALSO check core/audio/engine.py: AudioEngine.__init__'s
+        # `route_via_mixer` parameter default — must also be False.
+        # Both layers must agree: explicit kwarg + safe default = no
+        # accidental activation if someone removes the kwarg.
+        # ════════════════════════════════════════════════════════════════
         from core.audio import AudioEngine
-        self._engine = AudioEngine(parent=self)
+        self._engine = AudioEngine(parent=self, route_via_mixer=False)
 
         # Shared SchedulerEngine instance (Phase D3 — Option C DI).
         # Lives on its own QThread; ticks at 1Hz. NOT auto-started in
@@ -688,6 +713,11 @@ class MainWindow(QMainWindow):
         log.info(f"Breadcrumb → {where}")
         if where == "control_panel" and hasattr(self, "control_panel"):
             self._stack.setCurrentWidget(self.control_panel)
+            return
+        # Studio's "View Full History →" link emits final_log_creator on the
+        # breadcrumb channel; delegate to the hub router that owns that route.
+        if where == "final_log_creator":
+            self._on_hub_screen_requested(where)
 
     def _on_hub_screen_requested(self, screen: str) -> None:
         """Routes from SchedulingHub / Playlists / sibling screens.
@@ -988,7 +1018,10 @@ class MainWindow(QMainWindow):
                                                     "set_studio"):
                 self.scheduling_hub.set_studio(self.studio)
             self._stack.setCurrentWidget(self.scheduling_hub)
-        elif tab == "Control Panel" and hasattr(self, "control_panel"):
+        elif tab in ("Control Panel", "Libraries") and hasattr(self, "control_panel"):
+            # "Libraries" is the Control Panel's own home — the library
+            # cards ARE the libraries — so route it back to control_panel
+            # instead of leaving it a dead no-op.
             self._stack.setCurrentWidget(self.control_panel)
         elif tab == "Studio":
             self._on_studio_clicked()
@@ -1454,3 +1487,16 @@ class MainWindow(QMainWindow):
             log.info("AudioEngine cleanup_all done")
         except Exception as exc:
             log.warning(f"engine cleanup_all failed: {exc}")
+
+        # 3. Tear down the BASSmix mixer (Phase 5.3). Must come AFTER
+        # cleanup_all so every source stream has detached itself first;
+        # freeing the mixer with channels still attached can crash
+        # inside BASSmix's pull thread. No-op when bassmix.dll is
+        # absent or the mixer was never created.
+        try:
+            from core.audio.mixer_bus import MixerBus
+            if MixerBus.is_available():
+                MixerBus.instance().cleanup()
+                log.info("MixerBus cleanup done")
+        except Exception as exc:
+            log.warning(f"mixer cleanup failed: {exc}")

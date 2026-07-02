@@ -1069,6 +1069,16 @@ class _ControlCluster(QWidget):
         self._paused = bool(on)
         self._b_pause.set_active(self._paused)
 
+    def set_loop(self, on: bool) -> None:
+        """Reflect loop state on the button visual without re-emitting
+        loop_toggled — used to keep the master cluster in sync when the
+        Bottom-Transport Loop button drives the same state."""
+        self._loop_on = bool(on)
+        self._b_loop.set_active(self._loop_on)
+
+    def is_loop_on(self) -> bool:
+        return self._loop_on
+
     def set_idle(self, idle: bool) -> None:
         for b in (self._b_restart, self._b_pause, self._b_stop):
             b.set_enabled(not idle)
@@ -1331,6 +1341,9 @@ _TYPE_VISUAL = {
     "break":       (RED_LIGHT,    RED,          "BREAK"),
     "voice_track": (PINK_LIGHT,   PINK,         "VOICE"),
     "voice":       (PINK_LIGHT,   PINK,         "VOICE"),
+    # SOTG drops use the same red palette as paid spots — both are
+    # "non-music airtime" with priority over songs/sweepers/jingles.
+    "sotg":        (RED_LIGHT,    RED,          "SOTG"),
     "sweeper":     (PURPLE_LIGHT, PURPLE_LIGHT, "SWEEPER"),
     "station_id":  (CYAN_LIGHT,   CYAN,         "STATION"),
 }
@@ -1581,6 +1594,9 @@ class _UpComingQueue(QWidget):
     # and the song dict so Studio can drive positional INSERT /
     # REPLACE / DELETE against the operator's chosen row.
     row_selected = pyqtSignal(int, dict)
+    # FADE NEXT toggle in the header — forwarded so Studio can capture
+    # the operator's fade-into-next preference.
+    fade_next_toggled = pyqtSignal(bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1596,6 +1612,7 @@ class _UpComingQueue(QWidget):
 
         self._fade_toggle = _FadeNextToggle(self)
         self._fade_toggle.move(12, 30)
+        self._fade_toggle.toggled.connect(self.fade_next_toggled.emit)
 
         # 5 cards stacked vertically — y=64 + i*128
         self._cards: list[_UpComingCard] = []
@@ -3639,6 +3656,12 @@ class _BottomTransport(QWidget):
     def is_autoplay_on(self) -> bool:
         return self._autoplay.is_on()
 
+    def set_autoplay_on(self, on: bool) -> None:
+        """Reflect the authoritative auto-advance state on the AutoPlay
+        toggle's visuals without re-emitting (keeps it in lockstep with
+        the header AUTO pill — the single source of truth)."""
+        self._autoplay.set_on(on)
+
     def paintEvent(self, e: QPaintEvent) -> None:
         p = QPainter(self); p.setClipRect(e.rect())
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -3796,6 +3819,13 @@ class Studio(QWidget):
         self._current_track: Optional[dict] = None
         self._current_duration_ms: int = 0
         self._loop_enabled: bool = False
+        # UI preference captured from the Up Coming "FADE NEXT" toggle.
+        # Stored only — NOT consumed by the dispatch/fade core (which
+        # remains driven by per-song mix points + Studio Settings). Wired
+        # so the toggle is no longer a dead control; broadcast behavior is
+        # unchanged. Reading this flag into a fade decision is a separate,
+        # deliberate follow-up.
+        self._fade_next_enabled: bool = False
         self._stop_after_current: bool = False
         self._master_volume: int = self.DEFAULT_VOLUME
         self._fade_out_timer: Optional[QTimer] = None
@@ -3816,8 +3846,21 @@ class Studio(QWidget):
         # broadcast loop honest without an app restart.
         self._cfg_missing_file_alert: bool = False
         self._cfg_fallback_action: str = ""
-        self._cfg_crossfade_dur_s: int = 3
-        self._cfg_fade_out_start_s: int = 6
+        # Per-industry pattern (Jazler SOHO, RCS Zetta, mAirList,
+        # StationPlaylist) for music→{song,spot,SOTG} transitions:
+        #   1. Each song has per-song `mix_point_ms` (set via Audio Cue
+        #      Editor or auto-cue scanner).
+        #   2. When playback position hits mix_point_ms, the fade starts
+        #      and the NEXT item is dispatched on a fresh channel.
+        #   3. Fade duration = _cfg_crossfade_dur_s (per Studio Settings,
+        #      operator-configurable, default 5s).
+        #   4. When `mix_point_ms` is NOT set on a song, fall back to
+        #      "fade_out_start seconds before end" (global default 5s).
+        # No separate "music-to-spot" timing — same fade applies to all
+        # transitions per industry standard (mAirList: "professional radio
+        # believes every song requires a distinct fade point").
+        self._cfg_crossfade_dur_s: int = 5
+        self._cfg_fade_out_start_s: int = 5
         self._cfg_fade_curve: str = "Logarithmic"
         self._cfg_load_next: str = ""
         self._cfg_preload_buffer: str = ""
@@ -3831,30 +3874,52 @@ class Studio(QWidget):
         self._pre_spot_song_id: Optional[int] = None
         # Deferred spot dispatch — when scheduler fires spot_due during
         # an actively-playing deck song, we cache the campaign here
-        # instead of interrupting. Song EOS path (d) consumes it and
-        # plays the spot before auto-advancing to the next song.
-        # None = no pending spot. Cleared on stop-next, loop, and
-        # AUTO-off (operator-takes-control transitions).
-        self._pending_spot_campaign_id: Optional[int] = None
-        # Spot on the Go dispatch state. _pending_sotg_assignment is
-        # the cached LOW-priority drop waiting for the current song's
-        # natural EOS. HIGH-priority drops fade the deck and fire
-        # immediately. _pre_sotg_song_id anchors the queue resume
-        # after the SOTG file's own EOS — mirrors the spot resume
-        # pattern (_pre_spot_song_id). _sotg_active_aid is the
-        # assignment id whose file is currently on the deck so the
-        # EOS handler can stamp the FIRED status + advance.
-        self._pending_sotg_assignment: Optional[dict] = None
+        # instead of interrupting. Song EOS path (d) consumes the FIRST
+        # entry and plays it before auto-advancing. After that spot's
+        # EOS, the next pending spot fires (chain). When the list is
+        # empty, the SOTG queue is checked, then the song queue.
+        #
+        # 2026-05-17 — switched from a single Optional[int] slot to a
+        # FIFO list so multiple spots scheduled at the same minute don't
+        # silently overwrite each other (operator: "5 spots at same
+        # time → sab playlist queue mai added ho jaye on top"). Stop-
+        # next / Loop / AUTO-off drain the whole list (saari drop).
+        self._pending_spots: list[int] = []
+        # Spot on the Go dispatch state. ``_pending_sotgs`` is the FIFO
+        # list of LOW-priority drops (and SOTG drops deferred during a
+        # paid spot) waiting to fire. HIGH-priority drops fade the deck
+        # and fire immediately without entering this list.
+        # _pre_sotg_song_id anchors the queue resume after the SOTG
+        # file's own EOS — mirrors the spot resume pattern
+        # (_pre_spot_song_id). _sotg_active_aid is the assignment id
+        # whose file is currently on the deck so the EOS handler can
+        # stamp the FIRED status + advance.
+        self._pending_sotgs: list[dict] = []
         self._pre_sotg_song_id: Optional[int] = None
         self._sotg_active_aid: Optional[int] = None
+        # T-60s preview state — items scheduled to fire within the next
+        # 60 seconds but NOT yet at fire time. Populated by
+        # `_check_upcoming_dispatches` on every 1Hz tick. Rendered in
+        # the Up Coming panel as preview cards so the operator sees
+        # what's about to enter the queue. Items "promote" from these
+        # lists into _pending_* automatically when their scheduled
+        # time arrives (via the existing spot_due signal / SOTG check
+        # tick paths). Operator request 2026-05-17: "SOTG ho ya Spot,
+        # apne scheduled time se 1 min pehle hi queue mai load ho jaye."
+        self._upcoming_preview_spots: list[dict] = []
+        self._upcoming_preview_sotgs: list[dict] = []
+        # Cached today-key so the 1Hz preview check doesn't re-query
+        # the day-of-week computation every tick. Reset when the day
+        # rolls over.
+        self._upcoming_preview_day_key: Optional[str] = None
         # Rapid-fire log_play guard — broadcast_log was getting duplicate
         # rows when an EOS-error loop (file fails to play → EOS fires
         # immediately → auto-advance picks the same song from a single-
-        # slot clock → loops 9× in one second). 5-second same-song guard
-        # prevents the duplicate clutter without affecting legitimate
-        # spaced replays.
-        self._last_song_log_id: Optional[int] = None
-        self._last_song_log_time = None  # datetime, populated on first log
+        # slot clock → loops 9× in one second). 5-second PER-SONG guard:
+        # a dict keyed by song id, because the loop can ALTERNATE between
+        # two songs (35,36,35,36…) which defeated the previous single
+        # last-id guard (live dups observed 2026-07-02, same-second ×6).
+        self._recent_song_logs: dict[int, object] = {}   # id → datetime
         # Active-clock indicator dedupe — Studio owns its own "what's
         # currently displayed" state so the indicator can refresh from
         # multiple paths (scheduler signal when AUTO is on, Studio's
@@ -3886,6 +3951,18 @@ class Studio(QWidget):
             self._engine.position_changed.connect(self._on_engine_position)
             self._engine.playback_ended.connect(self._on_engine_playback_ended)
             self._engine.error_occurred.connect(self._on_engine_error)
+            # Phase 1 (2026-05-17) — BASS-driven sample-accurate sync
+            # callbacks replace the 250ms position-polling fade trigger.
+            # mix_point_reached fires when playback hits the song's
+            # mix_point_ms (registered in _on_queue_song_play after load).
+            # fade_completed fires when a BASS_ChannelSlideAttribute
+            # ramp finishes — used by the outgoing-channel cleanup chain.
+            if hasattr(self._engine, "mix_point_reached"):
+                self._engine.mix_point_reached.connect(
+                    self._on_engine_mix_point_reached)
+            if hasattr(self._engine, "fade_completed"):
+                self._engine.fade_completed.connect(
+                    self._on_engine_fade_completed)
 
         # Scheduler signal connections (PRESERVED)
         if self._scheduler is not None:
@@ -3906,6 +3983,15 @@ class Studio(QWidget):
                 self._load_upcoming_queue)
             self._scheduler.started.connect(self._load_upcoming_queue)
             self._scheduler.stopped.connect(self._load_upcoming_queue)
+            # Phase 2 (2026-05-17) — canonical queue-changed signal.
+            # Scheduler emits whenever the dispatch queue has materially
+            # changed (cursor advance, schedule reload, clock change).
+            # Single subscription replaces the scattered manual
+            # _load_upcoming_queue() calls. The defensive 1Hz tick
+            # backstop in _on_tick remains as belt-and-suspenders.
+            if hasattr(self._scheduler, "queue_changed"):
+                self._scheduler.queue_changed.connect(
+                    self._on_scheduler_queue_changed)
             # Hour-boundary active-clock indicator. Signal fires only on
             # transitions; clock_id == -1 + name == "" means "no clock
             # assigned to this hour" — header falls back to the
@@ -4029,6 +4115,7 @@ class Studio(QWidget):
         self._upcoming.move(16, BODY_Y)
         self._upcoming.song_double_clicked.connect(self._on_queue_song_play)
         self._upcoming.row_selected.connect(self._on_queue_row_selected)
+        self._upcoming.fade_next_toggled.connect(self._on_fade_next_toggled)
         # Cached queue selection — set by single-click on an Up Coming
         # card, used by INSERT / REPLACE / DELETE to act positionally
         # against _queue_songs. None = no row selected, fall back to
@@ -4093,15 +4180,28 @@ class Studio(QWidget):
 
         self._history_panel = _HistoryPanel(self)
         self._history_panel.move(1584, BODY_Y)
+        # "View Full History →" → Final Log Creator (the broadcast history
+        # viewer). Uses the same breadcrumb_clicked navigation channel
+        # Studio already uses for cross-screen routing.
+        self._history_panel.view_full_clicked.connect(
+            self._on_view_full_history)
 
         self._next_break = _NextBreakPanel(self)
         self._next_break.move(1148, BODY_Y + 556)
+        self._next_break.skip_clicked.connect(self._on_break_skip)
+        self._next_break.preview_clicked.connect(self._on_break_preview)
 
         self._rds = _RDSPanel(self)
         self._rds.move(1584, BODY_Y + 556)
 
         self._problems = _ProblemsPanel(self)
         self._problems.move(1584, BODY_Y + 712)
+        # There is no aggregated live warnings source to subscribe to
+        # (missing-file handling is per-dispatch via _handle_missing_file,
+        # not a persistent list). Populate with the empty list so the
+        # panel renders its real "All systems nominal" default instead of
+        # the placeholder "Spot break collision at 22:15" dummy row.
+        self._problems.set_problems([])
 
     def _apply_panel_shadows(self) -> None:
         """Attach a tinted drop shadow per major panel. The color is a
@@ -4151,6 +4251,17 @@ class Studio(QWidget):
         self._bottom.up_clicked.connect(self._on_up_clicked)
         self._bottom.down_clicked.connect(self._on_down_clicked)
         self._bottom.stop_all_clicked.connect(self._on_stop_all_clicked)
+        # Bottom-transport AutoPlay toggle + right-cluster "Auto" button
+        # both drive the SAME auto-advance state as the header AUTO pill
+        # (single source of truth = _on_auto_pill_clicked). The AutoPlay
+        # toggle's visual is re-synced from the authoritative state in
+        # _update_status_pills so all three controls stay in lockstep.
+        self._bottom.autoplay_toggled.connect(self._on_bottom_autoplay_toggled)
+        self._bottom.auto_clicked.connect(self._on_auto_pill_clicked)
+        # Right-cluster Loop mirrors the master ControlCluster loop state.
+        self._bottom.loop_clicked.connect(self._on_bottom_loop_clicked)
+        # MixFade: no existing behavior to bind — safe no-op (cosmetic).
+        self._bottom.mixfade_clicked.connect(self._on_bottom_mixfade_clicked)
         # Compute total queue duration for "LOADED PLAYLIST" header
         total_ms = sum(int(s.get("duration_ms") or 0)
                        for s in self._queue_songs)
@@ -4249,8 +4360,8 @@ class Studio(QWidget):
         self._cfg_fallback_action = (
             s.get("fallback_action",
                   "Skip and play next available song") or "")
-        self._cfg_crossfade_dur_s  = s.get_int("crossfade_duration", 3)
-        self._cfg_fade_out_start_s = s.get_int("fade_out_start", 6)
+        self._cfg_crossfade_dur_s  = s.get_int("crossfade_duration", 5)
+        self._cfg_fade_out_start_s = s.get_int("fade_out_start", 5)
         self._cfg_fade_curve = (
             s.get("fade_curve_type", "Logarithmic") or "Logarithmic")
         self._cfg_load_next = (
@@ -4360,6 +4471,18 @@ class Studio(QWidget):
             return
         if self._fade_triggered_for_cid == cid:
             return
+        # Operator-gated 2026-05-17 — defer the fade entirely when a
+        # SOTG or Spot is queued. The song must play to its natural EOS
+        # so the spot/SOTG enters clean (no overlap). EOS path (d)
+        # fires the pending dispatch immediately on song end.
+        if self._has_pending_dispatch():
+            log.info(
+                f"[studio] poll-fade DEFERRED cid={cid} pos={position_ms}ms "
+                f"— pending dispatch will fire on EOS "
+                f"(SOTG:{len(self._pending_sotgs)} "
+                f"Spot:{len(self._pending_spots)})")
+            self._fade_triggered_for_cid = cid  # latch — don't re-eval
+            return
         # Threshold: per-song mix_point_ms wins; else fade_out_start
         # seconds before end. 0 + no mix point disables the fade.
         mp_ms = 0
@@ -4409,56 +4532,72 @@ class Studio(QWidget):
         of loading the next song. Otherwise the crossfade-tail branch
         of _on_engine_playback_ended silently absorbs the old song's
         EOS and the pending drop never gets a chance to fire (the
-        2026-05-14 LOW-priority-never-played bug)."""
+        2026-05-14 LOW-priority-never-played bug).
+
+        Operator-gated 2026-05-17: when a SOTG or Spot is pending,
+        this method DEFERS — returns False without side effects so the
+        song plays to its natural EOS, and EOS path (d) drains the
+        pending list cleanly. Music-to-music crossfades (no pending)
+        continue to fall through to the next-song load below.
+
+        Removing the pending-absorb path is the cleanest fix for the
+        "spot overlay on music" complaint — no audio of the music
+        bed under the spot voice, because the music has TRULY ENDED
+        before the spot starts."""
         if self._engine is None:
+            return False
+        # Defer entirely when a non-music dispatch is queued.
+        if self._has_pending_dispatch():
+            log.info(
+                f"[studio] crossfade DEFERRED — pending dispatch "
+                f"(SOTG:{len(self._pending_sotgs)} "
+                f"Spot:{len(self._pending_spots)}) waits for natural EOS")
             return False
         try:
             cur_id = (self._current_track or {}).get("id")
         except Exception:
             cur_id = None
 
-        # Paid spot wins highest — fire it via the standard
-        # spot-dispatch path; mark the outgoing song's channel as
-        # fading so its eventual EOS gets quietly cleaned up.
-        if self._pending_spot_campaign_id is not None:
-            pending = self._pending_spot_campaign_id
-            self._pending_spot_campaign_id = None
-            self._pre_spot_song_id = cur_id
-            self._fading_cid = self._playback_cid
-            self._playback_cid = None
-            self._playback_kind = None
-            self._current_track = None
-            log.info(
-                f"[studio] crossfade absorbed by pending spot "
-                f"{pending}")
-            try:
-                self._do_scheduler_spot_due(pending)
-            except Exception as exc:
-                log.warning(
-                    f"[studio] crossfade→spot fire failed: {exc}")
-            return True
-
-        # SOTG drop deferred from LOW priority during the song that's
-        # now ending — fire it instead of the next song. _play_sotg_file
-        # bypasses _do_sotg_fire's priority router (which would try to
-        # defer again because _playback_kind is still 'deck'). The
-        # outgoing channel gets marked as fading for silent cleanup.
-        if self._pending_sotg_assignment is not None:
-            pending = self._pending_sotg_assignment
-            self._pending_sotg_assignment = None
+        # Priority order (operator-locked 2026-05-17): SOTG > Spot > Song.
+        # Within each list, FIFO.
+        if self._pending_sotgs:
+            pending = self._pending_sotgs.pop(0)
             self._pre_sotg_song_id = cur_id
-            self._fading_cid = self._playback_cid
+            fading_cid = self._playback_cid
+            self._fading_cid = fading_cid
             self._playback_cid = None
             self._playback_kind = None
             self._current_track = None
             log.info(
                 f"[studio] crossfade absorbed by pending SOTG "
-                f"aid={pending.get('assignment_id')}")
+                f"aid={pending.get('assignment_id')} "
+                f"({len(self._pending_sotgs)} more SOTG + "
+                f"{len(self._pending_spots)} spots pending)")
+            self._quick_duck_outgoing_for_dispatch(fading_cid)
             try:
                 self._play_sotg_file(pending)
             except Exception as exc:
                 log.warning(
                     f"[studio] crossfade→SOTG fire failed: {exc}")
+            return True
+
+        if self._pending_spots:
+            pending = int(self._pending_spots.pop(0))
+            self._pre_spot_song_id = cur_id
+            fading_cid = self._playback_cid
+            self._fading_cid = fading_cid
+            self._playback_cid = None
+            self._playback_kind = None
+            self._current_track = None
+            log.info(
+                f"[studio] crossfade absorbed by pending spot "
+                f"{pending} ({len(self._pending_spots)} more spots pending)")
+            self._quick_duck_outgoing_for_dispatch(fading_cid)
+            try:
+                self._do_scheduler_spot_due(pending)
+            except Exception as exc:
+                log.warning(
+                    f"[studio] crossfade→spot fire failed: {exc}")
             return True
 
         try:
@@ -4523,6 +4662,35 @@ class Studio(QWidget):
             f"[studio] crossfade started — old_ch={old_cid} "
             f"new_ch={new_cid} song={nxt.get('title')!r}")
         return True
+
+    def _quick_duck_outgoing_for_dispatch(
+            self, fading_cid: Optional[int]) -> None:
+        """Slam the outgoing channel's volume down to ~1% in 300ms
+        immediately before a pending SOTG or Spot starts on a fresh
+        channel. Operator-requested 2026-05-17: keeps the listener from
+        hearing the music underneath the talk content.
+
+        The outgoing channel keeps playing silently in the background;
+        when it reaches natural EOS the crossfade-tail branch in
+        ``_on_engine_playback_ended`` cleans it up. BASS_ChannelSlideAttribute
+        is sample-accurate and overrides any in-flight slide from
+        ``_on_engine_mix_point_reached`` (Phase 1) — second slide call
+        cancels the first and starts a new ramp from current volume.
+        """
+        if fading_cid is None or self._engine is None:
+            return
+        try:
+            self._engine.fade_volume_to(
+                int(fading_cid),
+                self._MUSIC_DUCK_TARGET_PCT,
+                self._MUSIC_DUCK_QUICK_FADE_MS,
+            )
+            log.info(
+                f"[studio] quick-duck outgoing cid={fading_cid} "
+                f"target={self._MUSIC_DUCK_TARGET_PCT}% "
+                f"ramp={self._MUSIC_DUCK_QUICK_FADE_MS}ms")
+        except Exception as exc:
+            log.debug(f"[studio] quick-duck failed: {exc}")
 
     def _handle_missing_file(self, song: dict,
                               path: Optional[str]) -> None:
@@ -4685,14 +4853,13 @@ class Studio(QWidget):
                    if (item_type == "song" and song.get("id")) else None)
         now_dt = _dt.now()
         skip_log = False
-        if (item_type == "song" and song_id is not None
-                and self._last_song_log_id == song_id
-                and self._last_song_log_time is not None
-                and now_dt - self._last_song_log_time < _td(seconds=5)):
-            skip_log = True
-            log.warning(
-                f"[studio] skipping duplicate log for song {song_id} "
-                f"(< 5s since last log) — likely EOS-loop guard")
+        if item_type == "song" and song_id is not None:
+            last = self._recent_song_logs.get(song_id)
+            if last is not None and now_dt - last < _td(seconds=5):
+                skip_log = True
+                log.warning(
+                    f"[studio] skipping duplicate log for song {song_id} "
+                    f"(< 5s since last log) — likely EOS-loop guard")
         if not skip_log:
             try:
                 self._db.log_play(
@@ -4705,19 +4872,84 @@ class Studio(QWidget):
                     slot_idx=int(slot_idx) if slot_idx is not None else None,
                 )
                 if item_type == "song" and song_id is not None:
-                    self._last_song_log_id = song_id
-                    self._last_song_log_time = now_dt
+                    self._recent_song_logs[song_id] = now_dt
+                    # prune stale entries so the dict never grows past
+                    # the handful of songs seen in the last minute
+                    if len(self._recent_song_logs) > 32:
+                        cutoff = now_dt - _td(seconds=60)
+                        self._recent_song_logs = {
+                            k: v for k, v in self._recent_song_logs.items()
+                            if v >= cutoff}
             except Exception as exc:
                 log.warning(f"[studio] {item_type} log_play failed: {exc}")
         # Refresh the History panel so the just-started track appears
         # at the top immediately, not on the next spot-EOS event.
         self._refresh_history()
 
+        # Phase 1 (2026-05-17) — register a BASS_SYNC_POS at the song's
+        # mix point so the audio engine notifies us SAMPLE-ACCURATELY
+        # when the trigger position is reached. Replaces the prior
+        # 250ms position-polling fade trigger that could miss by up to
+        # one poll-tick. Falls back to fade_out_start (in seconds)
+        # before EOS when the song has no per-song mix_point.
+        try:
+            self._register_mix_point_sync(cid, song)
+        except Exception as exc:
+            log.debug(f"[studio] mix-point sync registration failed: {exc}")
+
         log.info(
             f"[studio] deck play ch={cid} {item_type} id={song.get('id')} "
             f"{song.get('title')!r} dur_ms={self._current_duration_ms}"
             + (f" — scheduler clock_id={clock_id}"
                if clock_id else " — manual"))
+
+    def _register_mix_point_sync(self, cid: int, song: dict) -> None:
+        """Compute the per-song mix-point position and register a
+        BASS_SYNC_POS callback. Priority:
+          1. song.mix_point_ms (per-song, set via Audio Cue Editor)
+          2. duration - fade_out_start * 1000 (global fallback)
+        If neither yields a positive position, no sync is registered
+        and the song plays to natural EOS without a transition fade
+        (matches current "no mix_point + fade_out_start=0" behaviour).
+
+        Only registers when the song item type is "song" — spots,
+        sweepers, and SOTG drops fire-and-forget without a programmed
+        transition (operator controls those via the spot's own cue
+        metadata).
+        """
+        if self._engine is None or not hasattr(
+                self._engine, "set_position_sync"):
+            return  # legacy engine without sync support
+        item_type = (song.get("_item_type") or "song").strip().lower()
+        if item_type != "song":
+            return
+        # Per-song mix point wins
+        mp_ms = 0
+        try:
+            mp_ms = int(song.get("mix_point_ms") or 0)
+        except (TypeError, ValueError):
+            mp_ms = 0
+        if mp_ms <= 0 or mp_ms >= self._current_duration_ms:
+            # Fallback — N seconds before file end. 0 = no fade trigger.
+            fade_start_s = max(0, int(self._cfg_fade_out_start_s))
+            if fade_start_s <= 0:
+                return
+            mp_ms = max(0, self._current_duration_ms - fade_start_s * 1000)
+            if mp_ms <= 0:
+                return
+        sync_handle = self._engine.set_position_sync(cid, mp_ms)
+        if sync_handle:
+            # Cache the trigger position for diagnostics + the existing
+            # poll-based _maybe_trigger_fade_out (kept as defensive
+            # backstop in case the sync callback misses — never observed
+            # but cheap insurance).
+            self._mix_point_trigger_ms = mp_ms
+            source = ("song" if int(song.get("mix_point_ms") or 0) > 0
+                      else "fade_out_start")
+            log.info(
+                f"[studio] mix-point sync armed cid={cid} "
+                f"trigger_ms={mp_ms} sync_handle={sync_handle} "
+                f"source={source}")
 
     # ────────────────────────────────────────────────────────────────────
     # PRESERVED: engine signal handlers (verbatim)
@@ -4778,18 +5010,27 @@ class Studio(QWidget):
             anchor_id = self._pre_spot_song_id
             self._pre_spot_song_id = None
             self._refresh_history()
-            # If a SOTG drop was deferred while the paid spot was on
-            # air, fire it now before resuming the queue. Per
-            # priority ladder: paid spot > SOTG > song.
-            if self._pending_sotg_assignment is not None:
-                pending = self._pending_sotg_assignment
-                self._pending_sotg_assignment = None
+            # Priority ladder after a spot ends (operator-locked
+            # 2026-05-17): SOTG > Spot > song queue.
+            if self._pending_sotgs:
+                pending = self._pending_sotgs.pop(0)
                 log.info(
-                    f"[studio] spot EOS → firing deferred SOTG "
-                    f"aid={pending.get('assignment_id')}")
-                # _pre_sotg_song_id anchors the post-SOTG resume.
+                    f"[studio] spot EOS → firing pending SOTG "
+                    f"aid={pending.get('assignment_id')} "
+                    f"({len(self._pending_sotgs)} SOTGs + "
+                    f"{len(self._pending_spots)} spots remaining)")
                 self._pre_sotg_song_id = anchor_id
                 self._do_sotg_fire(pending)
+                return
+            if self._pending_spots:
+                pending = int(self._pending_spots.pop(0))
+                # Preserve anchor so the next spot's EOS still knows
+                # where to resume.
+                self._pre_spot_song_id = anchor_id
+                log.info(
+                    f"[studio] spot EOS → chain next pending spot "
+                    f"{pending} ({len(self._pending_spots)} more spots)")
+                self._do_scheduler_spot_due(pending)
                 return
             next_song = self._compute_next_song(after_id=anchor_id)
             if next_song is not None:
@@ -4803,15 +5044,31 @@ class Studio(QWidget):
             self._update_status_pills()
             return
 
-        # (a-prime) SOTG resume — Spot on the Go file ended. Resume
-        # the song queue from _pre_sotg_song_id (the song that was on
-        # air when the SOTG fired, or anchor passed through from a
-        # spot-then-SOTG chain).
+        # (a-prime) SOTG resume — Spot on the Go file ended. Same
+        # chain priority: SOTG > Spot > Song queue (operator-locked).
         if kind == "sotg":
             anchor_id = self._pre_sotg_song_id
             self._pre_sotg_song_id = None
             self._sotg_active_aid = None
             self._refresh_history()
+            if self._pending_sotgs:
+                pending = self._pending_sotgs.pop(0)
+                self._pre_sotg_song_id = anchor_id
+                log.info(
+                    f"[studio] sotg EOS → chain next pending SOTG "
+                    f"aid={pending.get('assignment_id')} "
+                    f"({len(self._pending_sotgs)} SOTGs + "
+                    f"{len(self._pending_spots)} spots remaining)")
+                self._do_sotg_fire(pending)
+                return
+            if self._pending_spots:
+                pending = int(self._pending_spots.pop(0))
+                self._pre_spot_song_id = anchor_id
+                log.info(
+                    f"[studio] sotg EOS → firing pending spot "
+                    f"{pending} ({len(self._pending_spots)} more spots)")
+                self._do_scheduler_spot_due(pending)
+                return
             next_song = self._compute_next_song(after_id=anchor_id)
             if next_song is not None:
                 log.info(
@@ -4829,13 +5086,12 @@ class Studio(QWidget):
         if kind == "deck" and self._stop_after_current:
             self._stop_after_current = False
             self._current_track = None
-            # Drop any deferred spot — operator pressed stop-next, they
-            # want silence after this song ends, not an auto-fired ad.
-            if self._pending_spot_campaign_id is not None:
-                log.info(
-                    f"[studio] stop-next dropped pending spot "
-                    f"{self._pending_spot_campaign_id}")
-                self._pending_spot_campaign_id = None
+            # Drop ALL pending spots + SOTG drops — operator pressed
+            # stop-next, they want silence after this song ends, not
+            # auto-fired ads. Operator directive 2026-05-17: "if
+            # operator manually applies loop or stop next, drop all
+            # spots."
+            self._drain_pending_dispatches(reason="stop-next")
             log.info("[studio] stop-next consumed → idle")
             self._apply_idle_state()
             self._update_status_pills()
@@ -4844,14 +5100,11 @@ class Studio(QWidget):
         # (c) loop replays
         if (kind == "deck" and self._loop_enabled and pre_track is not None):
             log.info(f"[studio] loop replay → {pre_track.get('title')!r}")
-            # Drop pending spot — loop is an "intentionally repeat this
-            # song" instruction; pinning a spot inside a loop would be
-            # a surprise interrupt the operator didn't ask for.
-            if self._pending_spot_campaign_id is not None:
-                log.info(
-                    f"[studio] loop dropped pending spot "
-                    f"{self._pending_spot_campaign_id}")
-                self._pending_spot_campaign_id = None
+            # Drop ALL pending dispatches — loop is an "intentionally
+            # repeat this song" instruction; queued spots/SOTG would
+            # interrupt the operator's chosen replay. (Same operator
+            # directive as stop-next above.)
+            self._drain_pending_dispatches(reason="loop")
             self._on_queue_song_play(pre_track)
             return
 
@@ -4861,33 +5114,27 @@ class Studio(QWidget):
         # AUTO header pill flips this off → Live-Assist mode where
         # operator must click Play after each track ends.
         if kind == "deck" and self._auto_advance_enabled:
-            # Deferred spot fires here BEFORE auto-advancing to next
-            # song. _pre_spot_song_id is set from the just-ended track
-            # so the spot's own EOS path (a) resumes from the right
-            # anchor in the queue. _do_scheduler_spot_due sees
-            # _playback_cid is None (we just cleaned up above) so it
-            # takes the "play immediately" path, not the defer path.
-            if self._pending_spot_campaign_id is not None:
-                pending = self._pending_spot_campaign_id
-                self._pending_spot_campaign_id = None
-                if pre_track is not None:
-                    self._pre_spot_song_id = pre_track.get("id")
-                log.info(
-                    f"[studio] song EOS → playing deferred spot {pending}")
-                self._do_scheduler_spot_due(pending)
-                return
-            # Deferred LOW-priority SOTG fires here, after paid spot
-            # (which always wins). _pre_sotg_song_id anchors the
-            # post-SOTG queue resume.
-            if self._pending_sotg_assignment is not None:
-                pending = self._pending_sotg_assignment
-                self._pending_sotg_assignment = None
+            # Drain the pending FIFOs in priority order (operator-
+            # locked 2026-05-17): SOTG > Spot > Song.
+            if self._pending_sotgs:
+                pending = self._pending_sotgs.pop(0)
                 if pre_track is not None:
                     self._pre_sotg_song_id = pre_track.get("id")
                 log.info(
-                    f"[studio] song EOS → firing deferred SOTG "
-                    f"aid={pending.get('assignment_id')}")
+                    f"[studio] song EOS → firing pending SOTG "
+                    f"aid={pending.get('assignment_id')} "
+                    f"({len(self._pending_sotgs)} SOTGs + "
+                    f"{len(self._pending_spots)} spots remaining)")
                 self._do_sotg_fire(pending)
+                return
+            if self._pending_spots:
+                pending = int(self._pending_spots.pop(0))
+                if pre_track is not None:
+                    self._pre_spot_song_id = pre_track.get("id")
+                log.info(
+                    f"[studio] song EOS → playing pending spot {pending} "
+                    f"({len(self._pending_spots)} more spots remaining)")
+                self._do_scheduler_spot_due(pending)
                 return
             cur_id = (pre_track or {}).get("id")
             next_song = self._compute_next_song(after_id=cur_id)
@@ -5033,6 +5280,137 @@ class Studio(QWidget):
             return
         log.warning(f"[studio] engine error: {message}")
         self._on_engine_playback_ended(channel_id)
+
+    # ────────────────────────────────────────────────────────────────────
+    # Phase 1 — sample-accurate BASS sync handlers (2026-05-17)
+    # ────────────────────────────────────────────────────────────────────
+
+    def _has_pending_dispatch(self) -> bool:
+        """True if a SOTG or paid Spot is queued to fire after the
+        current song. When True, music-to-music crossfade triggers
+        (mix_point sync / poll fallback) MUST defer — let the song play
+        to its natural EOS so the spot/SOTG enters clean on EOS path (d).
+
+        Operator request 2026-05-17: "let the song get complete and as
+        soon as song gets complete then SOTG and Spot play, without
+        letting the other song [in queue overlap]". Industry pattern
+        for music-to-non-music: no overlap. Music-to-music transitions
+        (no pending) still use the long crossfade overlap.
+
+        ════════════════════════════════════════════════════════════════
+        CRITICAL INVARIANT — this gate must be checked at every fade
+        trigger (2026-05-17 lock)
+        ════════════════════════════════════════════════════════════════
+        Callsites that MUST keep the gate (do NOT remove or simplify):
+          • _on_engine_mix_point_reached  (Phase 1 BASS_SYNC_POS handler)
+          • _maybe_trigger_fade_out        (250ms polling backstop)
+          • _dispatch_crossfade_overlap    (defensive top-of-method)
+        If any of these stop checking _has_pending_dispatch(), music
+        starts fading early while SOTG/Spot is pending -> overlap
+        returns -> operator's "spot overlay on music" complaint
+        returns. See HANDOVER_2026_05_17.md "Incident #25 — Music-to-
+        spot fade architecture mismatch" for the long iteration path
+        that landed on this defer pattern.
+        ════════════════════════════════════════════════════════════════
+        """
+        return bool(self._pending_sotgs or self._pending_spots)
+
+    def _on_engine_mix_point_reached(self, channel_id: int) -> None:
+        """Fired by the AudioEngine the EXACT sample the playback head
+        crosses the song's registered mix point. Triggers fade + dispatch
+        IF nothing is pending — when a SOTG or Spot is queued, this
+        handler DEFERS to natural song EOS so the spot enters clean.
+
+        Wrapped in try/except so a single handler exception cannot
+        freeze the broadcast loop (mAirList Build-703 lesson)."""
+        try:
+            if channel_id != self._playback_cid:
+                return
+            if self._playback_kind != "deck":
+                return
+            if self._fade_triggered_for_cid == channel_id:
+                return  # already fired (defensive — sync is one-shot)
+            # Operator-gated 2026-05-17 — when SOTG/Spot is pending,
+            # do NOT fade the song early. Let it play to natural EOS.
+            # The EOS path (d) drains pending in priority order.
+            if self._has_pending_dispatch():
+                log.info(
+                    f"[studio] mix-point sync FIRED but DEFERRED "
+                    f"cid={channel_id} — pending dispatch (SOTG:"
+                    f"{len(self._pending_sotgs)} Spot:"
+                    f"{len(self._pending_spots)}) will fire on EOS")
+                # Mark as triggered so the polling backstop also skips —
+                # song must play to full duration uninterrupted.
+                self._fade_triggered_for_cid = channel_id
+                return
+            crossfade_ms = max(
+                100, int(self._cfg_crossfade_dur_s) * 1000)
+            try:
+                self._engine.fade_volume_to(channel_id, 0, crossfade_ms)
+            except Exception as exc:
+                log.warning(
+                    f"[studio] mix-point fade call failed: {exc}")
+                return
+            self._fade_triggered_for_cid = channel_id
+            log.info(
+                f"[studio] mix-point sync FIRED cid={channel_id} "
+                f"ramp={crossfade_ms}ms curve={self._cfg_fade_curve!r}")
+            # Crossfade dispatch for music-to-music transition. Pending
+            # SOTG/spot branch is now unreachable from here (gated above),
+            # so only the song-to-song fall-through can run.
+            try:
+                self._dispatch_crossfade_overlap()
+            except Exception as exc:
+                log.warning(
+                    f"[studio] mix-point crossfade dispatch failed: {exc}")
+        except Exception as exc:
+            log.warning(
+                f"[studio] mix-point handler crashed: "
+                f"{type(exc).__name__}: {exc}")
+
+    def _on_engine_fade_completed(self, channel_id: int) -> None:
+        """Fired when a BASS_ChannelSlideAttribute completes on this
+        channel. Currently used only for diagnostics — the existing
+        crossfade-tail EOS branch already cleans up the outgoing channel
+        when it reaches natural file end. Hook reserved for future
+        use (e.g., proactive cleanup when fade-to-zero finishes far
+        before the file's actual EOS)."""
+        try:
+            log.info(
+                f"[studio] fade-completed sync cid={channel_id} "
+                f"(fading_cid={self._fading_cid}, "
+                f"playback_cid={self._playback_cid})")
+        except Exception as exc:
+            log.warning(
+                f"[studio] fade-completed handler crashed: {exc}")
+
+    # ────────────────────────────────────────────────────────────────────
+    # Phase 2 — queue_changed signal handler (2026-05-17)
+    # ────────────────────────────────────────────────────────────────────
+
+    def _on_scheduler_queue_changed(self) -> None:
+        """Single canonical refresh path. Triggered by the scheduler on
+        every materially-significant queue mutation (cursor advance,
+        schedule reload, clock change). Re-runs the upcoming-dispatch
+        check + rebuilds the Up Coming panel.
+
+        Wrapped in try/except so one bad slot in the rebuild can't
+        kill the whole signal chain — operator-visible symptom of that
+        bug is "frozen NEXT chip" (mAirList Build-703 lesson).
+        """
+        try:
+            from datetime import datetime
+            self._check_upcoming_dispatches(now=datetime.now())
+        except Exception as exc:
+            log.warning(
+                f"[studio] queue_changed → upcoming check failed: "
+                f"{type(exc).__name__}: {exc}")
+        try:
+            self._load_upcoming_queue()
+        except Exception as exc:
+            log.warning(
+                f"[studio] queue_changed → queue rebuild failed: "
+                f"{type(exc).__name__}: {exc}")
 
     # ────────────────────────────────────────────────────────────────────
     # Level meter polling — feeds the L/R bars at 30Hz from the deck channel
@@ -5258,23 +5636,26 @@ class Studio(QWidget):
         if self._engine is None:
             log.warning(f"[studio] spot_due {campaign_id} — no engine")
             return
-        # Deferred dispatch — when a song is currently playing on the
-        # deck, do NOT interrupt. Cache the campaign id; song EOS path
-        # (d) will consume it and play the spot before auto-advancing.
-        # Operator's listener never hears a mid-song hard-cut.
-        if (self._playback_kind == "deck"
-                and self._playback_cid is not None
+        # Deferred dispatch — when a song or another spot/SOTG is
+        # currently playing on the deck, do NOT interrupt. Append the
+        # campaign id to the FIFO list; the EOS path drains the list
+        # in order. Operator's listener never hears a mid-song hard-cut,
+        # and multiple spots scheduled at the same minute all play
+        # back-to-back instead of the old "only the most-recent" loss.
+        if (self._playback_cid is not None
+                and self._playback_kind in ("deck", "spot", "sotg")
                 and self._current_track is not None):
-            if (self._pending_spot_campaign_id is not None
-                    and self._pending_spot_campaign_id != int(campaign_id)):
-                log.warning(
-                    f"[studio] overwriting pending spot "
-                    f"{self._pending_spot_campaign_id} with {campaign_id} "
-                    f"(only the most-recent is queued)")
-            self._pending_spot_campaign_id = int(campaign_id)
+            self._pending_spots.append(int(campaign_id))
+            # Also refresh the Up Coming panel — the new spot needs
+            # to appear at the top of the visible queue immediately.
+            try:
+                self._load_upcoming_queue()
+            except Exception as exc:
+                log.debug(f"[studio] upcoming refresh after spot enqueue: {exc}")
             log.info(
-                f"[studio] spot {campaign_id} deferred — "
-                f"current song will play out, then spot fires")
+                f"[studio] spot {campaign_id} queued at position "
+                f"{len(self._pending_spots)} — current "
+                f"{self._playback_kind!r} will play out, then spots fire")
             return
         try:
             spot_files = self._db.get_spot_files(campaign_id)
@@ -5374,6 +5755,17 @@ class Studio(QWidget):
     _SOTG_MISS_THRESHOLD_S     = 60     # mark MISSED past this
     _SOTG_HIGH_FADE_MS         = 10000  # 10s fade-out for HIGH priority
 
+    # Music-duck on spot/SOTG dispatch (2026-05-17 operator request):
+    # "jab bhi song ke baad SOTG ya Spot aaye to song instantly fade
+    # out ho jaye, and volume just 1% par aa jaye — overlap phir
+    # sunai nahi dega." Quick-duck the outgoing channel to 1% in
+    # 300ms BEFORE the spot/SOTG starts on the fresh channel. The
+    # outgoing channel continues silently in the background until
+    # its natural EOS triggers crossfade-tail cleanup. No more
+    # "spot voice over music bed" symptom.
+    _MUSIC_DUCK_QUICK_FADE_MS = 300
+    _MUSIC_DUCK_TARGET_PCT    = 1
+
     def _sotg_check_tick(self) -> None:
         """Per-tick SOTG dispatcher. Pulls today's READY assignments,
         fires any inside the ±tolerance window, stamps MISSED on
@@ -5387,8 +5779,13 @@ class Studio(QWidget):
             from datetime import date as _ddate, datetime as _dt
             today = _ddate.today().isoformat()
             try:
-                rows = list(self._db.get_sotg_assignments_for_date(
-                    today, status="READY"))
+                # CONFLICT (paid break shares the minute) is advisory —
+                # those drops still fire at sharp time (SOTG > Spot).
+                # Single fetch, filter in Python (one row = one status).
+                rows = [
+                    r for r in self._db.get_sotg_assignments_for_date(today)
+                    if (r.get("status") or "") in ("READY", "CONFLICT")
+                ]
             except Exception as exc:
                 log.debug(f"[studio] sotg check fetch: {exc}")
                 return
@@ -5470,29 +5867,39 @@ class Studio(QWidget):
                 pass
             return
 
-        # Paid spot in progress (or pending) — always wins. Cache the
-        # SOTG and let the spot-resume path fire it after the spot
-        # ends. This also covers the LOW-priority defer case once a
-        # song-end has cycled through.
+        # Paid spot in progress (or pending) — always wins. Append the
+        # SOTG to the FIFO; the spot-resume EOS path fires it after
+        # the paid spot ends. Multiple SOTG drops deferred during a
+        # spot chain queue correctly instead of overwriting.
         if self._playback_kind == "spot":
-            self._pending_sotg_assignment = dict(assignment)
+            self._pending_sotgs.append(dict(assignment))
+            try:
+                self._load_upcoming_queue()
+            except Exception as exc:
+                log.debug(f"[studio] upcoming refresh after sotg enqueue: {exc}")
             log.info(
                 f"[studio] sotg deferred (paid spot on air) "
-                f"aid={assignment.get('assignment_id')}")
+                f"aid={assignment.get('assignment_id')} "
+                f"queue_pos={len(self._pending_sotgs)}")
             return
 
         priority = (assignment.get("priority") or "").strip().title()
 
-        # Song on air + LOW → defer to natural EOS.
+        # Song on air + LOW → defer to natural EOS, FIFO append.
         if (priority == "Low"
                 and self._playback_kind == "deck"
                 and self._playback_cid is not None
                 and self._current_track is not None):
-            self._pending_sotg_assignment = dict(assignment)
+            self._pending_sotgs.append(dict(assignment))
+            try:
+                self._load_upcoming_queue()
+            except Exception as exc:
+                log.debug(f"[studio] upcoming refresh after sotg enqueue: {exc}")
             log.info(
                 f"[studio] sotg LOW deferred — current song will "
                 f"play out, then aid="
-                f"{assignment.get('assignment_id')} fires")
+                f"{assignment.get('assignment_id')} fires "
+                f"(queue_pos={len(self._pending_sotgs)})")
             return
 
         # Song on air + HIGH → fade song to 0 over 10s, load SOTG on
@@ -5730,7 +6137,7 @@ class Studio(QWidget):
                 f"SELECT id, title, artist, file_path, hook_in_ms, "
                 f"hook_out_ms FROM songs WHERE id IN ({qmarks})", ids
             ).fetchall()
-            by_id = {int(r["id"]): dict(r) for r in rows}
+            by_id = {int(r["id"]): {k: r[k] for k in r.keys()} for r in rows}
             for sid in ids:
                 if sid in by_id:
                     out.append(by_id[sid])
@@ -5852,6 +6259,19 @@ class Studio(QWidget):
                 self._rds.set_on_air("—", "")
 
     def _apply_playing_state(self, song: dict) -> None:
+        # Phase 2 — emit scheduler.song_auto_advance so subscribers
+        # (Up Coming panel, NEXT chip via _load_upcoming_queue) re-render
+        # at the actual play moment. The signal was declared but never
+        # wired in the scheduler itself; Studio is the natural emitter
+        # because it owns the actual transition. Defensive: scheduler
+        # may be None or signal may not exist on older mocks.
+        if self._scheduler is not None:
+            try:
+                if hasattr(self._scheduler, "song_auto_advance"):
+                    self._scheduler.song_auto_advance.emit()
+            except Exception as exc:
+                log.debug(
+                    f"[studio] song_auto_advance emit failed: {exc}")
         if hasattr(self, "_now_player"):
             artist = str(song.get("artist") or "")
             year = song.get("year")
@@ -6000,14 +6420,11 @@ class Studio(QWidget):
                 # operator by re-arming on the next screen entry. Reset
                 # only by an explicit AUTO-on click (or app restart).
                 self._operator_stopped_auto = True
-                # Drop any pending spot — operator clicked AUTO off,
-                # they're taking control. A scheduled-but-deferred spot
-                # firing during Live-Assist would surprise the operator.
-                if self._pending_spot_campaign_id is not None:
-                    log.info(
-                        f"[studio] AUTO off — dropped pending spot "
-                        f"{self._pending_spot_campaign_id}")
-                    self._pending_spot_campaign_id = None
+                # Drop ALL pending spots + SOTGs — operator clicked
+                # AUTO off, they're taking control. Scheduled-but-
+                # deferred dispatches firing during Live-Assist would
+                # surprise the operator.
+                self._drain_pending_dispatches(reason="AUTO off")
                 log.info("[studio] AUTO pill → scheduler.stop() + Live-Assist")
             else:
                 self._scheduler.start()
@@ -6063,6 +6480,15 @@ class Studio(QWidget):
         self._loop_enabled = on
         log.info(f"[studio] loop = {on}")
 
+    def _on_fade_next_toggled(self, on: bool) -> None:
+        """Capture the Up Coming 'FADE NEXT' operator preference. Stored
+        only — the dispatch/fade core is untouched, so this is a safe
+        UI-state wiring (the control was previously dead). Consuming this
+        flag in an actual fade decision is a deliberate follow-up that
+        must go through the locked crossfade path."""
+        self._fade_next_enabled = on
+        log.info(f"[studio] fade-next = {on}")
+
     # Bottom-transport-specific handlers (Step 8)
 
     def _on_bottom_seek(self, frac: float) -> None:
@@ -6081,6 +6507,34 @@ class Studio(QWidget):
 
     def _on_down_clicked(self) -> None:
         pass
+
+    def _on_bottom_autoplay_toggled(self, on: bool) -> None:
+        """Bottom-Transport AutoPlay toggle. Routes into the SAME
+        auto-advance handler the header AUTO pill uses so there is a
+        single source of truth. The toggle widget flips its own visual
+        locally on click; _on_auto_pill_clicked then flips the real
+        state, and _update_status_pills re-syncs the toggle visual to
+        match — guaranteeing the two never drift. The ``on`` argument is
+        ignored on purpose (the pill handler owns the toggle semantics)."""
+        self._on_auto_pill_clicked()
+
+    def _on_bottom_loop_clicked(self) -> None:
+        """Bottom-Transport right-cluster Loop button. Toggles the same
+        loop state as the master ControlCluster Loop button via the
+        existing _on_loop_toggled handler, and mirrors the master
+        button's visual so both reflect one state."""
+        new_state = not self._loop_enabled
+        self._on_loop_toggled(new_state)
+        if hasattr(self, "_control_cluster") and self._control_cluster:
+            self._control_cluster.set_loop(new_state)
+
+    def _on_bottom_mixfade_clicked(self) -> None:
+        """Bottom-Transport MixFade button. No existing behavior to bind
+        to — the crossfade/mix path is driven by Studio Settings + per-
+        song mix points, not a live button. Kept as a logged no-op so the
+        control is no longer a silently-dead signal. Needs a product
+        decision before it drives any real audio behavior."""
+        log.info("[studio] MixFade button — no bound behavior (cosmetic)")
 
     def _on_stop_all_clicked(self) -> None:
         if self._engine is not None:
@@ -6112,6 +6566,10 @@ class Studio(QWidget):
                      and self._scheduler.is_running())
         self._header.set_on_air(on_air)
         self._header.set_auto_mode(auto_mode)
+        # Keep the Bottom-Transport AutoPlay toggle in lockstep with the
+        # authoritative auto-advance state (header AUTO pill = same state).
+        if hasattr(self, "_bottom") and self._bottom is not None:
+            self._bottom.set_autoplay_on(auto_mode)
         # Phase C: SIGNAL pill reflects whether AudioEngine has any
         # playing channel. Polled at 1Hz from _on_tick (no separate
         # timer). True = at least one channel in 'playing' state.
@@ -6238,6 +6696,28 @@ class Studio(QWidget):
 
     def _on_settings(self) -> None:
         dialogs.info(self, "Settings", "Settings — coming soon.")
+
+    def _on_view_full_history(self) -> None:
+        # History panel "View Full History →" → Final Log Creator, the
+        # broadcast history viewer. Emitted on the same breadcrumb_clicked
+        # channel Studio already uses for cross-screen navigation; the
+        # MainWindow router owns the "final_log_creator" destination.
+        self.breadcrumb_clicked.emit("final_log_creator")
+
+    def _on_break_skip(self) -> None:
+        """Next Break "Skip Break" button. No existing skip-break handler
+        exists on Studio/scheduler to bind to, so this is a minimal safe
+        stub (logged, no dispatch mutation). NEEDS behavior: should tell
+        the scheduler/break planner to drop the upcoming break — must be
+        designed against the pending-dispatch FIFO, not bolted on here."""
+        log.info("[studio] Skip Break — no bound behavior yet (needs-behavior)")
+
+    def _on_break_preview(self) -> None:
+        """Next Break "Preview" button. No existing break-preview handler
+        to bind to; minimal safe stub (logged, no audio side effects).
+        NEEDS behavior: should audition the break contents on a preview
+        channel — deliberate follow-up."""
+        log.info("[studio] Break Preview — no bound behavior yet (needs-behavior)")
 
     # ────────────────────────────────────────────────────────────────────
     # Phase A — InstantJingleEngine wiring
@@ -6437,47 +6917,329 @@ class Studio(QWidget):
     # ────────────────────────────────────────────────────────────────────
 
     def _load_upcoming_queue(self) -> None:
-        """Pull the next 5 items from ``scheduler.peek_next(5)``,
-        translate to the card-friendly dict shape, and re-render.
+        """Build the Up Coming preview in priority order (operator-
+        locked 2026-05-17):
 
-        peek_next is non-destructive (Commit 1 of Phase B) — calling
-        it on every refresh leaves the dispatch cursor untouched.
-        Errors are non-fatal: on any exception the preview is cleared
-        and the legacy `_queue_songs` fallback path renders instead."""
-        if self._scheduler is None:
-            self._upcoming_preview = []
-            self._refresh_upcoming_panel()
-            return
-        try:
-            items = self._scheduler.peek_next(5)
-        except Exception as exc:
-            log.warning(f"[studio] peek_next failed: {exc}")
-            self._upcoming_preview = []
-            self._refresh_upcoming_panel()
-            return
-        # peek_next returns dicts shaped like pick_next_item:
-        #   {item_type, item_id, file_path, title, artist, duration_ms,
-        #    clock_id, slot_idx}
-        # _UpComingCard expects:
-        #   {_item_type, id, title, artist, file_path, duration_ms,
-        #    intro_point_ms (optional)}
+          1. pending SOTGs (already due, queued to fire on EOS) — FIFO
+          2. pending spots (same)
+          3. upcoming-preview SOTGs (within T-60s window, not yet due)
+          4. upcoming-preview spots (same)
+          5. scheduler.peek_next songs / sweepers / jingles
+
+        SOTG > Spot within each tier. Items "promote" from preview
+        (3-4) into pending (1-2) automatically when their scheduled
+        time arrives and the existing spot_due signal / SOTG check
+        tick fires. peek_next is non-destructive — calling on every
+        refresh leaves the dispatch cursor untouched.
+
+        Each section is wrapped in try/except so a partial failure
+        (e.g. a bad campaign row) doesn't prevent the remaining
+        sections from rendering — songs MUST appear during spot/SOTG
+        playback even when pending lookups fail."""
         translated: list[dict] = []
-        for it in items[:5]:
-            translated.append({
-                "_item_type":  it.get("item_type") or "song",
-                "id":          it.get("item_id"),
-                "title":       it.get("title") or "—",
-                "artist":      it.get("artist") or "",
-                "file_path":   it.get("file_path"),
-                "duration_ms": int(it.get("duration_ms") or 0),
-                # intro_point_ms is not part of the peek_next shape —
-                # the picker doesn't surface it. Leaving absent means
-                # the card skips the INTRO badge, which is correct
-                # default behaviour for non-song item types and for
-                # songs whose intro hasn't been cued yet.
-            })
+        already_queued_spot_ids: set = set()
+        already_queued_sotg_aids: set = set()
+
+        # 1. Pending SOTGs first (operator priority: SOTG > Spot).
+        for assignment in list(self._pending_sotgs):
+            try:
+                translated.append(
+                    self._pending_sotg_to_card(dict(assignment)))
+                already_queued_sotg_aids.add(
+                    int(assignment.get("assignment_id") or 0))
+            except Exception as exc:
+                log.warning(
+                    f"[studio] pending-sotg card render failed: {exc}")
+
+        # 2. Pending spots.
+        for cid in list(self._pending_spots):
+            try:
+                translated.append(self._pending_spot_to_card(int(cid)))
+                already_queued_spot_ids.add(int(cid))
+            except Exception as exc:
+                log.warning(
+                    f"[studio] pending-spot card render failed: {exc}")
+
+        # 3. Upcoming-preview SOTGs (T-60s window, not yet fired).
+        for assignment in list(self._upcoming_preview_sotgs):
+            try:
+                aid = int(assignment.get("assignment_id") or 0)
+                if aid in already_queued_sotg_aids:
+                    continue
+                card = self._pending_sotg_to_card(dict(assignment))
+                card["_preview"] = True
+                translated.append(card)
+                already_queued_sotg_aids.add(aid)
+            except Exception as exc:
+                log.warning(
+                    f"[studio] preview-sotg card render failed: {exc}")
+
+        # 4. Upcoming-preview spots.
+        for entry in list(self._upcoming_preview_spots):
+            try:
+                cid = int(entry.get("campaign_id") or 0)
+                if cid in already_queued_spot_ids or cid == 0:
+                    continue
+                card = self._pending_spot_to_card(cid)
+                card["_preview"] = True
+                card["_scheduled_at"] = entry.get("break_time")
+                translated.append(card)
+                already_queued_spot_ids.add(cid)
+            except Exception as exc:
+                log.warning(
+                    f"[studio] preview-spot card render failed: {exc}")
+
+        # 5. Songs / sweepers / jingles from the scheduler. CRITICAL:
+        # this section MUST run even when sections 1-4 fail — the
+        # operator-reported "songs disappear during SOTG playback"
+        # symptom was a silent failure upstream that prevented the
+        # scheduler peek from ever being reached.
+        if self._scheduler is not None:
+            try:
+                items = self._scheduler.peek_next(5)
+            except Exception as exc:
+                log.warning(f"[studio] peek_next failed: {exc}")
+                items = []
+            for it in items[:5]:
+                try:
+                    translated.append({
+                        "_item_type":  it.get("item_type") or "song",
+                        "id":          it.get("item_id"),
+                        "title":       it.get("title") or "—",
+                        "artist":      it.get("artist") or "",
+                        "file_path":   it.get("file_path"),
+                        "duration_ms": int(it.get("duration_ms") or 0),
+                    })
+                except Exception as exc:
+                    log.warning(
+                        f"[studio] scheduler-peek card translate "
+                        f"failed: {exc}")
+
         self._upcoming_preview = translated
         self._refresh_upcoming_panel()
+
+    # ── T-60s upcoming-dispatch preview (2026-05-17 operator request) ────
+
+    # How far ahead to peek. Operator: "1 min pehle queue mai load."
+    _UPCOMING_PREVIEW_WINDOW_S = 60
+
+    def _check_upcoming_dispatches(self, *, now=None) -> bool:
+        """Refresh the T-60s preview lists from DB. Walks today's
+        campaign_schedule + sotg_assignments and keeps any row whose
+        scheduled time is within `now .. now + _UPCOMING_PREVIEW_WINDOW_S`
+        AND not already in the pending lists. Cheap — 2 small reads,
+        idempotent, safe to call every tick.
+
+        Returns True iff the preview lists ACTUALLY changed compared
+        to the previous call. Used by _on_tick to decide whether a
+        full _load_upcoming_queue rebuild is needed (which would
+        re-pick random_from_category songs) or whether a cheap
+        re-render of the cached preview is enough."""
+        from datetime import datetime, timedelta
+        if now is None:
+            now = datetime.now()
+        window_end = now + timedelta(seconds=self._UPCOMING_PREVIEW_WINDOW_S)
+        today_str = now.strftime("%Y-%m-%d")
+        # day_of_week: Python's weekday() is Mon=0..Sun=6, matching how
+        # campaign_schedule stores day_of_week (per the auto-schedule
+        # convention used elsewhere in the app).
+        weekday = now.weekday()
+
+        # ── Spots ───────────────────────────────────────────────────
+        upcoming_spots: list[dict] = []
+        try:
+            rows = self._db._conn().execute(
+                "SELECT cs.campaign_id, cs.break_time, cs.priority, "
+                "       cs.slot_order, c.name "
+                "FROM campaign_schedule cs "
+                "LEFT JOIN campaigns c ON c.id = cs.campaign_id "
+                "WHERE cs.day_of_week = ? "
+                "  AND c.is_active = 1 "
+                "ORDER BY cs.break_time, cs.slot_order",
+                [int(weekday)]
+            ).fetchall()
+        except Exception as exc:
+            log.debug(f"[studio] campaign_schedule peek failed: {exc}")
+            rows = []
+        pending_spot_set = set(int(c) for c in self._pending_spots)
+        for r in rows:
+            try:
+                bt = (r["break_time"] if "break_time" in r.keys() else "") or ""
+                if not bt:
+                    continue
+                # Parse "HH:MM" → today's datetime
+                hh, mm = bt.split(":", 1)
+                break_dt = now.replace(
+                    hour=int(hh), minute=int(mm),
+                    second=0, microsecond=0)
+                # Inside the T..T+60s window? (Future only.)
+                delta = (break_dt - now).total_seconds()
+                if delta <= 0 or delta > self._UPCOMING_PREVIEW_WINDOW_S:
+                    continue
+                cid = int(r["campaign_id"] or 0)
+                if cid <= 0 or cid in pending_spot_set:
+                    continue
+                upcoming_spots.append({
+                    "campaign_id": cid,
+                    "break_time":  bt,
+                    "name":        (r["name"] if "name" in r.keys() else "") or "",
+                    "priority":    (r["priority"] if "priority" in r.keys() else "") or "",
+                    "delta_s":     int(delta),
+                })
+            except Exception:
+                continue
+
+        # ── SOTGs ───────────────────────────────────────────────────
+        upcoming_sotgs: list[dict] = []
+        try:
+            # Mirror _sotg_check_tick: CONFLICT rows are fireable too.
+            ready = [
+                r for r in (self._db.get_sotg_assignments_for_date(
+                    today_str) or [])
+                if (r.get("status") or "") in ("READY", "CONFLICT")
+            ]
+        except Exception as exc:
+            log.debug(f"[studio] sotg peek failed: {exc}")
+            ready = []
+        pending_sotg_aids = {
+            int(a.get("assignment_id") or 0) for a in self._pending_sotgs
+        }
+        for r in ready:
+            try:
+                aid = int(r.get("assignment_id") or 0)
+                if aid <= 0 or aid in pending_sotg_aids:
+                    continue
+                sharp = (r.get("sharp_time") or "").strip()
+                if not sharp:
+                    continue
+                hh, mm = sharp.split(":", 1)
+                sharp_dt = now.replace(
+                    hour=int(hh), minute=int(mm),
+                    second=0, microsecond=0)
+                delta = (sharp_dt - now).total_seconds()
+                if delta <= 0 or delta > self._UPCOMING_PREVIEW_WINDOW_S:
+                    continue
+                # Carry through every field — _pending_sotg_to_card
+                # reads show_name / rj_name / sharp_time / file_path etc.
+                upcoming_sotgs.append(dict(r))
+            except Exception:
+                continue
+
+        # Sort by ascending time within each list (SOTG and Spot
+        # separately — render order is SOTG-first by tier, not
+        # merged temporal).
+        upcoming_spots.sort(key=lambda d: d["delta_s"])
+        upcoming_sotgs.sort(
+            key=lambda d: (d.get("sharp_time") or ""))
+
+        # Identity-of-contents check: compare just the keys that
+        # matter for the rendered card. Re-pick of random songs is
+        # what we explicitly DO NOT want to trigger here.
+        def _spots_key(lst):
+            return tuple(
+                (int(d.get("campaign_id") or 0),
+                 d.get("break_time") or "")
+                for d in lst)
+
+        def _sotgs_key(lst):
+            return tuple(
+                (int(d.get("assignment_id") or 0),
+                 d.get("sharp_time") or "")
+                for d in lst)
+
+        changed = (
+            _spots_key(upcoming_spots)
+            != _spots_key(getattr(self, "_upcoming_preview_spots", []))
+            or
+            _sotgs_key(upcoming_sotgs)
+            != _sotgs_key(getattr(self, "_upcoming_preview_sotgs", []))
+        )
+
+        self._upcoming_preview_spots = upcoming_spots
+        self._upcoming_preview_sotgs = upcoming_sotgs
+        return changed
+
+    # ── Pending-dispatch helpers ──────────────────────────────────────────
+
+    def _drain_pending_dispatches(self, *, reason: str) -> None:
+        """Clear BOTH pending FIFO lists (spots + SOTGs). Called by
+        stop-next, loop, AUTO-off — paths where the operator has
+        explicitly opted out of auto-firing dispatches."""
+        n_spots = len(self._pending_spots)
+        n_sotgs = len(self._pending_sotgs)
+        if not (n_spots or n_sotgs):
+            return
+        self._pending_spots.clear()
+        self._pending_sotgs.clear()
+        log.info(
+            f"[studio] {reason} dropped {n_spots} pending spot(s) "
+            f"+ {n_sotgs} pending SOTG(s)")
+        # Re-render so the operator sees the queue clear immediately.
+        try:
+            self._load_upcoming_queue()
+        except Exception as exc:
+            log.debug(f"[studio] upcoming refresh after drain: {exc}")
+
+    def _pending_spot_to_card(self, campaign_id: int) -> dict:
+        """Build a card-shaped dict for a pending spot. Pulls the
+        campaign name + the first active spot file's duration so the
+        Up Coming card shows real metadata. Best-effort: DB failures
+        fall back to placeholder text + 0 duration."""
+        name = f"Spot #{int(campaign_id)}"
+        duration_ms = 0
+        try:
+            camp = self._db.get_campaign(int(campaign_id))
+            if camp:
+                # sqlite3.Row supports dict-style key access but not .get
+                try:
+                    n = camp["name"] if "name" in camp.keys() else None
+                except Exception:
+                    n = None
+                if n:
+                    name = str(n)
+        except Exception:
+            pass
+        try:
+            files = self._db.get_spot_files(int(campaign_id)) or []
+            for sf in files:
+                try:
+                    keys = sf.keys() if hasattr(sf, "keys") else []
+                    is_active = (sf["is_active"]
+                                 if "is_active" in keys else 1)
+                    if int(is_active or 0):
+                        duration_ms = int(sf["duration_ms"]
+                                          if "duration_ms" in keys else 0)
+                        break
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        return {
+            "_item_type":  "spot",
+            "id":          int(campaign_id),
+            "title":       name,
+            "artist":      "Ad Break · Queued",
+            "file_path":   None,
+            "duration_ms": int(duration_ms),
+        }
+
+    def _pending_sotg_to_card(self, assignment: dict) -> dict:
+        """Build a card-shaped dict for a pending SOTG drop. The
+        assignment dict from db.get_sotg_assignments_for_date already
+        joins in show + RJ + link metadata."""
+        return {
+            "_item_type":  "sotg",
+            "id":          int(assignment.get("assignment_id") or 0),
+            "title":       (assignment.get("show_name")
+                            or assignment.get("link_name")
+                            or "SOTG Drop"),
+            "artist":      (
+                f"{assignment.get('rj_name') or 'RJ'} · "
+                f"{assignment.get('sharp_time') or ''}"
+            ).strip(" ·"),
+            "file_path":   assignment.get("file_path"),
+            "duration_ms": int(assignment.get("duration_ms") or 0),
+        }
 
     def _refresh_upcoming_panel(self) -> None:
         """Render the Up Coming panel from current state. Picks the
@@ -7219,11 +7981,46 @@ class Studio(QWidget):
             now.strftime("%H:%M:%S"),
             day=now.strftime("%A").upper(),
             date=now.strftime("%b %d, %Y").upper())
-        # Phase B: live AT timestamp tick. _refresh_upcoming_panel
-        # re-renders the cards using current wall-clock so the
-        # cumulative AT values stay fresh even when no song is
-        # advancing (late-night automation, long song, etc.).
-        self._refresh_upcoming_panel()
+        # 2026-05-17 (rev) — refresh the T-60s upcoming preview lists
+        # and ONLY rebuild the queue panel if the lists actually
+        # changed. The previous unconditional rebuild every tick was
+        # calling scheduler.peek_next(5) at 1Hz, and per the engine's
+        # own docstring "Per-type pickers do random.choice over
+        # candidate sets — repeating peek_next may return different
+        # song picks for random_from_category slots." Result: queue
+        # panel shuffled songs every second (operator-visible bug
+        # "playlist queue mai songs automatically changes ho rahe").
+        #
+        # New behaviour:
+        #   • Every tick: _refresh_upcoming_panel() — re-renders the
+        #     CACHED _upcoming_preview list with fresh time-stamps.
+        #     No peek_next call, no random shuffle.
+        #   • Real changes (cursor advance / pending mutation /
+        #     T-60s window shift) trigger a full _load_upcoming_queue
+        #     via scheduler.queue_changed signal or _check_upcoming_*
+        #     diff detection.
+        try:
+            changed = self._check_upcoming_dispatches(now=now)
+        except Exception as exc:
+            log.warning(
+                f"[studio] upcoming-preview check failed: "
+                f"{type(exc).__name__}: {exc}")
+            changed = False
+        if changed:
+            try:
+                self._load_upcoming_queue()
+            except Exception as exc:
+                log.warning(
+                    f"[studio] upcoming queue rebuild failed: "
+                    f"{type(exc).__name__}: {exc}")
+        else:
+            # No real change — just re-render cached cards so AT
+            # timestamps stay fresh.
+            try:
+                self._refresh_upcoming_panel()
+            except Exception as exc:
+                log.debug(
+                    f"[studio] upcoming panel re-render: {exc}")
         # Phase C: SIGNAL pill 1Hz poll. _update_status_pills now also
         # calls header.set_signal(...) using _compute_signal_state.
         # set_signal/set_auto_mode/set_on_air are all change-gated so
