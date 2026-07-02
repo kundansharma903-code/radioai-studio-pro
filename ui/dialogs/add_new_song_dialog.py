@@ -818,12 +818,20 @@ class AddNewSongDialog(BaseDialog):
     def _on_save(self):
         artist = self._artist_input.text().strip()
         title  = self._title_input.text().strip()
-        missing = [name for name, ok in [("Artist", artist), ("Song Title", title)] if not ok]
-        if missing:
-            dialogs.warning(self, "Required fields missing",
-                                f"Please fill in: {', '.join(missing)}")
-            (self._artist_input if not artist else self._title_input).setFocus()
+        # 2026-05-17 — operator request: relax artist/title validation
+        # so songs can be saved even when metadata is sparse. Audio file
+        # is still required (without it there's nothing to play and no
+        # filename fallback for the title). Empty title → filename
+        # (without extension); empty artist → "Unknown Artist".
+        if not self._audio_file_path:
+            dialogs.warning(self, "Audio file required",
+                            "Please pick an audio file before saving.")
             return
+        if not title:
+            title = os.path.splitext(
+                os.path.basename(self._audio_file_path))[0] or "Untitled"
+        if not artist:
+            artist = "Unknown Artist"
 
         # Resolve category id
         category_id = None

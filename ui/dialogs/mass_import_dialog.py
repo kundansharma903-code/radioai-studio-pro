@@ -158,7 +158,19 @@ class _ScanWorker(QThread):
             if artist and title:
                 result["status"] = "Ready"
             else:
+                # 2026-05-17 — operator request: even when ID3 tags are
+                # missing, the file is importable. The worker falls back
+                # to filename (without extension) for title and
+                # "Unknown Artist" for artist. Populate the same
+                # fallbacks now so the preview row shows what will
+                # actually land in the songs table — no more confusing
+                # "— Not found" cells on importable rows.
                 result["status"] = "No Tags"
+                if not result["title"]:
+                    result["title"] = os.path.splitext(
+                        os.path.basename(path))[0]
+                if not result["artist"]:
+                    result["artist"] = "Unknown Artist"
         except Exception as exc:
             result["status"] = "Error"
             result["error_message"] = str(exc)
@@ -482,8 +494,13 @@ class _FileRow(QFrame):
         # Background alternation
         self._alt = bool(row_index % 2)
 
-        # Checkbox at x=25
-        can_check = (file_data.get("status") == "Ready")
+        # Checkbox at x=25. 2026-05-17 — operator request: files
+        # without ID3 tags (status="No Tags") are now importable too;
+        # the import worker (and Scanner._read_tags above) populate
+        # filename/Unknown-Artist fallbacks. Only files that mutagen
+        # couldn't even parse (status="Error") remain disabled.
+        status = file_data.get("status")
+        can_check = status in ("Ready", "No Tags")
         self._cb = _Checkbox(GREEN, size=12, parent=self)
         self._cb.move(25, 9)
         self._cb.setChecked(can_check)
