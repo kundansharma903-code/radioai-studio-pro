@@ -42,7 +42,7 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import (
     QWidget, QFrame, QLabel, QPushButton, QComboBox, QSlider,
-    QHBoxLayout, QVBoxLayout, QMessageBox,
+    QHBoxLayout, QVBoxLayout, QMessageBox, QCheckBox,
 )
 
 from core.settings import Settings
@@ -70,6 +70,20 @@ STATUS_H = 36
 CHANNEL_OPTIONS = ["Stereo", "Mono Left", "Mono Right", "Mono Mix"]
 INPUT_CHANNEL_OPTIONS = ["Mono Input", "Stereo Input", "Left Input",
                           "Right Input"]
+
+# Aircheck quality ladder — (kbps value, combo label). ≤48 kbps encodes
+# MONO (the recorder passes -ac 1 to ffmpeg): low-rate stereo MP3 sounds
+# far worse than mono at the same size, and mono is the compliance-logger
+# norm. Default 32 kbps ≈ 14 MB/hour ≈ 15 GB per 90 days.
+AIRCHECK_QUALITIES = [
+    ("32",  "32 kbps (Mono)"),
+    ("48",  "48 kbps (Mono)"),
+    ("64",  "64 kbps"),
+    ("96",  "96 kbps"),
+    ("128", "128 kbps"),
+    ("160", "160 kbps"),
+    ("192", "192 kbps"),
+]
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -527,6 +541,7 @@ class SettingsSoundcard(QWidget):
         self._build_section_title()
         self._build_channel_cards()
         self._build_warning_strip()
+        self._build_aircheck_section()
         self._build_status_bar()
 
         self._load_settings()
@@ -727,6 +742,108 @@ class SettingsSoundcard(QWidget):
         )
         self._btn_save.clicked.connect(self._on_save_clicked)
 
+    # ── Aircheck Recorder section ─────────────────────────────────────
+
+    def _build_aircheck_section(self) -> None:
+        """Hourly broadcast logger controls. The recorder smart-follows
+        the playout device's WASAPI loopback; everything here persists
+        via the same Save Routing button (settings_saved → MainWindow
+        re-resolves the recorder live, no restart needed)."""
+        y = HEADER_H + 48 + 8 + 366 + 16 + 64 + 18   # below warning strip
+
+        title = QLabel("AIR-CHECK RECORDER", self)
+        title.setGeometry(16, y, 400, 18)
+        title.setFont(inter(11, QFont.Weight.Bold, letter_spacing=1.6))
+        title.setStyleSheet(
+            f"color: {RED_LIGHT}; background: transparent; border: none;")
+
+        sub = QLabel(
+            "Hourly broadcast logging — records the on-air output "
+            "(loopback) into one MP3 per clock hour.",
+            self)
+        sub.setGeometry(16, y + 20, 900, 14)
+        sub.setFont(inter(10))
+        sub.setStyleSheet(
+            f"color: {TEXT_MUTED}; background: transparent; border: none;")
+
+        panel = QFrame(self)
+        panel.setGeometry(16, y + 42, WINDOW_W - 32, 96)
+        panel.setStyleSheet(
+            f"QFrame {{ background: {rgba(RED, 0.05)}; "
+            f"border: 1px solid {rgba(RED, 0.25)}; "
+            f"border-radius: 8px; }}"
+        )
+
+        # Enable toggle
+        self._chk_aircheck = QCheckBox("Recording Enabled", panel)
+        self._chk_aircheck.setGeometry(16, 34, 180, 28)
+        self._chk_aircheck.setCursor(
+            QCursor(Qt.CursorShape.PointingHandCursor))
+        self._chk_aircheck.setFont(inter(11, QFont.Weight.Bold))
+        self._chk_aircheck.setStyleSheet(
+            f"QCheckBox {{ color: {TEXT_PRI}; background: transparent; "
+            f"border: none; spacing: 8px; }}"
+            f"QCheckBox::indicator {{ width: 16px; height: 16px; "
+            f"border: 1px solid {rgba(RED, 0.5)}; border-radius: 4px; "
+            f"background: {BG_ELEVATED}; }}"
+            f"QCheckBox::indicator:checked {{ background: {RED}; }}"
+        )
+
+        # Device combo — Auto (follow output) + explicit loopbacks
+        dev_lbl = _MicroLabel("RECORD DEVICE", parent=panel)
+        dev_lbl.setGeometry(220, 14, 300, 12)
+        self._cmb_aircheck_dev = _DeviceCombo(accent=RED, parent=panel)
+        self._cmb_aircheck_dev.setGeometry(220, 30, 340, 28)
+        self._cmb_aircheck_dev.addItem("Auto — follow output device")
+        for name in self._loopback_names():
+            self._cmb_aircheck_dev.addItem(name)
+
+        # Quality combo
+        q_lbl = _MicroLabel("QUALITY", parent=panel)
+        q_lbl.setGeometry(584, 14, 120, 12)
+        self._cmb_aircheck_quality = _DeviceCombo(accent=RED, parent=panel)
+        self._cmb_aircheck_quality.setGeometry(584, 30, 130, 28)
+        for _kbps, label in AIRCHECK_QUALITIES:
+            self._cmb_aircheck_quality.addItem(label)
+
+        # Retention combo
+        r_lbl = _MicroLabel("KEEP RECORDINGS", parent=panel)
+        r_lbl.setGeometry(738, 14, 140, 12)
+        self._cmb_aircheck_keep = _DeviceCombo(accent=RED, parent=panel)
+        self._cmb_aircheck_keep.setGeometry(738, 30, 130, 28)
+        for days in ("30", "60", "90", "180"):
+            self._cmb_aircheck_keep.addItem(f"{days} days")
+
+        # Folder note — the folder itself is picked in Settings → General
+        folder = (Settings().get("path_recordings", "") or "").strip()
+        self._lbl_aircheck_folder = QLabel(panel)
+        self._lbl_aircheck_folder.setGeometry(
+            892, 14, panel.width() - 908, 48)
+        self._lbl_aircheck_folder.setFont(inter(9))
+        self._lbl_aircheck_folder.setWordWrap(True)
+        self._lbl_aircheck_folder.setStyleSheet(
+            f"color: {TEXT_MUTED}; background: transparent; border: none;")
+        self._lbl_aircheck_folder.setText(
+            f"Saving to:  {folder or '(default app folder)'}\n"
+            f"Change folder in Settings → General → Storage Locations")
+
+        hint = QLabel(
+            "≈14 MB/hour at 32 kbps · ≈58 MB/hour at 128 kbps · files "
+            "older than the keep window are deleted automatically",
+            panel)
+        hint.setGeometry(220, 64, 700, 14)
+        hint.setFont(inter(9))
+        hint.setStyleSheet(
+            f"color: {TEXT_DIM}; background: transparent; border: none;")
+
+    def _loopback_names(self) -> List[str]:
+        try:
+            from core.aircheck_recorder import enumerate_loopback_devices
+            return [name for _idx, name in enumerate_loopback_devices()]
+        except Exception as exc:
+            log.warning(f"loopback enumeration failed: {exc}")
+            return []
+
     # ── Status bar ────────────────────────────────────────────────────
 
     def _build_status_bar(self) -> None:
@@ -784,6 +901,18 @@ class SettingsSoundcard(QWidget):
             card.set_channel_mode(s.get(chn_k,
                                           "Mono Input" if key == "input_1"
                                           else "Stereo"))
+        # Aircheck recorder block
+        self._chk_aircheck.setChecked(s.get_bool("aircheck_enabled", True))
+        override = s.get("aircheck_device_override", "") or ""
+        idx = self._cmb_aircheck_dev.findText(override) if override else 0
+        self._cmb_aircheck_dev.setCurrentIndex(max(0, idx))
+        kbps = str(s.get_int("aircheck_bitrate", 32))
+        qi = next((i for i, (v, _l) in enumerate(AIRCHECK_QUALITIES)
+                   if v == kbps), 0)
+        self._cmb_aircheck_quality.setCurrentIndex(qi)
+        days = str(s.get_int("aircheck_retention_days", 90))
+        ki = self._cmb_aircheck_keep.findText(f"{days} days")
+        self._cmb_aircheck_keep.setCurrentIndex(ki if ki >= 0 else 2)
 
     def _save_all(self) -> None:
         s = Settings()
@@ -793,6 +922,19 @@ class SettingsSoundcard(QWidget):
             s.set(dev_k, card.selected_device())
             s.set(vol_k, str(card.volume()))
             s.set(chn_k, card.channel_mode())
+        # Aircheck recorder block — index 0 of the device combo is
+        # "Auto — follow output device" which persists as "" (empty
+        # override = smart-follow).
+        s.set("aircheck_enabled",
+              "1" if self._chk_aircheck.isChecked() else "0")
+        dev = ("" if self._cmb_aircheck_dev.currentIndex() <= 0
+               else self._cmb_aircheck_dev.currentText())
+        s.set("aircheck_device_override", dev)
+        s.set("aircheck_bitrate",
+              AIRCHECK_QUALITIES[
+                  self._cmb_aircheck_quality.currentIndex()][0])
+        s.set("aircheck_retention_days",
+              self._cmb_aircheck_keep.currentText().split()[0])
 
     # ── Handlers ──────────────────────────────────────────────────────
 

@@ -131,6 +131,13 @@ INSERT OR IGNORE INTO spot_schedules (day_of_week, hour, minute, max_duration_mi
 -- ── Stitcher Default Config ───────────────────────────────────────
 INSERT OR IGNORE INTO stitcher_config (id) VALUES (1);
 
+-- ── Aircheck Recorder (hourly broadcast logger) ───────────────────
+INSERT OR IGNORE INTO settings (key, value) VALUES
+    ('aircheck_enabled',         '1'),
+    ('aircheck_device_override', ''),
+    ('aircheck_bitrate',         '32'),
+    ('aircheck_retention_days',  '90');
+
 -- ── Default Admin User ────────────────────────────────────────────
 INSERT OR IGNORE INTO users (username, display_name, role) VALUES
     ('admin', 'Administrator', 'admin'),

@@ -115,6 +115,15 @@ class MainWindow(QMainWindow):
         self._rotation_engine = RotationAIEngine(
             db=self._db, parent=self)
 
+        # Aircheck Recorder — hourly broadcast logger. Captures the
+        # playout device's WASAPI loopback stream (whatever actually
+        # airs) into one MP3 per clock hour under path_recordings.
+        # Smart-follows the active output device; fully independent of
+        # the playback path (Invariant #1 untouched). Starts after the
+        # window shows (see _start_aircheck below).
+        from core.aircheck_recorder import AircheckRecorder
+        self._aircheck = AircheckRecorder(parent=self)
+
         # Phase B5: aboutToQuit safety net. Fires on app force-quit, OS
         # shutdown, or any path that bypasses closeEvent. cleanup_all is
         # idempotent so the dual-hook is cheap.
@@ -372,6 +381,11 @@ class MainWindow(QMainWindow):
                 self._on_hub_screen_requested)
             self.settings_soundcard.studio_clicked.connect(
                 self._on_studio_clicked)
+            # Aircheck settings live on this screen — a successful Save
+            # re-resolves the recorder live (enable toggle / device
+            # override / bitrate apply without an app restart).
+            self.settings_soundcard.settings_saved.connect(
+                self._on_soundcard_settings_saved)
             self._stack.addWidget(self.settings_soundcard)
 
             # Studio Settings (Figma 69:2) — crossfade, fade curves,
@@ -577,6 +591,12 @@ class MainWindow(QMainWindow):
             # belt; this signal is the suspenders.
             self.instant_jingles.pads_changed.connect(
                 self.studio._reload_instant_jingles)
+            # Aircheck recorder → header REC pill + Problems panel.
+            try:
+                self._aircheck.state_changed.connect(
+                    self.studio.on_aircheck_state)
+            except Exception as exc:
+                log.warning(f"aircheck→studio connect failed: {exc}")
             self._stack.addWidget(self.studio)
 
             # Scheduling Hub — premium dark theme rebuild (Figma 231:3).
@@ -684,6 +704,11 @@ class MainWindow(QMainWindow):
             except Exception as exc:
                 log.warning(
                     f"RotationAIEngine start failed: {exc}")
+
+            # Aircheck Recorder auto-start (default ON, settings
+            # toggle). 2s delay keeps device init off the first-paint
+            # path; recorder no-ops if aircheck_enabled is 0.
+            QTimer.singleShot(2000, self._start_aircheck)
         except Exception as exc:
             import traceback
             log.error(f"Mount failed: {exc}\n{traceback.format_exc()}")
@@ -1134,6 +1159,33 @@ class MainWindow(QMainWindow):
                 log.warning(
                     f"studio settings live-apply failed: {exc}")
 
+    # ── Aircheck Recorder handlers ────────────────────────────────────
+
+    def _start_aircheck(self) -> None:
+        """Boot-time start (2s singleShot after mount). No-ops when
+        aircheck_enabled=0; failures surface via the recorder's
+        error_occurred → Studio Problems panel, never crash boot."""
+        if not hasattr(self, "_aircheck") or self._aircheck is None:
+            return
+        try:
+            self._aircheck.start()
+        except Exception as exc:
+            log.warning(f"aircheck start failed: {exc}")
+
+    def _on_soundcard_settings_saved(self) -> None:
+        """Soundcard screen Save — re-resolve the recorder so enable
+        toggle / device override / bitrate changes apply live."""
+        if not hasattr(self, "_aircheck") or self._aircheck is None:
+            return
+        from core.settings import Settings
+        try:
+            if Settings().get_bool("aircheck_enabled", True):
+                self._aircheck.restart()
+            else:
+                self._aircheck.stop()
+        except Exception as exc:
+            log.warning(f"aircheck re-apply failed: {exc}")
+
     # ── Scheduling Automation handlers (Phase E live wiring) ──────────
 
     def _on_sched_ai_refresh(self) -> None:
@@ -1466,6 +1518,18 @@ class MainWindow(QMainWindow):
         ORDER MATTERS: scheduler stops FIRST so it can't fire any more
         spot_due / song_auto_advance signals into a tearing-down audio
         engine. Then audio cleanup."""
+        # 0-pre. Stop the aircheck recorder FIRST — it finalizes the
+        # open WAV (header rewrite) and kicks the last MP3 encode.
+        # Independent of the playback engine, so order vs scheduler
+        # doesn't matter; doing it first keeps the file intact even if
+        # a later cleanup step misbehaves.
+        if hasattr(self, "_aircheck") and self._aircheck is not None:
+            try:
+                self._aircheck.stop()
+                log.info("AircheckRecorder stopped")
+            except Exception as exc:
+                log.warning(f"aircheck stop failed: {exc}")
+
         # 0a. Stop the Rotation AI engine — QThread worker must not
         # outlive the QApplication.
         if (hasattr(self, "_rotation_engine")

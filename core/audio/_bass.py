@@ -42,6 +42,15 @@ BASS_SYNC_MIXTIME     = 0x40000000     # OR with sync type: fire at MIXER-time
 BASS_POS_BYTE         = 0              # GetLength / SetPosition mode: bytes
 BASS_SAMPLE_LOOP      = 4              # stream creation flag — loop on EOF
 
+# BASS_DEVICEINFO flags (playback AND recording device enumeration)
+BASS_DEVICE_ENABLED   = 1
+BASS_DEVICE_DEFAULT   = 2
+BASS_DEVICE_LOOPBACK  = 8              # recording device that captures an
+                                       # OUTPUT device's stream (WASAPI
+                                       # loopback) — the aircheck recorder
+                                       # matches these by name against the
+                                       # active playback device
+
 
 # ── ctypes typedefs ─────────────────────────────────────────────────────────
 
@@ -53,6 +62,25 @@ SYNCPROC = ctypes.WINFUNCTYPE(
     ctypes.c_ulong,    # data
     ctypes.c_void_p,   # user
 )
+
+# RECORDPROC signature — return True to continue recording, False to stop.
+# Fires on BASS's recording thread: file I/O only, NEVER Qt or DB.
+RECORDPROC = ctypes.WINFUNCTYPE(
+    ctypes.c_bool,
+    ctypes.c_ulong,    # handle (HRECORD)
+    ctypes.c_void_p,   # buffer
+    ctypes.c_ulong,    # length (bytes)
+    ctypes.c_void_p,   # user
+)
+
+
+class BASS_DEVICEINFO(ctypes.Structure):
+    """Device descriptor for BASS_GetDeviceInfo / BASS_RecordGetDeviceInfo."""
+    _fields_ = [
+        ("name",   ctypes.c_char_p),
+        ("driver", ctypes.c_char_p),
+        ("flags",  ctypes.c_uint),
+    ]
 
 
 # ── DLL singleton ───────────────────────────────────────────────────────────
@@ -128,6 +156,44 @@ def get_dll() -> ctypes.WinDLL:
     # 0xFFFFFFFF (= -1 cast to unsigned) on error.
     dll.BASS_ChannelGetLevel.argtypes = [ctypes.c_ulong]
     dll.BASS_ChannelGetLevel.restype = ctypes.c_ulong
+
+    # Device enumeration (playback side) — used by the aircheck recorder
+    # to learn the ACTIVE output device's name so it can pick the matching
+    # loopback recording device.
+    dll.BASS_GetDevice.argtypes = []
+    dll.BASS_GetDevice.restype = ctypes.c_ulong
+
+    dll.BASS_GetDeviceInfo.argtypes = [
+        ctypes.c_ulong, ctypes.POINTER(BASS_DEVICEINFO)
+    ]
+    dll.BASS_GetDeviceInfo.restype = ctypes.c_bool
+
+    # Recording API (aircheck / hourly logger)
+    dll.BASS_RecordGetDeviceInfo.argtypes = [
+        ctypes.c_ulong, ctypes.POINTER(BASS_DEVICEINFO)
+    ]
+    dll.BASS_RecordGetDeviceInfo.restype = ctypes.c_bool
+
+    dll.BASS_RecordInit.argtypes = [ctypes.c_int]
+    dll.BASS_RecordInit.restype = ctypes.c_bool
+
+    dll.BASS_RecordSetDevice.argtypes = [ctypes.c_ulong]
+    dll.BASS_RecordSetDevice.restype = ctypes.c_bool
+
+    dll.BASS_RecordFree.argtypes = []
+    dll.BASS_RecordFree.restype = ctypes.c_bool
+
+    dll.BASS_RecordStart.argtypes = [
+        ctypes.c_ulong,    # freq
+        ctypes.c_ulong,    # chans
+        ctypes.c_ulong,    # flags
+        RECORDPROC,        # callback
+        ctypes.c_void_p,   # user
+    ]
+    dll.BASS_RecordStart.restype = ctypes.c_ulong
+
+    dll.BASS_ChannelStop.argtypes = [ctypes.c_ulong]
+    dll.BASS_ChannelStop.restype = ctypes.c_bool
 
     _dll = dll
     return _dll

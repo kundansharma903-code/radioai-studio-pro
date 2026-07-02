@@ -101,6 +101,23 @@ def _bass(qapp, _live_db_shield):
     bass_free()
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _aircheck_shield(_live_db_shield):
+    """Force aircheck_enabled=0 for the whole test session (on the
+    shielded DB copy). MainWindow schedules a 2s singleShot that starts
+    REAL loopback recording — a test pumping the event loop past that
+    would spin up a BASS record thread + write WAVs into the operator's
+    recordings folder, and bass_free at teardown with a live record
+    thread is an access violation. Recorder-specific tests re-enable
+    it explicitly on their own snapshot."""
+    from core.settings import Settings
+    try:
+        Settings().set("aircheck_enabled", "0")
+    except Exception:
+        pass
+    yield
+
+
 # ── AudioEngine fixture ─────────────────────────────────────────────────────
 
 @pytest.fixture

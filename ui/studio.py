@@ -157,6 +157,7 @@ class _Header(QWidget):
         self._auto_mode   = False
         self._signal_ok   = True
         self._stream_ok   = True
+        self._rec_on      = False   # aircheck recorder state (REC pill)
         # Active Station card third line — defaults to the station
         # location, replaced with the active clock name (prefixed "● ")
         # when the scheduler resolves a clock for the current cell.
@@ -226,6 +227,14 @@ class _Header(QWidget):
             return
         self._on_air = bool(on)
         self.update(self.rect())
+
+    def set_rec_state(self, on: bool) -> None:
+        """Aircheck recorder pill. Red = hourly logger is capturing."""
+        if on == self._rec_on:
+            return
+        self._rec_on = bool(on)
+        # Repaint just the REC pill (4th pill at x=1320+3*72)
+        self.update(QRect(1320 + 3 * 72, 12, 72, 40))
 
     def set_auto_mode(self, on: bool) -> None:
         if on == self._auto_mode:
@@ -445,11 +454,14 @@ class _Header(QWidget):
         p.drawEllipse(QPointF(card.right() - 18, card.center().y()), 4, 4)
 
     def _paint_status_pills(self, p: QPainter) -> None:
-        """3 pills SIGNAL / STREAM / AUTO at (1320, 18, 64×28 each, gap 8)."""
+        """4 pills SIGNAL / STREAM / AUTO / REC at (1320, 18, 64×28, gap 8).
+        REC = aircheck recorder: red while the hourly logger captures the
+        air signal, muted when off/disabled."""
         pills = [
             ("SIGNAL", GREEN  if self._signal_ok else RED),
             ("STREAM", GREEN  if self._stream_ok else AMBER),
             ("AUTO",   PURPLE if self._auto_mode else TEXT_MUTED),
+            ("REC",    RED    if self._rec_on else TEXT_MUTED),
         ]
         for i, (label, color) in enumerate(pills):
             x = 1320 + i * 72
@@ -6641,6 +6653,26 @@ class Studio(QWidget):
     # ────────────────────────────────────────────────────────────────────
     # State sync
     # ────────────────────────────────────────────────────────────────────
+
+    def on_aircheck_state(self, recording: bool, detail: str) -> None:
+        """AircheckRecorder.state_changed handler (wired by MainWindow).
+        Drives the header REC pill; a FAILURE detail (prefixed
+        'aircheck:') also lands in the Problems panel so the operator
+        sees the logger died. Plain stop reasons ('stopped', 'aircheck
+        disabled in settings') clear the problem entry silently."""
+        try:
+            if hasattr(self, "_header") and self._header is not None:
+                self._header.set_rec_state(recording)
+            if hasattr(self, "_problems") and self._problems is not None:
+                items = [i for i in self._problems._items
+                         if not i.startswith("Aircheck")]
+                if not recording and detail.startswith("aircheck:"):
+                    items.append(
+                        f"Aircheck recorder failed — "
+                        f"{detail[len('aircheck:'):].strip()}")
+                self._problems.set_problems(items)
+        except Exception as exc:
+            log.warning(f"[studio] aircheck state handler failed: {exc}")
 
     def _update_status_pills(self) -> None:
         if not hasattr(self, "_header") or self._header is None:
