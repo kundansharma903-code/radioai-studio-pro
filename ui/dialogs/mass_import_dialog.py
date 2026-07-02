@@ -228,8 +228,25 @@ class _ImportWorker(QThread):
                         "category_id": self._defaults.get("category_id"),
                         "is_enabled":  1 if self._defaults.get("enabled", True) else 0,
                     }
-                    self._db.add_song(song)
+                    new_id = self._db.add_song(song)
                     added += 1
+                    # Auto-hook on import (2026-07-02): energy-based
+                    # chorus detection so every bulk-imported song is
+                    # Stitcher-eligible immediately — no manual hook
+                    # pass needed. Failure is non-fatal (the song
+                    # imports fine, hook stays 0/0 and the Stitcher
+                    # screen's Auto-Set Hooks button can retry later).
+                    try:
+                        from core.hook_scanner import detect_hook
+                        got = detect_hook(f.get("path") or "")
+                        if got is not None and new_id:
+                            self._db.save_song_cue_points(new_id, {
+                                "hook_in_ms":  got[0],
+                                "hook_out_ms": got[1],
+                            })
+                    except Exception as exc:
+                        log.debug(f"auto-hook skipped for "
+                                  f"{f.get('path')}: {exc}")
                     self.file_done.emit({"path": f["path"], "ok": True, "skipped": False})
             except Exception as exc:
                 errors += 1

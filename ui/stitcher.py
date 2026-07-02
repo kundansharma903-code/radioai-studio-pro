@@ -1219,8 +1219,26 @@ class Stitcher(QWidget):
             "Songs Without Hooks", "—", RED, wrap)
         self._stat_no_hooks.move(264, cards_y)
 
+        # AUTO-SET HOOKS — energy-based chorus detection over the whole
+        # library (core/hook_scanner.py): fills hook_in/out for every
+        # song missing one, so the montage has real material without
+        # the operator hand-placing hundreds of markers.
+        self._hook_thread = None
+        self._hook_worker = None
+        self._btn_auto_hooks = QPushButton(
+            "✦ Auto-Set Hooks (scan all songs)", wrap)
+        self._btn_auto_hooks.setGeometry(0, cards_y + 78, panel_w, 30)
+        self._btn_auto_hooks.setFont(inter(10, QFont.Weight.Bold))
+        self._btn_auto_hooks.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_auto_hooks.setStyleSheet(
+            f"QPushButton {{ background: {rgba(PURPLE, 0.20)}; "
+            f"color: {PURPLE_LIGHT}; border: 1px solid "
+            f"{rgba(PURPLE, 0.45)}; border-radius: 8px; }}"
+            f"QPushButton:hover {{ background: {rgba(PURPLE, 0.32)}; }}")
+        self._btn_auto_hooks.clicked.connect(self._on_auto_hooks_clicked)
+
         # AI RECOMMENDATIONS
-        rec_y = cards_y + 80
+        rec_y = cards_y + 122
         cap = _SectionLabel("AI Recommendations", PURPLE_LIGHT, wrap)
         cap.setGeometry(0, rec_y, 280, 14)
         recs = [
@@ -1354,6 +1372,72 @@ class Stitcher(QWidget):
             no_hooks_count = 0
         if self._stat_no_hooks:
             self._stat_no_hooks.set_value(str(no_hooks_count))
+
+    # ── Auto-hook scan (energy-based chorus detection) ───────────────────
+
+    def _on_auto_hooks_clicked(self):
+        """Operator-triggered library-wide hook scan. Skips songs that
+        already carry a hook so a manually-placed marker is never
+        overwritten. Runs on a worker QThread — playback unaffected."""
+        if self._hook_thread is not None and self._hook_thread.isRunning():
+            return
+        try:
+            rows = self._db._conn().execute(
+                "SELECT id, title, file_path, hook_in_ms FROM songs "
+                "WHERE is_enabled = 1 AND file_path IS NOT NULL "
+                "AND file_path != ''").fetchall()
+            songs = [{k: r[k] for k in r.keys()} for r in rows]
+        except Exception as exc:
+            dialogs.error(self, "Auto-Set Hooks",
+                          f"Could not load the song list: {exc}")
+            return
+        missing = [s for s in songs if int(s.get("hook_in_ms") or 0) <= 0]
+        if not missing:
+            dialogs.info(self, "Auto-Set Hooks",
+                         "Every enabled song already has a hook — "
+                         "nothing to scan.")
+            return
+        est_min = max(1, round(len(missing) * 0.9 / 60))
+        if not dialogs.confirm(
+                self, "Auto-Set Hooks",
+                f"{len(missing)} songs have no hook.\n\n"
+                f"Scan them with energy-based chorus detection now? "
+                f"Takes ≈{est_min} min in the background — playback is "
+                f"not affected.\n\nManually-set hooks are kept as-is.",
+                yes_label="Start Scan"):
+            return
+        try:
+            cfg = self._db.get_stitcher_config()
+            hook_len = float(cfg.get("hook_duration_seconds") or 8)
+        except Exception:
+            hook_len = 8.0
+        from core.hook_scanner import start_scan
+        self._hook_thread, self._hook_worker = start_scan(
+            self._db, missing, hook_len_s=hook_len)
+        self._hook_worker.progress.connect(self._on_hook_scan_progress)
+        self._hook_worker.finished.connect(self._on_hook_scan_finished)
+        self._btn_auto_hooks.setEnabled(False)
+        self._btn_auto_hooks.setText("Scanning…")
+        self._hook_thread.start()
+
+    def _on_hook_scan_progress(self, done: int, total: int,
+                               title: str, ok: bool):
+        self._btn_auto_hooks.setText(
+            f"Scanning {done}/{total} — {title[:28]}")
+
+    def _on_hook_scan_finished(self, set_n: int, skip_n: int, fail_n: int):
+        self._btn_auto_hooks.setEnabled(True)
+        self._btn_auto_hooks.setText("✦ Auto-Set Hooks (scan all songs)")
+        try:
+            self._load_config()   # refresh the Songs-Without-Hooks card
+        except Exception:
+            pass
+        dialogs.info(
+            self, "Auto-Set Hooks",
+            f"Hook scan complete.\n\n"
+            f"Hooks set: {set_n}\n"
+            f"Skipped (manual hook kept): {skip_n}\n"
+            f"Could not analyse: {fail_n}")
 
     def _on_save_config(self):
         """Collect form state and persist via update_stitcher_config."""
