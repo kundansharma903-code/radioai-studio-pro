@@ -1286,11 +1286,16 @@ class MainWindow(QMainWindow):
                 self.scheduling_automation_hub)
 
     def _check_ai_rotation_auto_apply(self) -> None:
-        """60s tick — at or after 17:00 (5 PM), auto-apply today's
-        rotation plan if the operator hasn't yet approved or discarded
-        it. Operator's Q7 Phase 2 safety net: "walk away" path —
-        Daily Plan Review's preview gate doesn't block the afternoon
-        broadcast if the operator never opens the screen.
+        """60s tick — configurable autonomous apply (operator request
+        2026-07-02: no hardcoded 5 PM, no forced approval flow).
+
+        Settings-driven:
+          rotation_ai_auto_apply_enabled ("1"/"0", default ON) — OFF
+            means PURE MANUAL: the plan applies only when the operator
+            approves it in Daily Plan Review; nothing fires by itself.
+          rotation_ai_auto_apply_time ("HH:MM", default "17:00") — the
+            daily time at/after which a still-pending plan flips to
+            auto_applied.
 
         Idempotent via the Settings sentinel "last_rotation_auto_apply_date".
         Only flips status from 'pending' → 'auto_applied' — never
@@ -1298,8 +1303,19 @@ class MainWindow(QMainWindow):
         try:
             from datetime import datetime as _dt, date as _ddate
             from core.settings import Settings as _Settings
+            enabled = str(_Settings().get(
+                "rotation_ai_auto_apply_enabled", "1") or "1").strip()
+            if enabled in ("0", "false", "False", ""):
+                return    # pure-manual mode — operator approves or nothing
+            raw = str(_Settings().get(
+                "rotation_ai_auto_apply_time", "17:00") or "17:00").strip()
+            try:
+                hh, mm = raw.split(":", 1)
+                apply_h, apply_m = int(hh), int(mm)
+            except (ValueError, AttributeError):
+                apply_h, apply_m = 17, 0
             now = _dt.now()
-            if now.hour < 17:
+            if (now.hour, now.minute) < (apply_h, apply_m):
                 return    # too early
             today = _ddate.today().isoformat()
             sent_key = "last_rotation_auto_apply_date"
@@ -1319,7 +1335,7 @@ class MainWindow(QMainWindow):
             self._db.mark_ai_rotation_plan_auto_applied(today)
             _Settings().set(sent_key, today)
             log.info(
-                f"[rotation-ai] 5 PM auto-apply fired — plan {today} "
+                f"[rotation-ai] auto-apply fired at {raw} — plan {today} "
                 f"flipped pending → auto_applied")
             # Refresh visible Rotation Health / Hub screens
             for attr in ("rotation_health",

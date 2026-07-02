@@ -813,8 +813,74 @@ class SchedulingAutomationHub(QWidget):
         )
         stop.clicked.connect(self.stop_engine_clicked.emit)
 
+        # AUTO-APPLY controls (operator request 2026-07-02): fully
+        # autonomous daily apply at a configurable time — replaces the
+        # hardcoded 5 PM. Toggle OFF = pure manual (only Daily Plan
+        # Review approval applies a plan).
+        from core.settings import Settings as _Settings
+        from PyQt6.QtWidgets import QLineEdit
+        auto_on = str(_Settings().get(
+            "rotation_ai_auto_apply_enabled", "1") or "1") not in (
+            "0", "false", "False", "")
+        self._auto_apply_btn = QPushButton(
+            f"⚡ AUTO-APPLY: {'ON' if auto_on else 'OFF'}", self)
+        self._auto_apply_btn.setGeometry(1116, 250, 136, 24)
+        self._auto_apply_btn.setCursor(
+            QCursor(Qt.CursorShape.PointingHandCursor))
+        self._auto_apply_btn.setFont(inter(10, QFont.Weight.Bold))
+
+        def _style_auto_btn(on: bool):
+            col = GREEN if on else TEXT_MUTED
+            self._auto_apply_btn.setStyleSheet(
+                f"QPushButton {{ background: {rgba(col, 0.15)}; "
+                f"color: {col}; border: 1px solid {rgba(col, 0.45)}; "
+                f"border-radius: 8px; }}")
+        _style_auto_btn(auto_on)
+
+        def _toggle_auto_apply():
+            cur = str(_Settings().get(
+                "rotation_ai_auto_apply_enabled", "1") or "1") not in (
+                "0", "false", "False", "")
+            new_state = not cur
+            _Settings().set("rotation_ai_auto_apply_enabled",
+                            "1" if new_state else "0")
+            self._auto_apply_btn.setText(
+                f"⚡ AUTO-APPLY: {'ON' if new_state else 'OFF'}")
+            _style_auto_btn(new_state)
+        self._auto_apply_btn.clicked.connect(_toggle_auto_apply)
+
+        self._auto_apply_time = QLineEdit(
+            str(_Settings().get(
+                "rotation_ai_auto_apply_time", "17:00") or "17:00"), self)
+        self._auto_apply_time.setGeometry(1260, 250, 58, 24)
+        self._auto_apply_time.setFont(inter(10, QFont.Weight.Bold))
+        self._auto_apply_time.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._auto_apply_time.setStyleSheet(
+            f"QLineEdit {{ background: {BG_ELEV()}; color: {CYAN}; "
+            f"border: 1px solid {rgba(CYAN, 0.35)}; "
+            f"border-radius: 8px; }}")
+
+        def _save_auto_time():
+            raw = (self._auto_apply_time.text() or "").strip()
+            try:
+                hh, mm = raw.split(":", 1)
+                ok = 0 <= int(hh) <= 23 and 0 <= int(mm) <= 59
+            except (ValueError, AttributeError):
+                ok = False
+            if ok:
+                _Settings().set("rotation_ai_auto_apply_time",
+                                f"{int(hh):02d}:{int(mm):02d}")
+                self._auto_apply_time.setText(
+                    f"{int(hh):02d}:{int(mm):02d}")
+            else:
+                self._auto_apply_time.setText(
+                    str(_Settings().get(
+                        "rotation_ai_auto_apply_time", "17:00")
+                        or "17:00"))
+        self._auto_apply_time.editingFinished.connect(_save_auto_time)
+
         hint = QLabel(
-            "Stop only if you need pure manual rotation. Resume anytime.",
+            "AUTO-APPLY ON = plan applies itself daily at the set time.",
             self)
         hint.setGeometry(1140, 280, 240, 14)
         hint.setFont(inter(10, italic=True))
@@ -882,16 +948,22 @@ class SchedulingAutomationHub(QWidget):
         gw = 644
         gap = 32
         if self._live_groups:
-            specs = self._live_groups[:2]
+            # ALL groups render — 2 per row, wrapping downward (the old
+            # code hard-capped at the first 2 and the promised "+N more"
+            # hint was never built; audit finding 2026-07-02).
+            specs = self._live_groups
             x_positions = [60, 60 + gw + gap]
             widths = [gw, 1380 - (60 + gw + gap)]
+            row_h = 124
             for i, g in enumerate(specs):
+                col = i % 2
+                row = i // 2
                 card = _SisterGroupCard(
                     g["id"], g["label"], g["accent"], g["categories"],
                     g["total_songs"], g["last_balanced"],
                     g["stats_summary"], parent=self)
-                card.setFixedWidth(widths[i])
-                card.move(x_positions[i], 364)
+                card.setFixedWidth(widths[col])
+                card.move(x_positions[col], 364 + row * row_h)
                 card.edit_clicked.connect(self.edit_group_clicked.emit)
                 card.ungroup_clicked.connect(self.ungroup_clicked.emit)
                 card.show()

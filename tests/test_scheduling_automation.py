@@ -137,9 +137,12 @@ def test_hub_renders_two_sister_group_cards(qapp, db, two_real_groups,
     s = SchedulingAutomationHub(db=db)
     qtbot.addWidget(s)
     cards = s.findChildren(_SisterGroupCard)
-    assert len(cards) == 2
+    # The hub renders ALL groups (2 per row, wrapping) — the shield-copy
+    # DB may carry real operator groups besides the two seeded here, so
+    # assert containment, not exact equality.
     ids = sorted(c._group_id for c in cards)
-    assert ids == sorted([g1, g2])
+    assert len(cards) >= 2
+    assert g1 in ids and g2 in ids
     s.deleteLater()
 
 
