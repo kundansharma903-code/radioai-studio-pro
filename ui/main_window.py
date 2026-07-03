@@ -282,7 +282,21 @@ class MainWindow(QMainWindow):
             self.songs_library.song_selected.connect(self._on_song_selected)
             self.songs_library.play_song_clicked.connect(self._on_play_song)
             self.songs_library.report_clicked.connect(self._on_report_clicked)
+            self.songs_library.change_category_requested.connect(
+                self._on_change_category_requested)
             self._stack.addWidget(self.songs_library)
+
+            # Category Move (Claude design) — bulk/single song moves
+            # between categories. Entry: songs right-click + breadcrumb.
+            from ui.category_move import CategoryMove
+            self.category_move = CategoryMove(self._db)
+            self.category_move.breadcrumb_clicked.connect(
+                self._on_hub_screen_requested)
+            self.category_move.studio_clicked.connect(
+                self._on_studio_clicked)
+            self.category_move.songs_moved.connect(
+                self._on_songs_moved_between_categories)
+            self._stack.addWidget(self.category_move)
 
             # Instant Jingles — live broadcast pads (Figma 44:688)
             from ui.instant_jingles import InstantJingles
@@ -736,6 +750,30 @@ class MainWindow(QMainWindow):
                 self.scheduling_hub.set_studio(self.studio)
             self._stack.setCurrentWidget(self.scheduling_hub)
 
+    def _on_change_category_requested(self, song_ids: list,
+                                      source_cat_id) -> None:
+        """Songs Library right-click → 'Change Category…'. Opens the
+        Category Move screen with the clicked/selected songs pre-checked
+        and the source combo on that song's category."""
+        if not hasattr(self, "category_move"):
+            return
+        try:
+            self.category_move.set_context(song_ids, source_cat_id)
+        except Exception as exc:
+            log.error(f"category_move set_context failed: {exc}")
+        self._stack.setCurrentWidget(self.category_move)
+
+    def _on_songs_moved_between_categories(self, moved: int) -> None:
+        """Category Move committed — refresh the Songs Library table +
+        its category pills so counts/pills reflect the new homes."""
+        log.info(f"category move: {moved} songs moved — refreshing "
+                 f"songs library")
+        try:
+            if hasattr(self, "songs_library"):
+                self.songs_library._load_songs()
+        except Exception as exc:
+            log.warning(f"songs library refresh after move failed: {exc}")
+
     def _on_breadcrumb(self, where: str) -> None:
         log.info(f"Breadcrumb → {where}")
         if where == "control_panel" and hasattr(self, "control_panel"):
@@ -766,6 +804,10 @@ class MainWindow(QMainWindow):
             # here. Mirrors the ControlPanel card route in
             # _on_card_clicked so the user never sees a no-op click.
             self._stack.setCurrentWidget(self.songs_library)
+            return
+        if screen == "category_move" and hasattr(self, "category_move"):
+            self.category_move.reload_on_show()
+            self._stack.setCurrentWidget(self.category_move)
             return
         if screen == "scheduling_hub" and hasattr(self, "scheduling_hub"):
             self._stack.setCurrentWidget(self.scheduling_hub)
@@ -1471,6 +1513,7 @@ class MainWindow(QMainWindow):
             "sotg_assign", "sotg_generate_report",
             "sotg_assign_api_key",
             "scheduling_automation_hub", "scheduling_daily_plan_review",
+            "category_move",
         )
         for attr in qlabel_screens:
             screen = getattr(self, attr, None)

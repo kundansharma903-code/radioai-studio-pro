@@ -4538,6 +4538,48 @@ class Database:
             [int(category_id), int(limit)],
         ).fetchall()
 
+    def get_songs_for_category_move(self, category_id) -> list:
+        """All songs of one category for the Category Move screen.
+        ``category_id=None`` → the Uncategorized pool (category_id IS
+        NULL). Returns [{id, title, artist, duration_ms}] sorted by
+        title."""
+        conn = self._conn()
+        if category_id is None:
+            rows = conn.execute(
+                """
+                SELECT id, title, artist, duration_ms FROM songs
+                WHERE  category_id IS NULL
+                ORDER BY title COLLATE NOCASE
+                """).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT id, title, artist, duration_ms FROM songs
+                WHERE  category_id = ?
+                ORDER BY title COLLATE NOCASE
+                """, [int(category_id)]).fetchall()
+        return [{k: r[k] for k in r.keys()} for r in rows]
+
+    def move_songs_to_category(self, song_ids: list,
+                               dest_category_id) -> int:
+        """Move songs to another category (Category Move screen).
+        ``dest_category_id=None`` un-categorizes them. Exact
+        ``WHERE id IN (…)`` per the destructive-op protocol — never a
+        pattern match. Returns the number of rows actually updated."""
+        ids = [int(i) for i in song_ids]
+        if not ids:
+            return 0
+        dest = None if dest_category_id is None else int(dest_category_id)
+        conn = self._conn()
+        placeholders = ", ".join(["?"] * len(ids))
+        cur = conn.execute(
+            f"UPDATE songs SET category_id = ? "
+            f"WHERE id IN ({placeholders})",
+            [dest, *ids],
+        )
+        conn.commit()
+        return int(cur.rowcount or 0)
+
     # ── Artists ───────────────────────────────────────────────────────────────
 
     def _ensure_artists_table(self) -> None:

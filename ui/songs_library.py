@@ -478,6 +478,9 @@ class _SongRow(QFrame):
 
     clicked      = pyqtSignal(int, object)  # song_id, modifiers
     play_clicked = pyqtSignal(int)          # song_id
+    # Right-click → context menu (Change Category…). Carries the global
+    # cursor pos so SongsLibrary can pop the menu exactly there.
+    right_clicked = pyqtSignal(int, object)  # song_id, QPoint global
     # Drag selection — emitted on mouseMove while LMB held; carries
     # the current global mouse position so the parent SongsLibrary
     # can map it to whichever row sits under the cursor (Qt grabs
@@ -591,6 +594,12 @@ class _SongRow(QFrame):
     def mousePressEvent(self, e):
         if e.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit(self._song.get("id", 0), e.modifiers())
+        elif e.button() == Qt.MouseButton.RightButton:
+            try:
+                gp = e.globalPosition().toPoint()
+            except Exception:
+                gp = e.globalPos()  # Qt5 fallback
+            self.right_clicked.emit(self._song.get("id", 0), gp)
         super().mousePressEvent(e)
 
     def mouseMoveEvent(self, e):
@@ -782,6 +791,11 @@ class SongsLibrary(QWidget):
     studio_clicked          = pyqtSignal()
     report_clicked          = pyqtSignal(str)
     play_song_clicked       = pyqtSignal(int)
+    # Right-click → "Change Category…" — carries the song ids to move
+    # (full multi-selection) + the clicked song's category_id (source;
+    # None = Uncategorized). MainWindow routes to the CategoryMove
+    # screen with this context.
+    change_category_requested = pyqtSignal(list, object)
 
     PREVIEW_DURATION_MS = 15_000   # Phase B2: 15s row-preview cap
 
@@ -1544,6 +1558,8 @@ class SongsLibrary(QWidget):
             "vocal":        r["vocal"] or "",
             "album":        r["album"] if "album" in r.keys() else "",
             "is_enabled":   r["is_enabled"] if "is_enabled" in r.keys() else 1,
+            "category_id":  r["category_id"] if "category_id" in r.keys()
+                            else None,
             "last_played":  (last_played_map or {}).get(r["id"]),
         }
 
@@ -1566,6 +1582,7 @@ class SongsLibrary(QWidget):
             row.clicked.connect(self._select_song)
             row.dragged.connect(self._on_row_dragged_to_global)
             row.released.connect(self._on_row_released)
+            row.right_clicked.connect(self._on_row_right_clicked)
             # Phase B2: route through our preview handler. We still emit
             # play_song_clicked so any external listener (future Studio
             # screen) sees the click; preview is a side-effect handled
@@ -1685,6 +1702,40 @@ class SongsLibrary(QWidget):
     def selected_song_ids(self) -> list:
         """Public — current multi-selection as a list of song ids."""
         return list(self._selected_ids)
+
+    def _on_row_right_clicked(self, song_id: int, global_pos) -> None:
+        """Right-click on a song row → context menu. File-manager
+        semantics: right-click INSIDE the current multi-selection keeps
+        the whole set; right-click on an unselected row moves the
+        selection to that row first."""
+        from PyQt6.QtWidgets import QMenu
+        if song_id not in self._selected_ids:
+            self._select_song(song_id)
+        ids = list(self._selected_ids) or [song_id]
+
+        song = next((s for s in self._all_songs
+                     if s["id"] == song_id), None)
+        src_cat = song.get("category_id") if song else None
+
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            f"QMenu {{ background: {BG_ELEVATED}; color: {TEXT_PRI}; "
+            f"border: 1px solid #1c1f38; border-radius: 8px; "
+            f"padding: 6px; }}"
+            f"QMenu::item {{ padding: 7px 18px; border-radius: 5px; "
+            f"font-size: 12px; }}"
+            f"QMenu::item:selected {{ background: {rgba(CYAN, 0.15)}; "
+            f"color: {CYAN_LIGHT}; }}"
+        )
+        n = len(ids)
+        label = ("Change Category…" if n == 1
+                 else f"Change Category ({n} songs)…")
+        act_change = menu.addAction(label)
+        chosen = menu.exec(global_pos)
+        if chosen is act_change:
+            log.info(f"[songs] context menu → change category "
+                     f"({n} songs, source cat={src_cat})")
+            self.change_category_requested.emit(ids, src_cat)
 
     def _update_detail_panel(self, song: dict):
         if self._song_header:
