@@ -136,6 +136,17 @@ def main():
     log.info("RadioAI Studio Pro v2.0 starting")
     log.info("=" * 60)
 
+    # 1.5. Hide child-process console windows. pydub (Stitcher, hook
+    # scanner) shells out to ffmpeg with bare Popen — in the windowed
+    # frozen exe every spawn flashed a black console on screen
+    # (operator report 2026-07-03). Must run before any engine spawns.
+    try:
+        from core.win_console import hide_child_console_windows
+        hide_child_console_windows()
+        log.info("Child console windows hidden (CREATE_NO_WINDOW patch)")
+    except Exception as exc:
+        log.warning(f"win_console patch failed: {exc}")
+
     # 2. Sleep prevention
     prevent_sleep()
     log.info("Sleep prevention active")
