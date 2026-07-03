@@ -6448,12 +6448,13 @@ class Studio(QWidget):
         if self._playback_cid is not None:
             self._on_pause_clicked()
             return
-        next_song = self._compute_next_song(after_id=None)
-        if next_song is None:
-            log.info("[studio] play clicked but queue is empty — no-op")
-            return
-        # Auto-start scheduler when going on air from idle. The is_running
-        # check covers the "already running" case so we don't double-start.
+        # Auto-start the scheduler BEFORE computing the first song.
+        # Order matters: _compute_next_song only consults the clock
+        # walker when scheduler.is_running() — starting it afterwards
+        # meant the FIRST song of every session came from the static
+        # id-ordered fallback queue (always song id 35, "90'S FEEL
+        # Part 02") instead of the active clock's category. Operator-
+        # reported 2026-07-03: "boot par hamesha 90's Feel hi kyun?"
         if self._scheduler is not None:
             try:
                 if not self._scheduler.is_running():
@@ -6461,6 +6462,10 @@ class Studio(QWidget):
                     log.info("[studio] play → scheduler.start()")
             except Exception as exc:
                 log.warning(f"[studio] scheduler.start failed: {exc}")
+        next_song = self._compute_next_song(after_id=None)
+        if next_song is None:
+            log.info("[studio] play clicked but queue is empty — no-op")
+            return
         self._auto_advance_enabled = True
         self._on_queue_song_play(next_song)
 

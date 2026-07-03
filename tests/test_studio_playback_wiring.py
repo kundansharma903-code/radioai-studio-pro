@@ -249,6 +249,26 @@ def test_play_button_idle_loads_first_track_and_starts_engine(studio_fake):
     assert studio._auto_advance_enabled is True
 
 
+def test_play_button_first_song_comes_from_active_clock(studio_fake):
+    """Regression 2026-07-03 (operator: 'boot par hamesha 90'S FEEL
+    hi kyun?'): _on_play_clicked must start the scheduler BEFORE
+    computing the first song. The old order computed first → the
+    is_running() gate in _compute_next_song failed → the FIRST song
+    of every session came from the static id-ordered fallback queue
+    (always the same song) instead of the active clock's category."""
+    studio, eng, sch = studio_fake
+    assert not sch.is_running()
+
+    studio._on_play_clicked()
+
+    # The pick was consulted (cursor advanced) and the track playing
+    # is the scheduler's first item — NOT static _queue_songs[0].
+    assert sch.start_calls == 1
+    assert sch._pick_cursor >= 1
+    assert studio._current_track is not None
+    assert studio._current_track.get("title") == "Track A"
+
+
 def test_play_button_when_already_playing_toggles_pause(studio_fake):
     """If a track is already loaded, ▶ delegates to the existing
     pause toggle instead of restarting playback (Live-Assist
