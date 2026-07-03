@@ -1132,7 +1132,11 @@ class SweepersLibrary(QWidget):
         wrap.setStyleSheet(
             f"QFrame {{ background: #0a0c18; "
             f"border: 1px solid {rgba('#ffffff', 0.06)}; "
-            f"border-radius: 10px; }}"
+            f"border-radius: 10px; }} "
+            # QLabel is-a QFrame — without this reset every label in
+            # the panel inherits the border and renders as a BOX
+            # around the text (audit 2026-07-03).
+            f"QLabel {{ border: none; background: transparent; }}"
         )
 
         # Title strip
@@ -1199,7 +1203,8 @@ class SweepersLibrary(QWidget):
         sb.setGeometry(0, WINDOW_H - STATUS_H, WINDOW_W, STATUS_H)
         sb.setStyleSheet(
             f"QFrame {{ background: rgba(13,15,30,0.95); "
-            f"border-top: 1px solid {rgba('#ffffff', 0.06)}; }}"
+            f"border-top: 1px solid {rgba('#ffffff', 0.06)}; }} "
+            f"QLabel {{ border: none; }}"
         )
 
         def _pill(x, text, fg, bg, w=110):

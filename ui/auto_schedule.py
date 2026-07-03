@@ -607,12 +607,13 @@ class _SetButton(QWidget):
         p.drawText(QRectF(228, 8, 50, 36),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                    "›››")
-        # Helper text
+        # Helper text — shorter copy: the old 41-char line was wider
+        # than the button and Qt clipped BOTH ends (audit 2026-07-03).
         p.setPen(_qcolor(COL_TEXT_PRIMARY, 0.85 if self._enabled else 0.35))
         p.setFont(self._font_help)
         p.drawText(QRectF(8, 50, self.width() - 16, 16),
                    Qt.AlignmentFlag.AlignCenter,
-                   "APPLY SELECTED CLOCK TO HIGHLIGHTED CELLS")
+                   "APPLY CLOCK TO SELECTED CELLS")
         p.end()
 
 

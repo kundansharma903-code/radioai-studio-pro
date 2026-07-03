@@ -1824,7 +1824,8 @@ class SpotsCommercials(QWidget):
         sb.setGeometry(0, WINDOW_H - STATUS_H, WINDOW_W, STATUS_H)
         sb.setStyleSheet(
             f"QFrame {{ background: rgba(13,15,30,0.95); "
-            f"border-top: 1px solid {rgba('#ffffff', 0.06)}; }}"
+            f"border-top: 1px solid {rgba('#ffffff', 0.06)}; }} "
+            f"QLabel {{ border: none; }}"
         )
 
         def _pill(x, text, fg, bg, w=110):

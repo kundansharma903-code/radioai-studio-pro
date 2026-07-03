@@ -302,8 +302,11 @@ class SOTGCreateSchedule(QWidget):
         ("LINKS",         60),
         ("INTERVAL",     110),
         ("DESCRIPTION",  220),
-        ("",             54),   # edit btn
-        ("",             36),   # delete btn
+        # Buttons are 56/28px wide — columns must be wider than the
+        # button or the last letters clip under the neighbour
+        # (audit 2026-07-03).
+        ("",             64),   # edit btn (56px wide)
+        ("",             40),   # delete btn (28px wide)
     ]
 
     def __init__(self, db, parent=None):
@@ -341,7 +344,8 @@ class SOTGCreateSchedule(QWidget):
         h.setGeometry(0, 0, WINDOW_W, HEADER_H)
         h.setStyleSheet(
             f"QFrame {{ background: {BG_PANEL}; "
-            f"border-bottom: 1px solid {rgba('#ffffff', 0.06)}; }}"
+            f"border-bottom: 1px solid {rgba('#ffffff', 0.06)}; }} "
+            f"QLabel {{ border: none; }}"
         )
 
         _HeaderLogo(h).move(14, 16)
@@ -798,7 +802,8 @@ class SOTGCreateSchedule(QWidget):
         sb.setGeometry(0, WINDOW_H - STATUS_H, WINDOW_W, STATUS_H)
         sb.setStyleSheet(
             f"QFrame {{ background: {BG_PANEL}; "
-            f"border-top: 1px solid {rgba('#ffffff', 0.06)}; }}"
+            f"border-top: 1px solid {rgba('#ffffff', 0.06)}; }} "
+            f"QLabel {{ border: none; }}"
         )
 
         x = 12

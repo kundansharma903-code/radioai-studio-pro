@@ -569,7 +569,8 @@ class SchedulingAutomationHub(QWidget):
         h.setGeometry(0, 0, WINDOW_W, HEADER_H)
         h.setStyleSheet(
             f"QFrame {{ background: {BG_PANEL}; "
-            f"border-bottom: 1px solid {rgba('#ffffff', 0.06)}; }}"
+            f"border-bottom: 1px solid {rgba('#ffffff', 0.06)}; }} "
+            f"QLabel {{ border: none; }}"
         )
 
         _HeaderLogo(h).move(14, 16)
@@ -653,11 +654,14 @@ class SchedulingAutomationHub(QWidget):
         title.setStyleSheet(
             f"color: {TEXT_PRI}; background: transparent; border: none;")
 
+        # Width stops BEFORE the hero stat pills (engine pill starts at
+        # x=964) — the previous 1100px labels ran underneath the cards
+        # (operator-reported overlap, 2026-07-03).
         sub1 = QLabel(
-            "AI rotates songs across sister categories every hour. "
-            "Listeners hear a fresh combination at every time slot — "
-            "no song repeats the same hour on consecutive days.", self)
-        sub1.setGeometry(60, 132, 1100, 18)
+            "AI rotates songs across sister categories every hour — "
+            "fresh combinations every slot, no same-hour repeat on "
+            "consecutive days.", self)
+        sub1.setGeometry(60, 132, 890, 18)
         sub1.setFont(inter(13, QFont.Weight.Medium))
         sub1.setStyleSheet(
             f"color: {TEXT_SEC}; background: transparent; border: none;")
@@ -666,7 +670,7 @@ class SchedulingAutomationHub(QWidget):
             "Engine runs continuously. Approve today's plan or let "
             "it auto-apply at 5 PM. Stop the engine anytime if you "
             "need full manual control.", self)
-        sub2.setGeometry(60, 152, 1100, 16)
+        sub2.setGeometry(60, 152, 890, 16)
         sub2.setFont(inter(11, QFont.Weight.Medium))
         sub2.setStyleSheet(
             f"color: {TEXT_MUTED}; background: transparent; "
@@ -882,7 +886,7 @@ class SchedulingAutomationHub(QWidget):
         hint = QLabel(
             "AUTO-APPLY ON = plan applies itself daily at the set time.",
             self)
-        hint.setGeometry(1140, 280, 240, 14)
+        hint.setGeometry(960, 280, 420, 14)
         hint.setFont(inter(10, italic=True))
         hint.setStyleSheet(
             f"color: {TEXT_MUTED}; background: transparent; "
@@ -1196,22 +1200,22 @@ class SchedulingAutomationHub(QWidget):
         icon.setStyleSheet(
             "background: transparent; border: none;")
 
-        ctitle = QLabel("REVIEW TODAY'S PLAN  →", cta)
-        ctitle.setGeometry(40, 12, 156, 16)
-        ctitle.setFont(inter(11, QFont.Weight.Bold, letter_spacing=0.8))
+        ctitle = QLabel("REVIEW TODAY'S PLAN →", cta)
+        ctitle.setGeometry(38, 12, 158, 16)
+        ctitle.setFont(inter(10, QFont.Weight.Bold, letter_spacing=0.6))
         ctitle.setStyleSheet(
             f"color: {PURPLE_LIGHT}; background: transparent; "
             f"border: none;")
 
-        csub = QLabel("Side-by-side: AI changes vs raw random", cta)
-        csub.setGeometry(40, 32, 156, 14)
+        csub = QLabel("AI changes vs raw random", cta)
+        csub.setGeometry(40, 32, 152, 14)
         csub.setFont(inter(9, QFont.Weight.Medium))
         csub.setStyleSheet(
             f"color: {TEXT_MUTED}; background: transparent; "
             f"border: none;")
 
-        cfooter = QLabel("Auto-applies at 5 PM if no decision", cta)
-        cfooter.setGeometry(40, 46, 156, 14)
+        cfooter = QLabel("Auto-applies if no decision", cta)
+        cfooter.setGeometry(40, 46, 152, 14)
         cfooter.setFont(inter(9, italic=True))
         cfooter.setStyleSheet(
             f"color: {AMBER_LIGHT}; background: transparent; "
@@ -1224,7 +1228,8 @@ class SchedulingAutomationHub(QWidget):
         sb.setGeometry(0, WINDOW_H - STATUS_H, WINDOW_W, STATUS_H)
         sb.setStyleSheet(
             f"QFrame {{ background: {BG_PANEL}; "
-            f"border-top: 1px solid {rgba('#ffffff', 0.06)}; }}"
+            f"border-top: 1px solid {rgba('#ffffff', 0.06)}; }} "
+            f"QLabel {{ border: none; }}"
         )
         x = 12
         engine_state = ({"ON": "Engine ON  ·  Continuous",

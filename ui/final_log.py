@@ -163,7 +163,8 @@ class _HeaderBar(QFrame):
         self.setFixedSize(WINDOW_W, HEADER_H)
         self.setStyleSheet(
             f"QFrame {{ background: {BG_PANEL}; "
-            f"border-bottom: 1px solid {rgba('#ffffff', 0.06)}; }}"
+            f"border-bottom: 1px solid {rgba('#ffffff', 0.06)}; }} "
+            f"QLabel {{ border: none; }}"
         )
 
         self._logo = _HeaderLogo(self)
@@ -174,7 +175,10 @@ class _HeaderBar(QFrame):
         self._title.setStyleSheet(
             f"color: {TEXT_PRI}; background: transparent; border: none;")
         self._title.move(76, 22)
-        self._title.setFixedHeight(28)
+        # Explicit width — height-only sizing left the QLabel at its
+        # 100px default width and the title clipped to "Final Log C"
+        # (audit 2026-07-03).
+        self._title.setFixedSize(240, 28)
 
         # Live date + time, right side
         self._date_lbl = QLabel("", self)
@@ -279,7 +283,8 @@ class _TabBar(QFrame):
         self.setFixedSize(WINDOW_W, TAB_H)
         self.setStyleSheet(
             f"QFrame {{ background: {BG_DARK}; "
-            f"border-bottom: 1px solid {rgba('#ffffff', 0.06)}; }}"
+            f"border-bottom: 1px solid {rgba('#ffffff', 0.06)}; }} "
+            f"QLabel {{ border: none; }}"
         )
 
         self._tabs: dict[str, _TopTab] = {}
@@ -689,7 +694,8 @@ class _StatusBar(QFrame):
         self.setFixedSize(WINDOW_W, STATUS_H)
         self.setStyleSheet(
             f"QFrame {{ background: {BG_PANEL}; "
-            f"border-top: 1px solid {rgba('#ffffff', 0.06)}; }}"
+            f"border-top: 1px solid {rgba('#ffffff', 0.06)}; }} "
+            f"QLabel {{ border: none; }}"
         )
 
         self._status_lbl = QLabel("Ready — pick a date and FETCH REPORT.", self)

@@ -1522,7 +1522,8 @@ class InstantJingles(QWidget):
         sb.setGeometry(0, STATUS_Y, WINDOW_W, STATUS_H)
         sb.setStyleSheet(
             f"QFrame {{ background: rgba(13,15,30,0.95); "
-            f"border-top: 1px solid {rgba('#ffffff', 0.06)}; }}"
+            f"border-top: 1px solid {rgba('#ffffff', 0.06)}; }} "
+            f"QLabel {{ border: none; }}"
         )
 
         # Three pill badges, left-aligned. Children of `sb`, not `self`,

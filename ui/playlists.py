@@ -57,7 +57,7 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import (
     QPainter, QColor, QPen, QBrush, QLinearGradient, QFont, QCursor,
-    QMouseEvent, QPainterPath,
+    QFontMetrics, QMouseEvent, QPainterPath,
 )
 from PyQt6.QtWidgets import (
     QWidget, QFrame, QLineEdit, QMessageBox,
@@ -202,11 +202,14 @@ class _FilterChip(QWidget):
         self._label = label
         self._count = 0
         self._active = False
-        self.setFixedSize(86, 30)
-        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-
         self._font_label = inter(11, QFont.Weight.Bold, letter_spacing=0.3)
         self._font_count = inter(11, QFont.Weight.Black)
+        # Width from the label — the old fixed 86px clipped "Imported"
+        # under its own count badge (audit 2026-07-03).
+        fm = QFontMetrics(self._font_label)
+        self._label_w = fm.horizontalAdvance(label) + 4
+        self.setFixedSize(12 + self._label_w + 6 + 28 + 10, 30)
+        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
 
     def set_count(self, n: int) -> None:
         if n != self._count:
@@ -226,7 +229,8 @@ class _FilterChip(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         path = QPainterPath()
-        path.addRoundedRect(QRectF(0, 0, 86, 30), 15, 15)
+        path.addRoundedRect(
+            QRectF(0, 0, self.width(), 30), 15, 15)
         if self._active:
             p.setBrush(_qcolor(COL_CYAN, 0.20))
             p.setPen(QPen(_qcolor(COL_CYAN, 0.50), 1))
@@ -238,11 +242,12 @@ class _FilterChip(QWidget):
             p.drawPath(path)
             p.setPen(QColor(COL_TEXT_SECONDARY))
         p.setFont(self._font_label)
-        p.drawText(QRectF(12, 7, 50, 16),
+        p.drawText(QRectF(12, 7, self._label_w, 16),
                    Qt.AlignmentFlag.AlignLeft, self._label)
-        # Count badge (28×16, right side)
+        # Count badge (28×16, right side, after the label)
+        badge_x = 12 + self._label_w + 6
         bg_path = QPainterPath()
-        bg_path.addRoundedRect(QRectF(50, 7, 28, 16), 8, 8)
+        bg_path.addRoundedRect(QRectF(badge_x, 7, 28, 16), 8, 8)
         if self._active:
             p.setBrush(_qcolor(COL_CYAN, 0.36))
             p.setPen(Qt.PenStyle.NoPen)
@@ -252,7 +257,7 @@ class _FilterChip(QWidget):
         p.drawPath(bg_path)
         p.setPen(QColor(COL_CYAN_LT if self._active else COL_TEXT_MUTED))
         p.setFont(self._font_count)
-        p.drawText(QRectF(50, 7, 28, 16),
+        p.drawText(QRectF(badge_x, 7, 28, 16),
                    Qt.AlignmentFlag.AlignCenter, str(self._count))
 
 
@@ -962,7 +967,7 @@ class Playlists(QWidget):
             chip.move(chip_x, 253)
             chip.clicked.connect(self._on_chip_clicked)
             self._chips[key] = chip
-            chip_x += 94    # 86 + 8 gap
+            chip_x += chip.width() + 8    # chips are label-sized now
 
         self._chips["all"].set_active(True)
 

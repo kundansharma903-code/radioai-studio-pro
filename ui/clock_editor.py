@@ -1209,7 +1209,7 @@ class _FilterResultsCard(QWidget):
         p.setPen(QColor(COL_TEXT_DIM)); p.setFont(self._font_dur_lbl)
         p.drawText(QRectF(15, 191, self.width() - 30, 14),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                   "ESTIMATED AVG DURATION")
+                   "EST. AVG DURATION")
         p.end()
 
 
@@ -1499,10 +1499,12 @@ class _ClockEditorCard(QWidget):
         p.drawText(QRectF(19, 15, 200, 18),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                    "Clock Editor")
-        # COLORIZE BY: label
+        # COLORIZE BY: label — starts earlier + wide enough so it ends
+        # BEFORE the dropdown at x=503 (the old 50px rect clipped it to
+        # "COLOR" half-hidden behind the combo; audit 2026-07-03).
         p.setPen(QColor(COL_TEXT_DIM)); p.setFont(self._font_clbl)
-        p.drawText(QRectF(465, 21, 50, 12),
-                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+        p.drawText(QRectF(410, 21, 88, 12),
+                   Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
                    "COLORIZE BY:")
 
         # Status bar

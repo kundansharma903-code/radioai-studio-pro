@@ -201,7 +201,6 @@ class _BreadcrumbLink(QPushButton):
 class _BreadcrumbPill(QFrame):
     def __init__(self, label: str, accent: str = PURPLE, parent=None):
         super().__init__(parent)
-        self.setFixedSize(124, 32)
         self.setStyleSheet(
             f"QFrame {{ background: {rgba(accent, 0.18)}; "
             f"border: 1px solid {rgba(accent, 0.40)}; border-radius: 16px; }}"
@@ -215,6 +214,10 @@ class _BreadcrumbPill(QFrame):
             f"border: none;")
         lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         h.addWidget(lbl)
+        # Size from the label — the old fixed 124px clipped longer
+        # crumbs ("Cat. Performance" lost its first letters; audit
+        # 2026-07-03).
+        self.setFixedSize(max(124, lbl.sizeHint().width() + 28), 32)
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -755,7 +758,8 @@ class PlayHistory(QWidget):
         h.setGeometry(0, 0, WINDOW_W, HEADER_H)
         h.setStyleSheet(
             f"QFrame {{ background: {BG_PANEL}; "
-            f"border-bottom: 1px solid {rgba('#ffffff', 0.06)}; }}"
+            f"border-bottom: 1px solid {rgba('#ffffff', 0.06)}; }} "
+            f"QLabel {{ border: none; }}"
         )
 
         _HeaderLogo(h).move(14, 16)
@@ -860,7 +864,8 @@ class PlayHistory(QWidget):
         sb.setGeometry(0, WINDOW_H - STATUS_H, WINDOW_W, STATUS_H)
         sb.setStyleSheet(
             f"QFrame {{ background: {BG_PANEL}; "
-            f"border-top: 1px solid {rgba('#ffffff', 0.06)}; }}"
+            f"border-top: 1px solid {rgba('#ffffff', 0.06)}; }} "
+            f"QLabel {{ border: none; }}"
         )
         x = 12
         for txt, col in (("AUTO MODE", PURPLE),

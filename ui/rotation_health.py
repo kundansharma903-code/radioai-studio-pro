@@ -795,7 +795,8 @@ class RotationHealthScreen(QWidget):
         h.setGeometry(0, 0, WINDOW_W, HEADER_H)
         h.setStyleSheet(
             f"QFrame {{ background: {BG_PANEL}; "
-            f"border-bottom: 1px solid {rgba('#ffffff', 0.06)}; }}")
+            f"border-bottom: 1px solid {rgba('#ffffff', 0.06)}; }} "
+            f"QLabel {{ border: none; }}")
 
         _HeaderLogo(h).move(14, 16)
         l = QLabel("RadioAI", h)
@@ -962,7 +963,8 @@ class RotationHealthScreen(QWidget):
         sb.setGeometry(0, WINDOW_H - STATUS_H, WINDOW_W, STATUS_H)
         sb.setStyleSheet(
             f"QFrame {{ background: {BG_PANEL}; "
-            f"border-top: 1px solid {rgba('#ffffff', 0.06)}; }}")
+            f"border-top: 1px solid {rgba('#ffffff', 0.06)}; }} "
+            f"QLabel {{ border: none; }}")
         hint = QLabel(
             "Empty cards hidden by default  ·  hover any row to see "
             "play counts  ·  refresh to re-pull after the next AI tick",

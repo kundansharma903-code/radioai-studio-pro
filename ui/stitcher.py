@@ -576,12 +576,14 @@ class _SamplePlaylistRow(QFrame):
         p.drawText(QRectF(24, 0, 140, self.height()),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                    (self._song.get("artist") or "—")[:24])
-        # Title
+        # Title — 150px column so the hook label keeps real room in
+        # the ~515px row (the old 200px column left it ~30px and it
+        # rendered as "No h…"; audit 2026-07-03).
         p.setPen(QColor(TEXT_SEC)); p.setFont(inter(10))
-        p.drawText(QRectF(168, 0, 200, self.height()),
+        p.drawText(QRectF(168, 0, 150, self.height()),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                   (self._song.get("title") or "—")[:30])
-        # Hook range
+                   (self._song.get("title") or "—")[:22])
+        # Hook range — ends BEFORE the Set Hook button when present
         if self._has_hook:
             hi = int(self._song.get("hook_in_ms") or 0)
             ho = int(self._song.get("hook_out_ms") or 0)
@@ -592,7 +594,10 @@ class _SamplePlaylistRow(QFrame):
             label = "No hook set ⚠"
             p.setPen(QColor(AMBER))
             p.setFont(inter(9, QFont.Weight.Bold))
-        p.drawText(QRectF(380, 0, self.width() - 484, self.height()),
+        right_pad = 100 if self._set_btn is not None else 12
+        p.drawText(QRectF(326, 0,
+                          max(40, self.width() - 326 - right_pad),
+                          self.height()),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                    label)
 
@@ -1212,11 +1217,13 @@ class Stitcher(QWidget):
         cards_y = 50
         self._stat_used = _StatCard("Times Used Today", "—", CYAN, wrap)
         self._stat_used.move(0, cards_y)
+        # Shorter titles — the 126px card clipped "AVG LISTENER
+        # RETENT…" / "SONGS WITHOUT HOO…" (audit 2026-07-03).
         self._stat_retention = _StatCard(
-            "Avg Listener Retention", "—", GREEN, wrap)
+            "Avg Retention", "—", GREEN, wrap)
         self._stat_retention.move(132, cards_y)
         self._stat_no_hooks = _StatCard(
-            "Songs Without Hooks", "—", RED, wrap)
+            "No-Hook Songs", "—", RED, wrap)
         self._stat_no_hooks.move(264, cards_y)
 
         # AUTO-SET HOOKS — energy-based chorus detection over the whole
@@ -1291,7 +1298,8 @@ class Stitcher(QWidget):
         sb.setGeometry(0, WINDOW_H - STATUS_H, WINDOW_W, STATUS_H)
         sb.setStyleSheet(
             f"QFrame {{ background: rgba(13,15,30,0.95); "
-            f"border-top: 1px solid {rgba('#ffffff', 0.06)}; }}"
+            f"border-top: 1px solid {rgba('#ffffff', 0.06)}; }} "
+            f"QLabel {{ border: none; }}"
         )
 
         def _pill(x, text, fg, bg, w=110):

@@ -434,7 +434,8 @@ class CategoryPerformance(QWidget):
         h.setGeometry(0, 0, WINDOW_W, HEADER_H)
         h.setStyleSheet(
             f"QFrame {{ background: {BG_PANEL}; "
-            f"border-bottom: 1px solid {rgba('#ffffff', 0.06)}; }}"
+            f"border-bottom: 1px solid {rgba('#ffffff', 0.06)}; }} "
+            f"QLabel {{ border: none; }}"
         )
 
         _HeaderLogo(h).move(14, 16)
@@ -533,7 +534,8 @@ class CategoryPerformance(QWidget):
         sb.setGeometry(0, WINDOW_H - STATUS_H, WINDOW_W, STATUS_H)
         sb.setStyleSheet(
             f"QFrame {{ background: {BG_PANEL}; "
-            f"border-top: 1px solid {rgba('#ffffff', 0.06)}; }}"
+            f"border-top: 1px solid {rgba('#ffffff', 0.06)}; }} "
+            f"QLabel {{ border: none; }}"
         )
         x = 12
         for txt, col in (("AUTO MODE", PURPLE),

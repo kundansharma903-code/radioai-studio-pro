@@ -1174,11 +1174,13 @@ class _FilterPanel(QWidget):
         r = QRectF(0, 0, self.width(), self.height())
         _qfill_card(p, r)
         _qstroke_card(p, r, radius=10)
-        # Songs Found pill
+        # Songs Found pill — "{n} Found": the longer wording overflowed
+        # the 70px slot before the Search button and clipped to
+        # "0 Songs Fou" (audit 2026-07-03).
         p.setPen(QColor(COL_AMBER_LT)); p.setFont(self._font_count)
         p.drawText(QRectF(245, 16, 70, 30),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                   f"{self._results_count} Songs Found")
+                   f"{self._results_count} Found")
         # Helper line
         p.setPen(QColor(COL_TEXT_SECONDARY)); p.setFont(self._font_helper)
         p.drawText(QRectF(404, 96, 200, 44),

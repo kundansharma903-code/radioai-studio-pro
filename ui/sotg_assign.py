@@ -962,7 +962,8 @@ class SOTGAssign(QWidget):
         h.setGeometry(0, 0, WINDOW_W, HEADER_H)
         h.setStyleSheet(
             f"QFrame {{ background: {BG_PANEL}; "
-            f"border-bottom: 1px solid {rgba('#ffffff', 0.06)}; }}"
+            f"border-bottom: 1px solid {rgba('#ffffff', 0.06)}; }} "
+            f"QLabel {{ border: none; }}"
         )
 
         _HeaderLogo(h).move(14, 16)
@@ -1374,9 +1375,11 @@ class SOTGAssign(QWidget):
         pill(base_x + 192,  GREEN,     GREEN_LIGHT, "✓", "FIRED")
         pill(base_x + 288,  RED,       "#fb7185",  "✕", "MISSED")
         pill(base_x + 384,  AMBER,     AMBER_LIGHT, "⚠", "CONFLICT")
+        # Shorter copy — the long line overflowed the 480px label and
+        # clipped mid-word at the panel edge (audit 2026-07-03).
         ex = QLabel(
-            "✦ CONFLICT: a paid Spots & Commercials break occupies "
-            "this minute — paid spot will win, this link slips.",
+            "✦ CONFLICT: a paid break owns this minute — the paid "
+            "spot wins, this link slips.",
             card)
         ex.setGeometry(base_x + 480, ly + 6, 480, 18)
         ex.setFont(inter(10))
@@ -1582,7 +1585,8 @@ class SOTGAssign(QWidget):
         sb.setGeometry(0, WINDOW_H - STATUS_H, WINDOW_W, STATUS_H)
         sb.setStyleSheet(
             f"QFrame {{ background: {BG_PANEL}; "
-            f"border-top: 1px solid {rgba('#ffffff', 0.06)}; }}"
+            f"border-top: 1px solid {rgba('#ffffff', 0.06)}; }} "
+            f"QLabel {{ border: none; }}"
         )
 
         x = 12
