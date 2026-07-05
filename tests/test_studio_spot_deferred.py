@@ -359,7 +359,7 @@ def test_spot_chain_fires_in_fifo_order_on_eos(qtbot, studio,
 
     # Stub the spot-load path so we don't need real DB rows.
     fired_order: list[int] = []
-    def _stub_fire(campaign_id: int) -> None:
+    def _stub_fire(campaign_id: int, _policy_exempt: bool = False) -> None:
         fired_order.append(int(campaign_id))
         # Simulate the spot starting on a fresh channel.
         studio._playback_cid = 9000 + len(fired_order)
@@ -448,7 +448,7 @@ def test_sotg_fires_before_spot_when_both_pending(qtbot, studio,
     cid_song = studio._playback_cid
 
     fire_log: list[tuple[str, int]] = []
-    def _stub_spot_fire(campaign_id: int) -> None:
+    def _stub_spot_fire(campaign_id: int, _policy_exempt: bool = False) -> None:
         fire_log.append(("spot", int(campaign_id)))
         studio._playback_cid = 9001
         studio._playback_kind = "spot"

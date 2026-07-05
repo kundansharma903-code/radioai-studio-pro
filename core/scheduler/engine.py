@@ -685,7 +685,20 @@ class SchedulerEngine(QObject):
         out: list[dict] = []
         try:
             for _ in range(n):
-                item = self.pick_next_item(now=now)
+                # Per-pick guard (2026-07-04): one failing simulated
+                # pick must degrade to a SHORTER preview, not kill the
+                # whole peek — the overnight session lost its Up Coming
+                # panel to a single deep-picker exception, and the app
+                # hard-crashed ~50s later. Traceback logged so the next
+                # occurrence pinpoints the real file:line.
+                try:
+                    item = self.pick_next_item(now=now)
+                except Exception:
+                    import traceback as _tb
+                    log.warning("peek_next: simulated pick failed — "
+                                "returning partial preview\n"
+                                f"{_tb.format_exc()}")
+                    break
                 if item is None:
                     break
                 out.append(item)

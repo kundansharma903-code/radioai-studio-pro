@@ -2166,7 +2166,16 @@ class SpotsCommercials(QWidget):
             self._refresh_detail_panel()
 
     def _on_break_settings(self):
-        log.info("Break Settings dialog — TBD")
+        """Break Policy dialog (2026-07-04) — windows, hourly ad
+        budget, master ON/OFF. Studio applies changes live."""
+        try:
+            from ui.dialogs.break_policy_dialog import BreakPolicyDialog
+            dlg = BreakPolicyDialog(self._db, parent=self)
+            dlg.exec()
+        except Exception as exc:
+            log.error(f"break policy dialog failed: {exc}",
+                      exc_info=True)
+            dialogs.error(self, "Break Settings", str(exc))
 
     def _on_delete_campaign(self):
         if not self._selected_id:

@@ -186,6 +186,88 @@ def test_no_arm_when_trigger_before_every_break_off(qtbot, db, cfg_snapshot, stu
     assert s._teased_songs == []
 
 
+class _PeekOnlyScheduler:
+    """Minimal running scheduler exposing just what
+    _arm_stitcher_tease consults (is_running + peek_next +
+    current_active_clock)."""
+
+    def __init__(self, items, clock_id=None):
+        self._items = list(items)
+        self._clock_id = clock_id
+
+    def is_running(self) -> bool:
+        return True
+
+    def peek_next(self, n=5, now=None):
+        return self._items[:n]
+
+    def current_active_clock(self):
+        return (self._clock_id, "TEST CLOCK")
+
+
+def test_tease_falls_to_clock_category_not_static(qtbot, db,
+                                                  cfg_snapshot, studio):
+    """Heavy-ad-hour regression (2026-07-05): when peek yields no
+    songs, pins must come from the ACTIVE CLOCK'S category pool — NOT
+    the blind id-order static queue that leaked Morning Vibes songs
+    into Pool hours."""
+    s, eng, sti = studio
+    # A real clock whose song slots have a category with playable songs.
+    row = db._conn().execute(
+        "SELECT s.category_id, COUNT(*) n FROM songs s "
+        "WHERE s.is_enabled=1 AND s.file_path!='' "
+        "GROUP BY s.category_id HAVING n>=3 ORDER BY n DESC LIMIT 1"
+    ).fetchone()
+    if not row or row["category_id"] is None:
+        pytest.skip("no category with >=3 playable songs")
+    cat_id = int(row["category_id"])
+    clock_id = db.create_clock("TEST tease-pool clock")
+    db.save_clock_slots(clock_id, [
+        {"slot_type": "song", "selection_mode": "random_from_category",
+         "category_id": cat_id}])
+    try:
+        # peek returns ONLY breaks → no songs → must hit clock pool.
+        s._scheduler = _PeekOnlyScheduler(
+            [{"item_type": "break", "item_id": 1, "title": "AD"}],
+            clock_id=clock_id)
+        s._upcoming_preview = []
+        s._on_scheduler_break_warn(30)
+        assert len(s._teased_songs) >= 1
+        pool_ids = {r["id"] for r in
+                    db.get_songs_in_categories([cat_id])}
+        assert all(int(t["id"]) in pool_ids for t in s._teased_songs)
+    finally:
+        db.delete_clock(clock_id)
+
+
+def test_arm_pins_come_from_clock_peek_first(qtbot, db, cfg_snapshot,
+                                             studio):
+    """Operator directive 2026-07-04 ('spot apni jagah, categories
+    apni jagah'): with a RUNNING scheduler the tease pins must be the
+    active clock's peek songs — NOT the visible static tray. Overnight
+    07-03 every ~10-min spot re-anchored the night onto static pins,
+    airing wrong-category songs inside Pool hours."""
+    s, eng, sti = studio
+    cards = _real_song_cards(db, n=6)
+    clock_songs, tray_pollution = cards[:3], cards[3:]
+    peek_items = [{"item_type": "jingle", "item_id": 12345,
+                   "title": "J", "artist": "", "file_path": "x",
+                   "duration_ms": 1000}]      # non-song must be skipped
+    peek_items += [{"item_type": "song", "item_id": c["id"],
+                    "title": c["title"], "artist": c["artist"],
+                    "file_path": c["file_path"],
+                    "duration_ms": c["duration_ms"]}
+                   for c in clock_songs]
+    s._scheduler = _PeekOnlyScheduler(peek_items)
+    s._upcoming_preview = [dict(c) for c in tray_pollution]
+
+    s._on_scheduler_break_warn(30)
+
+    assert [t["id"] for t in s._teased_songs] == \
+        [c["id"] for c in clock_songs]
+    assert all("hook_in_ms" in t for t in s._teased_songs)
+
+
 def test_arm_pins_visible_preview_songs_in_order(qtbot, db, cfg_snapshot, studio):
     """Arm must pin the SONG cards the operator sees (spot/SOTG cards
     skipped), hydrated with hook cue points, order preserved."""
@@ -275,8 +357,9 @@ def test_tease_done_fires_pending_spot_chain(qtbot, db, cfg_snapshot, studio, mo
     monkeypatch.setattr(StitcherEngine, "assemble_sequence",
                         staticmethod(lambda _cfg, _songs: seq))
     fired: list[int] = []
-    monkeypatch.setattr(s, "_do_scheduler_spot_due",
-                        lambda cid: fired.append(int(cid)))
+    monkeypatch.setattr(
+        s, "_do_scheduler_spot_due",
+        lambda cid, _policy_exempt=False: fired.append(int(cid)))
     s._pending_spots.append(4242)
     assert s._maybe_play_tease_first(anchor_id=11) is True
     sti._running = False

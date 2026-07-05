@@ -128,6 +128,14 @@ INSERT OR IGNORE INTO spot_schedules (day_of_week, hour, minute, max_duration_mi
     (NULL, 21, 30, 5, 1),
     (NULL, 22, 30, 5, 1);
 
+-- ── Break Policy (2026-07-04) — OFF by default: original per-
+-- campaign spot firing stays byte-identical until the operator
+-- enables the policy from the Spots & Commercials screen.
+INSERT OR IGNORE INTO settings (key, value) VALUES
+    ('break_policy_enabled',              '0'),
+    ('break_policy_windows',              '15,30,45'),
+    ('break_policy_max_ad_seconds_hour',  '660');
+
 -- ── Stitcher Default Config ───────────────────────────────────────
 INSERT OR IGNORE INTO stitcher_config (id) VALUES (1);
 

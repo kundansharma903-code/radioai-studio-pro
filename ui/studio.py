@@ -3617,6 +3617,14 @@ class _BottomTransport(QWidget):
         self._loaded_total = "0:00:00"
         self._font_load_lbl = inter(8, QFont.Weight.Bold, letter_spacing=1.4)
         self._font_load_val = mono(20, bold=True, letter_spacing=-0.5)
+        # ADS THIS HOUR meter state (break policy, 2026-07-04). The
+        # operator repurposed this strip: LOADED PLAYLIST + seek
+        # slider carried no operational value — the hourly ad-budget
+        # meter does. Play/Stop/AutoPlay/cluster stay functional.
+        self._ads_meter = {"aired_s": 0.0, "pending_s": 0.0,
+                           "max_s": 660, "fraction": 0.0,
+                           "level": "ok"}
+        self._ads_pending_n = 0
 
         # Center transport
         self._play = _CircleBtn("▶", GREEN, 56, self)
@@ -3630,6 +3638,7 @@ class _BottomTransport(QWidget):
         self._slider = _ProgressSlider(self)
         self._slider.move(510, 14)
         self._slider.seek_requested.connect(self.seek_requested.emit)
+        self._slider.hide()      # replaced by the ADS meter bar
 
         self._autoplay = _AutoPlayToggle(self)
         self._autoplay.move(910, 22)
@@ -3655,6 +3664,16 @@ class _BottomTransport(QWidget):
             return
         self._loaded_total = txt
         self.update(QRect(0, 0, 360, self.height()))
+
+    def set_ads_meter(self, state: dict, pending_n: int = 0) -> None:
+        """Live hourly ad-budget readout (break policy). `state` comes
+        from core.break_policy.meter_state()."""
+        if (state == self._ads_meter
+                and pending_n == self._ads_pending_n):
+            return
+        self._ads_meter = dict(state)
+        self._ads_pending_n = int(pending_n)
+        self.update(QRect(0, 0, 1070, self.height()))
 
     def set_progress(self, frac: float, elapsed_s: int = 0,
                      total_s: int = 0) -> None:
@@ -3687,37 +3706,58 @@ class _BottomTransport(QWidget):
         p.setPen(QPen(QColor(255, 255, 255, 18)))
         p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 12, 12)
 
-        # Loaded Playlist label
-        p.setPen(QColor(GREEN_LIGHT)); p.setFont(self._font_load_lbl)
-        p.drawText(QRectF(20, 14, 200, 12),
+        # ── ADS THIS HOUR meter (break policy, 2026-07-04) ──
+        # Replaces the decorative LOADED PLAYLIST + $ + ≡ + seek zone.
+        m = self._ads_meter
+        level_color = {"ok": GREEN, "warn": AMBER,
+                       "over": RED}.get(m.get("level"), GREEN)
+        level_light = {"ok": GREEN_LIGHT, "warn": AMBER_LIGHT,
+                       "over": "#fb7185"}.get(m.get("level"),
+                                              GREEN_LIGHT)
+        from core.break_policy import fmt_mmss as _fmt
+        p.setPen(QColor(level_light)); p.setFont(self._font_load_lbl)
+        p.drawText(QRectF(20, 14, 220, 12),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                   "LOADED PLAYLIST")
-        # Big total time
-        p.setPen(QColor(AMBER_LIGHT)); p.setFont(self._font_load_val)
-        p.drawText(QRectF(20, 30, 220, 28),
+                   "ADS THIS HOUR")
+        p.setPen(QColor(level_light)); p.setFont(self._font_load_val)
+        p.drawText(QRectF(20, 30, 340, 28),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                   self._loaded_total)
-        # $ pill (green)
-        dollar = QRectF(220, 22, 38, 36)
-        dg = QLinearGradient(0, 22, 0, 58)
-        dg.setColorAt(0.0, _qcolor_a(GREEN, 0.30))
-        dg.setColorAt(1.0, _qcolor_a(GREEN, 0.10))
-        p.fillRect(dollar, QBrush(dg))
+                   f"{_fmt(m.get('aired_s', 0))} / "
+                   f"{_fmt(m.get('max_s', 660))}")
+
+        # Budget bar in the old slider zone
+        bar = QRectF(510, 32, 380, 10)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(255, 255, 255, 16))
+        p.drawRoundedRect(bar, 5, 5)
+        frac = max(0.0, min(1.0, float(m.get("fraction") or 0.0)))
+        if frac > 0:
+            fill = QRectF(510, 32, 380 * frac, 10)
+            p.setBrush(_qcolor_a(level_color, 0.85))
+            p.drawRoundedRect(fill, 5, 5)
+        # 80% guideline notch
         p.setBrush(Qt.BrushStyle.NoBrush)
-        p.setPen(QPen(_qcolor_a(GREEN, 0.45)))
-        p.drawRoundedRect(dollar.adjusted(0.5, 0.5, -0.5, -0.5), 6, 6)
-        p.setPen(QColor(GREEN_LIGHT))
-        p.setFont(inter(15, QFont.Weight.Bold))
-        p.drawText(dollar, Qt.AlignmentFlag.AlignCenter, "$")
-        # ≡ menu
-        menu = QRectF(266, 22, 38, 36)
-        p.fillRect(menu, QColor(7, 8, 16, 178))
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        p.setPen(QPen(QColor(255, 255, 255, 30)))
-        p.drawRoundedRect(menu.adjusted(0.5, 0.5, -0.5, -0.5), 6, 6)
-        p.setPen(QColor(TEXT_SEC))
-        p.setFont(inter(15, QFont.Weight.Bold))
-        p.drawText(menu, Qt.AlignmentFlag.AlignCenter, "≡")
+        p.setPen(QPen(QColor(255, 255, 255, 60), 1))
+        notch_x = 510 + 380 * 0.8
+        p.drawLine(int(notch_x), 28, int(notch_x), 46)
+
+        # Pending readout (right of the bar)
+        pend_s = float(m.get("pending_s") or 0)
+        if self._ads_pending_n or pend_s:
+            p.setPen(QColor(TEXT_SEC))
+            p.setFont(inter(10, QFont.Weight.Medium))
+            p.drawText(QRectF(510, 48, 380, 14),
+                       Qt.AlignmentFlag.AlignRight
+                       | Qt.AlignmentFlag.AlignVCenter,
+                       f"+{self._ads_pending_n} pending "
+                       f"({_fmt(pend_s)})")
+        elif m.get("level") == "over":
+            p.setPen(QColor("#fb7185"))
+            p.setFont(inter(10, QFont.Weight.Bold))
+            p.drawText(QRectF(510, 48, 380, 14),
+                       Qt.AlignmentFlag.AlignRight
+                       | Qt.AlignmentFlag.AlignVCenter,
+                       "HOURLY AD LIMIT REACHED")
         p.end()
 
 
@@ -3909,6 +3949,18 @@ class Studio(QWidget):
         # time → sab playlist queue mai added ho jaye on top"). Stop-
         # next / Loop / AUTO-off drain the whole list (saari drop).
         self._pending_spots: list[int] = []
+        # Break Policy valve (2026-07-04, operator-approved). When
+        # break_policy_enabled=1, spot_due campaigns are HELD here
+        # instead of entering _pending_spots directly; the 1Hz tick
+        # releases the pool at the configured window minutes
+        # (:15/:30/:45 default) after an hourly ad-budget check +
+        # ad-category interleave (competitive separation). Policy OFF
+        # (the default) = this list stays empty and the original flow
+        # is byte-identical. Entries: {campaign_id, category,
+        # duration_ms, held_at}.
+        self._break_pool: list[dict] = []
+        self._break_release_key: str = ""     # one release per window
+        self._last_aired_ad_category: str = ""  # interleave seam
         # Spot on the Go dispatch state. ``_pending_sotgs`` is the FIFO
         # list of LOW-priority drops (and SOTG drops deferred during a
         # paid spot) waiting to fire. HIGH-priority drops fade the deck
@@ -4628,7 +4680,7 @@ class Studio(QWidget):
                 f"{pending} ({len(self._pending_spots)} more spots pending)")
             self._quick_duck_outgoing_for_dispatch(fading_cid)
             try:
-                self._do_scheduler_spot_due(pending)
+                self._do_scheduler_spot_due(pending, _policy_exempt=True)
             except Exception as exc:
                 log.warning(
                     f"[studio] crossfade→spot fire failed: {exc}")
@@ -5071,7 +5123,8 @@ class Studio(QWidget):
                 log.info(
                     f"[studio] spot EOS → chain next pending spot "
                     f"{pending} ({len(self._pending_spots)} more spots)")
-                self._do_scheduler_spot_due(pending)
+                self._do_scheduler_spot_due(pending,
+                                            _policy_exempt=True)
                 return
             # Promised post-break songs first (break-tease pin), then
             # the normal queue resume.
@@ -5112,7 +5165,8 @@ class Studio(QWidget):
                 log.info(
                     f"[studio] sotg EOS → firing pending spot "
                     f"{pending} ({len(self._pending_spots)} more spots)")
-                self._do_scheduler_spot_due(pending)
+                self._do_scheduler_spot_due(pending,
+                                            _policy_exempt=True)
                 return
             next_song = self._pop_next_teased_song()
             if next_song is None:
@@ -5188,7 +5242,8 @@ class Studio(QWidget):
                 log.info(
                     f"[studio] song EOS → playing pending spot {pending} "
                     f"({len(self._pending_spots)} more spots remaining)")
-                self._do_scheduler_spot_due(pending)
+                self._do_scheduler_spot_due(pending,
+                                            _policy_exempt=True)
                 return
             cur_id = (pre_track or {}).get("id")
             # Promised post-break songs air in pinned order before the
@@ -5715,9 +5770,32 @@ class Studio(QWidget):
             log.error(f"[studio] spot_due handler crashed: "
                       f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}")
 
-    def _do_scheduler_spot_due(self, campaign_id: int) -> None:
+    def _do_scheduler_spot_due(self, campaign_id: int,
+                               _policy_exempt: bool = False) -> None:
         if self._engine is None:
             log.warning(f"[studio] spot_due {campaign_id} — no engine")
+            return
+        # Break Policy valve (2026-07-04): when the policy is ON, a due
+        # spot is HELD for the next break window instead of queueing/
+        # firing now. `_policy_exempt` marks calls coming FROM the
+        # window release itself (and the EOS chain), which must reach
+        # the original dispatcher below. Policy OFF → this block is a
+        # no-op and the classic flow runs untouched.
+        if not _policy_exempt and self._break_policy_enabled():
+            entry = self._pool_spot_entry(campaign_id)
+            self._break_pool.append(entry)
+            from core.break_policy import next_window_at
+            try:
+                nxt = next_window_at(datetime.now(),
+                                     self._break_policy_windows())
+                nxt_txt = nxt.strftime("%H:%M")
+            except Exception:
+                nxt_txt = "next window"
+            log.info(
+                f"[break-policy] spot {campaign_id} "
+                f"({entry['category'] or 'others'}) held for the "
+                f"{nxt_txt} break window "
+                f"({len(self._break_pool)} in pool)")
             return
         # Deferred dispatch — when a song or another spot/SOTG is
         # currently playing on the deck, do NOT interrupt. Append the
@@ -5787,6 +5865,14 @@ class Studio(QWidget):
         self._playback_cid = cid
         self._playback_kind = "spot"
         self._playback_campaign_id = int(campaign_id)
+        # Competitive-separation seam: remember this client's ad
+        # category so the NEXT break's interleave doesn't open with
+        # the same category this one closed with.
+        try:
+            self._last_aired_ad_category = \
+                self._db.get_campaign_ad_category_name(int(campaign_id))
+        except Exception:
+            pass
         chosen_keys = set(chosen.keys())
         chosen_duration_ms = int(chosen["duration_ms"] or 0) \
             if "duration_ms" in chosen_keys else 0
@@ -6123,12 +6209,47 @@ class Studio(QWidget):
         except Exception as exc:
             log.warning(f"[studio] stitcher arm failed: {exc}")
 
+    def _active_clock_song_pool(self) -> list[dict]:
+        """Playable songs belonging to the ACTIVE clock's own song-slot
+        categories (2026-07-05 tease-pin fallback). Empty when no clock
+        is resolved. Shuffled so repeated calls vary."""
+        if self._scheduler is None:
+            return []
+        try:
+            clock_id, _name = self._scheduler.current_active_clock()
+        except Exception:
+            clock_id = None
+        if not clock_id:
+            return []
+        try:
+            slots = self._db.get_clock_slots(int(clock_id))
+        except Exception:
+            return []
+        cat_ids = set()
+        for sl in slots or []:
+            keys = sl.keys() if hasattr(sl, "keys") else []
+            stype = (sl["slot_type"] if "slot_type" in keys else "") or ""
+            cid = (sl["category_id"] if "category_id" in keys else None)
+            if str(stype).strip().lower() == "song" and cid:
+                cat_ids.add(int(cid))
+        if not cat_ids:
+            return []
+        try:
+            pool = self._db.get_songs_in_categories(list(cat_ids))
+        except Exception:
+            return []
+        import random
+        random.shuffle(pool)
+        return pool
+
     def _arm_stitcher_tease(self) -> None:
         """Pin the up-to-3 songs that will air AFTER the pending break
         and keep them for (a) the tease montage and (b) post-break
-        dispatch. Sources the VISIBLE Up Coming preview first — the
-        tease must promise exactly what the operator/listener sees —
-        falling back to the consumed-aware static-queue walk.
+        dispatch. Source order (operator directive 2026-07-04 — spots
+        must never derail category scheduling):
+          1. scheduler.peek_next — the active clock's OWN songs
+          2. visible Up Coming song cards (live-assist / idle)
+          3. consumed-aware static-queue walk (no scheduler at all)
         Config-gated (module_enabled + trigger_before_every_break).
         Idempotent while a tease is already armed."""
         if self._teased_songs or self._stitcher_tease_playing:
@@ -6147,18 +6268,74 @@ class Studio(QWidget):
 
         picked: list[dict] = []
         seen: set = set()
-        # 1st choice: song cards already visible in Up Coming.
-        for card in list(getattr(self, "_upcoming_preview", []) or []):
-            if (card.get("_item_type") or "song") != "song":
-                continue
-            sid = int(card.get("id") or 0)
-            if sid <= 0 or sid in seen:
-                continue
-            picked.append(dict(card))
-            seen.add(sid)
-            if len(picked) >= 3:
-                break
-        # Fallback: walk the static queue exactly like dispatch would.
+        # 1st choice (operator directive 2026-07-04: "spot apni jagah,
+        # categories apni jagah"): the ACTIVE CLOCK's own upcoming
+        # songs via a non-destructive peek. Overnight 07-03 every ~10min
+        # spot re-anchored the night onto STATIC-tray pins, so wrong-
+        # category songs aired inside Pool hours. Promises must come
+        # from the scheduled category; peek is cheap here (fast ladder
+        # under the _suppress_queue_emit gate).
+        if self._scheduler is not None:
+            try:
+                if self._scheduler.is_running():
+                    # Deeper peek (2026-07-05): in heavy-ad hours the
+                    # first few peek items can be break/sweeper rows,
+                    # leaving <3 songs → the pins fell to the blind
+                    # static id-order queue, which pulls low-id
+                    # Morning Vibes songs into Pool hours. 12 gives
+                    # enough real songs to fill the tease.
+                    for it in (self._scheduler.peek_next(12) or []):
+                        if not it or (it.get("item_type")
+                                      or "song") != "song":
+                            continue
+                        sid = int(it.get("item_id") or 0)
+                        if sid <= 0 or sid in seen:
+                            continue
+                        picked.append({
+                            "id":          sid,
+                            "title":       it.get("title"),
+                            "artist":      it.get("artist"),
+                            "file_path":   it.get("file_path"),
+                            "duration_ms": it.get("duration_ms"),
+                        })
+                        seen.add(sid)
+                        if len(picked) >= 3:
+                            break
+            except Exception as exc:
+                log.debug(f"[stitcher] tease peek failed: {exc}")
+        # 2nd choice: song cards already visible in Up Coming
+        # (live-assist / scheduler idle — promise what the operator
+        # sees).
+        if len(picked) < 3:
+            for card in list(getattr(self, "_upcoming_preview", [])
+                             or []):
+                if (card.get("_item_type") or "song") != "song":
+                    continue
+                sid = int(card.get("id") or 0)
+                if sid <= 0 or sid in seen:
+                    continue
+                picked.append(dict(card))
+                seen.add(sid)
+                if len(picked) >= 3:
+                    break
+        # 3rd choice (2026-07-05): the ACTIVE CLOCK'S OWN category pool
+        # — keeps pins in-category even when peek/preview came up short,
+        # instead of the blind id-order static queue that leaked
+        # Morning Vibes into Pool hours.
+        if len(picked) < 3 and self._scheduler is not None:
+            try:
+                for s in self._active_clock_song_pool():
+                    sid = int(s.get("id") or 0)
+                    if sid <= 0 or sid in seen:
+                        continue
+                    picked.append(dict(s))
+                    seen.add(sid)
+                    if len(picked) >= 3:
+                        break
+            except Exception as exc:
+                log.debug(f"[stitcher] clock-pool fallback failed: {exc}")
+        # Last resort: walk the static queue exactly like dispatch
+        # would with no scheduler at all.
         if len(picked) < 3:
             after = (self._current_track or {}).get("id")
             probe = self._static_next_after(after)
@@ -6257,7 +6434,7 @@ class Studio(QWidget):
         if self._pending_spots:
             pending = int(self._pending_spots.pop(0))
             self._pre_spot_song_id = anchor
-            self._do_scheduler_spot_due(pending)
+            self._do_scheduler_spot_due(pending, _policy_exempt=True)
             return
         # Pending drained mid-block (stop-next etc.) → resume queue.
         nxt = self._pop_next_teased_song()
@@ -7069,9 +7246,12 @@ class Studio(QWidget):
 
         # 1. Pending SOTGs first (operator priority: SOTG > Spot).
         for assignment in list(self._pending_sotgs):
+            if not assignment:                    # None-guard (2026-07-05)
+                continue
             try:
-                translated.append(
-                    self._pending_sotg_to_card(dict(assignment)))
+                card = self._pending_sotg_to_card(dict(assignment))
+                if card:
+                    translated.append(card)
                 already_queued_sotg_aids.add(
                     int(assignment.get("assignment_id") or 0))
             except Exception as exc:
@@ -7080,8 +7260,12 @@ class Studio(QWidget):
 
         # 2. Pending spots.
         for cid in list(self._pending_spots):
+            if not cid:                           # None-guard (2026-07-05)
+                continue
             try:
-                translated.append(self._pending_spot_to_card(int(cid)))
+                card = self._pending_spot_to_card(int(cid))
+                if card:
+                    translated.append(card)
                 already_queued_spot_ids.add(int(cid))
             except Exception as exc:
                 log.warning(
@@ -7144,9 +7328,17 @@ class Studio(QWidget):
             try:
                 items = self._scheduler.peek_next(5)
             except Exception as exc:
-                log.warning(f"[studio] peek_next failed: {exc}")
+                # Full traceback — the overnight 2026-07-04 01:28
+                # "'NoneType' object does not support item assignment"
+                # failure could not be located from the message alone;
+                # the next occurrence must pinpoint file:line.
+                import traceback as _tb
+                log.warning(f"[studio] peek_next failed: {exc}\n"
+                            f"{_tb.format_exc()}")
                 items = []
             for it in items[:5]:
+                if not it:
+                    continue          # defensive: never render a None item
                 try:
                     iid = int(it.get("item_id") or 0)
                     if iid and iid in teased_ids:
@@ -7188,7 +7380,11 @@ class Studio(QWidget):
                 if len(translated) >= 8:
                     break
 
-        self._upcoming_preview = translated
+        # Final None-guard (2026-07-05): no malformed/None card ever
+        # reaches the panel render — a bad dict here is the kind of
+        # thing that precedes the Qt fastfail during a crossfade.
+        self._upcoming_preview = [c for c in translated
+                                  if isinstance(c, dict)]
         self._refresh_upcoming_panel()
 
     # ── T-60s upcoming-dispatch preview (2026-05-17 operator request) ────
@@ -7332,20 +7528,178 @@ class Studio(QWidget):
         self._upcoming_preview_sotgs = upcoming_sotgs
         return changed
 
+    # ── Break Policy valve (2026-07-04) ──────────────────────────────────
+    # One pipeline, one truth: policy ON holds due spots in
+    # _break_pool; window release pushes them into the SAME
+    # _pending_spots FIFO the original system always used. Policy OFF
+    # (default) — none of this code runs on the dispatch path.
+
+    def _break_policy_enabled(self) -> bool:
+        try:
+            return Settings().get_bool("break_policy_enabled", False)
+        except Exception:
+            return False
+
+    def _break_policy_windows(self) -> tuple:
+        from core.break_policy import parse_windows
+        try:
+            return parse_windows(
+                Settings().get("break_policy_windows", "15,30,45"))
+        except Exception:
+            return (15, 30, 45)
+
+    def _break_policy_max_seconds(self) -> int:
+        try:
+            return max(60, Settings().get_int(
+                "break_policy_max_ad_seconds_hour", 660))
+        except Exception:
+            return 660
+
+    def _pool_spot_entry(self, campaign_id: int) -> dict:
+        cat = ""
+        dur = 0
+        try:
+            cat = self._db.get_campaign_ad_category_name(
+                int(campaign_id))
+        except Exception:
+            pass
+        try:
+            dur = self._db.get_campaign_spot_duration_ms(
+                int(campaign_id))
+        except Exception:
+            pass
+        return {"campaign_id": int(campaign_id), "category": cat,
+                "duration_ms": int(dur or 0),
+                "held_at": datetime.now().strftime("%H:%M:%S")}
+
+    def _tick_break_policy(self, now) -> None:
+        """1Hz. Policy OFF with a leftover pool (operator just flipped
+        the toggle) → flush immediately (passthrough). Policy ON →
+        release once per open window minute."""
+        if not self._break_pool:
+            return
+        from core.break_policy import is_window_open
+        if not self._break_policy_enabled():
+            log.info("[break-policy] policy OFF with held spots — "
+                     "flushing pool to the classic FIFO")
+            self._release_break_pool(now, budget_check=False)
+            return
+        if not is_window_open(now, self._break_policy_windows()):
+            return
+        key = now.strftime("%Y%m%d%H%M")
+        if key == self._break_release_key:
+            return                      # already released this window
+        self._break_release_key = key
+        self._release_break_pool(now, budget_check=True)
+
+    def _release_break_pool(self, now, *, budget_check: bool) -> None:
+        """Budget-split + category-interleave the held spots, then hand
+        them to the ORIGINAL pending machinery (same FIFO, same EOS
+        chain, same tease). Overflow stays pooled → next window /
+        next hour re-checks automatically."""
+        from core.break_policy import (budget_split, fmt_mmss,
+                                       hour_start,
+                                       interleave_by_category)
+        pool = list(self._break_pool)
+        if not pool:
+            return
+        if budget_check:
+            try:
+                aired = self._db.get_spot_seconds_aired_since(
+                    hour_start(now).strftime("%Y-%m-%d %H:%M:%S"))
+            except Exception as exc:
+                log.warning(f"[break-policy] aired lookup failed: "
+                            f"{exc} — releasing without budget")
+                aired = 0.0
+            fits, deferred = budget_split(
+                pool, aired, self._break_policy_max_seconds())
+        else:
+            fits, deferred = pool, []
+        self._break_pool = deferred
+        if deferred:
+            log.warning(
+                f"[break-policy] hourly ad budget "
+                f"({fmt_mmss(self._break_policy_max_seconds())}) — "
+                f"{len(deferred)} spot(s) deferred to the next window/"
+                f"hour: {[e['campaign_id'] for e in deferred]}")
+        if not fits:
+            return
+        ordered = interleave_by_category(
+            fits, prev_category=self._last_aired_ad_category)
+        self._pending_spots.extend(
+            int(e["campaign_id"]) for e in ordered)
+        log.info(
+            f"[break-policy] window {now.strftime('%H:%M')} — "
+            f"released {len(ordered)} spot(s) "
+            f"{[(e['campaign_id'], e['category'] or 'others') for e in ordered]}"
+            + (f", {len(deferred)} deferred" if deferred else ""))
+        # Same follow-ups the classic enqueue path does.
+        try:
+            self._arm_stitcher_tease()
+        except Exception as exc:
+            log.debug(f"[break-policy] tease arm: {exc}")
+        try:
+            self._load_upcoming_queue()
+        except Exception as exc:
+            log.debug(f"[break-policy] upcoming refresh: {exc}")
+        # Idle deck has no EOS to drain the FIFO — kick the first spot
+        # directly through the original dispatcher (policy-exempt so it
+        # doesn't re-pool).
+        if self._playback_cid is None and self._pending_spots:
+            first = self._pending_spots.pop(0)
+            log.info(f"[break-policy] deck idle — firing spot {first} "
+                     f"directly")
+            try:
+                self._do_scheduler_spot_due(first, _policy_exempt=True)
+            except Exception as exc:
+                log.warning(f"[break-policy] idle fire failed: {exc}")
+
+    def _update_ads_meter(self, now) -> None:
+        """1Hz bottom-bar refresh: aired ad-seconds this clock hour
+        (broadcast_log — the same rows the certificate uses) + pending
+        (pool + FIFO estimate)."""
+        transport = getattr(self, "_bottom", None)
+        if transport is None:
+            return
+        from core.break_policy import hour_start, meter_state
+        aired = self._db.get_spot_seconds_aired_since(
+            hour_start(now).strftime("%Y-%m-%d %H:%M:%S"))
+        pending_s = self._break_pool_pending_seconds()
+        pending_n = len(self._break_pool) + len(self._pending_spots)
+        transport.set_ads_meter(
+            meter_state(aired, pending_s,
+                        self._break_policy_max_seconds()),
+            pending_n)
+
+    def _break_pool_pending_seconds(self) -> float:
+        """Held + queued spot seconds — the meter's 'pending' side."""
+        total_ms = sum(int(e.get("duration_ms") or 0) or 30_000
+                       for e in self._break_pool)
+        for cid in self._pending_spots:
+            try:
+                total_ms += (self._db.get_campaign_spot_duration_ms(
+                    int(cid)) or 30_000)
+            except Exception:
+                total_ms += 30_000
+        return total_ms / 1000.0
+
     # ── Pending-dispatch helpers ──────────────────────────────────────────
 
     def _drain_pending_dispatches(self, *, reason: str) -> None:
-        """Clear BOTH pending FIFO lists (spots + SOTGs). Called by
-        stop-next, loop, AUTO-off — paths where the operator has
-        explicitly opted out of auto-firing dispatches."""
+        """Clear BOTH pending FIFO lists (spots + SOTGs) AND the
+        break-policy pool. Called by stop-next, loop, AUTO-off — paths
+        where the operator has explicitly opted out of auto-firing
+        dispatches."""
         n_spots = len(self._pending_spots)
         n_sotgs = len(self._pending_sotgs)
         n_tease = len(self._teased_songs)
-        if not (n_spots or n_sotgs or n_tease
+        n_pool = len(self._break_pool)
+        if not (n_spots or n_sotgs or n_tease or n_pool
                 or self._stitcher_tease_playing):
             return
         self._pending_spots.clear()
         self._pending_sotgs.clear()
+        self._break_pool.clear()
         # Tease pin dies with the break it promised.
         self._teased_songs.clear()
         if self._stitcher_tease_playing and self._stitcher_engine:
@@ -7356,7 +7710,8 @@ class Studio(QWidget):
             self._stitcher_tease_playing = False
         log.info(
             f"[studio] {reason} dropped {n_spots} pending spot(s) "
-            f"+ {n_sotgs} pending SOTG(s) + {n_tease} teased song(s)")
+            f"+ {n_sotgs} pending SOTG(s) + {n_tease} teased song(s)"
+            + (f" + {n_pool} pooled spot(s)" if n_pool else ""))
         # Re-render so the operator sees the queue clear immediately.
         try:
             self._load_upcoming_queue()
@@ -7506,7 +7861,8 @@ class Studio(QWidget):
                     # mirrors what scheduled spots do. Operator clicks
                     # → spot fires now if the deck is idle, or queues
                     # for next song-end if a track is on air.
-                    self._do_scheduler_spot_due(campaign_id)
+                    self._do_scheduler_spot_due(campaign_id,
+                                                _policy_exempt=True)
             return
         # Songs (and the placeholder types) reuse the existing deck path.
         if 0 <= idx < len(self._queue_songs):
@@ -8164,6 +8520,18 @@ class Studio(QWidget):
             now.strftime("%H:%M:%S"),
             day=now.strftime("%A").upper(),
             date=now.strftime("%b %d, %Y").upper())
+        # Break Policy — release held spots at window minutes. No-op
+        # when the pool is empty (policy OFF keeps it empty).
+        try:
+            self._tick_break_policy(now)
+        except Exception as exc:
+            log.warning(f"[break-policy] tick failed: {exc}")
+        # ADS THIS HOUR meter (bottom bar) — always live, policy ON
+        # or OFF: the compliance number matters either way.
+        try:
+            self._update_ads_meter(now)
+        except Exception as exc:
+            log.debug(f"[break-policy] meter update: {exc}")
         # 2026-05-17 (rev) — refresh the T-60s upcoming preview lists
         # and ONLY rebuild the queue panel if the lists actually
         # changed. The previous unconditional rebuild every tick was
@@ -8193,9 +8561,14 @@ class Studio(QWidget):
             try:
                 self._load_upcoming_queue()
             except Exception as exc:
+                # FULL traceback (2026-07-05): both overnight crashes
+                # were preceded ~6-50s by a swallowed NoneType error in
+                # THIS path. The bare message ('...has no attribute
+                # partition') hid the real line — the traceback pins it.
+                import traceback as _tb
                 log.warning(
                     f"[studio] upcoming queue rebuild failed: "
-                    f"{type(exc).__name__}: {exc}")
+                    f"{type(exc).__name__}: {exc}\n{_tb.format_exc()}")
         else:
             # No real change — just re-render cached cards so AT
             # timestamps stay fresh.

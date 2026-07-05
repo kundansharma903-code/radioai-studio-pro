@@ -3941,6 +3941,99 @@ class Database:
 
     # ── Scheduler dispatch helpers (Phase D4) ────────────────────────────────
 
+    # ── Ad Categories + Break Policy (2026-07-04) ────────────────────────
+    # Competitive separation: campaigns carry an ad_category_id so the
+    # break-policy interleave never airs same-category clients
+    # back-to-back. Runtime-ensured (live DB never re-runs schema.sql).
+
+    AD_CATEGORY_DEFAULTS = ("Education", "Healthcare", "Automobile",
+                            "Resto Hotel", "Gas Station", "Others")
+
+    def _ensure_ad_categories(self) -> None:
+        conn = self._conn()
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS ad_categories ("
+            " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            " name TEXT NOT NULL UNIQUE)")
+        for name in self.AD_CATEGORY_DEFAULTS:
+            conn.execute(
+                "INSERT OR IGNORE INTO ad_categories (name) VALUES (?)",
+                [name])
+        cols = {r[1] for r in conn.execute(
+            "PRAGMA table_info(campaigns)").fetchall()}
+        if "ad_category_id" not in cols:
+            conn.execute(
+                "ALTER TABLE campaigns ADD COLUMN ad_category_id INTEGER")
+        conn.commit()
+
+    def get_ad_categories(self) -> list:
+        """[{id, name}] sorted by name; 'Others' pinned last."""
+        self._ensure_ad_categories()
+        rows = self._conn().execute(
+            "SELECT id, name FROM ad_categories "
+            "ORDER BY (name = 'Others'), name COLLATE NOCASE").fetchall()
+        return [{k: r[k] for k in r.keys()} for r in rows]
+
+    def add_ad_category(self, name: str) -> int:
+        """Create (or return existing) ad category by exact name."""
+        self._ensure_ad_categories()
+        nm = (name or "").strip()
+        if not nm:
+            raise ValueError("ad category name empty")
+        conn = self._conn()
+        conn.execute(
+            "INSERT OR IGNORE INTO ad_categories (name) VALUES (?)", [nm])
+        conn.commit()
+        row = conn.execute(
+            "SELECT id FROM ad_categories WHERE name = ?", [nm]).fetchone()
+        return int(row["id"])
+
+    def set_campaign_ad_category(self, campaign_id: int,
+                                 ad_category_id) -> None:
+        """Assign the client's competitive category (None = Others)."""
+        self._ensure_ad_categories()
+        conn = self._conn()
+        conn.execute(
+            "UPDATE campaigns SET ad_category_id = ? WHERE id = ?",
+            [None if ad_category_id is None else int(ad_category_id),
+             int(campaign_id)])
+        conn.commit()
+
+    def get_campaign_ad_category_name(self, campaign_id: int) -> str:
+        """Category NAME for the interleaver ('' when unset)."""
+        self._ensure_ad_categories()
+        row = self._conn().execute(
+            "SELECT ac.name AS nm FROM campaigns c "
+            "LEFT JOIN ad_categories ac ON ac.id = c.ad_category_id "
+            "WHERE c.id = ?", [int(campaign_id)]).fetchone()
+        return str(row["nm"]) if row and row["nm"] else ""
+
+    def get_spot_seconds_aired_since(self, since_iso: str) -> float:
+        """SUM of spot durations aired at/after `since_iso` — the
+        hourly ad-budget's 'already spent' side (broadcast_log is the
+        single source of truth, same rows the certificate uses)."""
+        row = self._conn().execute(
+            "SELECT COALESCE(SUM(duration_ms), 0) AS ms "
+            "FROM broadcast_log "
+            "WHERE entry_type = 'spot' AND played_at >= ?",
+            [str(since_iso)]).fetchone()
+        return float(row["ms"] or 0) / 1000.0
+
+    def get_campaign_spot_duration_ms(self, campaign_id: int) -> int:
+        """Duration of the campaign's first playable spot file — what
+        the dispatcher will actually air (budget estimation)."""
+        rows = self._conn().execute(
+            "SELECT file_path, duration_ms, is_active FROM spot_files "
+            "WHERE campaign_id = ? ORDER BY id", [int(campaign_id)]
+        ).fetchall()
+        for r in rows:
+            keys = r.keys()
+            fp = r["file_path"] if "file_path" in keys else None
+            act = r["is_active"] if "is_active" in keys else 1
+            if fp and int(act or 0):
+                return int(r["duration_ms"] or 0)
+        return 0
+
     def get_active_breaks_for_day(self, day_of_week: int) -> List[sqlite3.Row]:
         """Return all campaign_schedule rows for a given day-of-week
         (0=Mon … 6=Sun) where the campaign is active and not past its

@@ -67,7 +67,7 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import (
     QWidget, QFrame, QLabel, QPushButton, QComboBox, QHBoxLayout, QVBoxLayout,
-    QScrollArea, QMessageBox, QMenu, QCheckBox, QSizePolicy,
+    QScrollArea, QMessageBox, QMenu, QCheckBox, QSizePolicy, QSpinBox,
 )
 
 from ui.widgets._tokens import (
@@ -996,6 +996,53 @@ class SpotProgrammingDialog(BaseDialog):
         action_row.addWidget(set_mode)
         v.addLayout(action_row)
 
+        # ── AUTO-DISTRIBUTE (2026-07-04, operator-approved) ──
+        # "20 rotations, 8 AM–9 PM" → one click picks evenly-spread
+        # break-window times for EVERY day and fills the grid; the
+        # generated list doubles as the client's time sheet.
+        v.addSpacing(8)
+        v.addWidget(_sidebar_label("Auto-Distribute"))
+        ad_row1 = QHBoxLayout(); ad_row1.setSpacing(6)
+        self._ad_rotations = QSpinBox()
+        self._ad_rotations.setRange(1, 200)
+        self._ad_rotations.setValue(20)
+        self._ad_rotations.setFont(inter(10, QFont.Weight.DemiBold))
+        self._ad_rotations.setStyleSheet(
+            f"QSpinBox {{ background: {BG_CARD}; color: {TEXT_PRI}; "
+            f"border: 1px solid {rgba('#ffffff', 0.08)}; "
+            f"border-radius: 5px; padding: 3px 6px; }}")
+        rot_lbl = QLabel("rotations/day")
+        rot_lbl.setFont(inter(9))
+        rot_lbl.setStyleSheet(
+            f"color: {TEXT_SEC}; background: transparent;")
+        ad_row1.addWidget(self._ad_rotations)
+        ad_row1.addWidget(rot_lbl, stretch=1)
+        v.addLayout(ad_row1)
+        ad_row2 = QHBoxLayout(); ad_row2.setSpacing(6)
+        hours = [f"{h:02d}:00" for h in range(24)]
+        self._ad_from = _sidebar_combo(hours, "08:00")
+        self._ad_to = _sidebar_combo(hours, "21:00")
+        ad_row2.addWidget(self._ad_from)
+        to_lbl = QLabel("to")
+        to_lbl.setFont(inter(9))
+        to_lbl.setStyleSheet(
+            f"color: {TEXT_MUTED}; background: transparent;")
+        ad_row2.addWidget(to_lbl)
+        ad_row2.addWidget(self._ad_to)
+        v.addLayout(ad_row2)
+        auto_btn = QPushButton("✦ Auto-Distribute")
+        auto_btn.setFixedHeight(30)
+        auto_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        auto_btn.setFont(inter(10, QFont.Weight.Bold))
+        auto_btn.setStyleSheet(
+            f"QPushButton {{ background: {rgba(CYAN, 0.18)}; "
+            f"color: {CYAN_LIGHT}; "
+            f"border: 1px solid {rgba(CYAN, 0.40)}; "
+            f"border-radius: 5px; padding: 0 10px; }}"
+            f"QPushButton:hover {{ background: {rgba(CYAN, 0.28)}; }}")
+        auto_btn.clicked.connect(self._on_auto_distribute)
+        v.addWidget(auto_btn)
+
         v.addSpacing(8)
         v.addWidget(_sidebar_label("Break Preview"))
         # Preview area placeholder
@@ -1174,6 +1221,58 @@ class SpotProgrammingDialog(BaseDialog):
                    "Remove every scheduled break across all 7 days?",
                    danger=True, yes_label="Clear All"):
             self._grid.clear_all()
+
+    def _on_auto_distribute(self):
+        """One click: evenly spread N rotations/day across the break-
+        window times in the chosen range, every day of the week. The
+        resulting list = the client's TIME SHEET (also copied to the
+        clipboard). Existing grid cells stay; duplicates merge."""
+        from core.break_policy import (auto_distribute_slots,
+                                       parse_windows)
+        from core.settings import Settings
+        rotations = int(self._ad_rotations.value())
+        try:
+            from_h = int(self._ad_from.currentText().split(":")[0])
+            to_h = int(self._ad_to.currentText().split(":")[0])
+        except (ValueError, IndexError):
+            from_h, to_h = 8, 21
+        if to_h <= from_h:
+            dialogs.warning(self, "Auto-Distribute",
+                            "'To' hour must be after 'From' hour.")
+            return
+        windows = parse_windows(
+            Settings().get("break_policy_windows", "15,30,45"))
+        times = auto_distribute_slots(rotations, from_h, to_h, windows)
+        if not times:
+            dialogs.warning(self, "Auto-Distribute",
+                            "No break-window slots in that range.")
+            return
+        priority = self._priority_combo.currentText() or "Medium"
+        added = 0
+        for t in times:
+            slot = _time_to_slot(t)
+            if slot is None:
+                continue
+            for day in range(7):
+                self._grid.add_break(day, slot, priority)
+                added += 1
+        self._count_display.set_count(len(self._grid.get_breaks()))
+        sheet = "  ·  ".join(times)
+        try:
+            from PyQt6.QtWidgets import QApplication
+            QApplication.clipboard().setText(
+                f"Daily rotations ({len(times)}x): " + ", ".join(times))
+        except Exception:
+            pass
+        log.info(f"[auto-distribute] {len(times)} rotations/day × 7 "
+                 f"days placed ({from_h:02d}:00-{to_h:02d}:00, "
+                 f"windows={windows})")
+        dialogs.info(
+            self, "Auto-Distribute — Client Time Sheet",
+            f"{len(times)} rotations/day placed for all 7 days "
+            f"(priority {priority}).\n\n{sheet}\n\n"
+            f"Time sheet copied to clipboard — paste into the "
+            f"client's WhatsApp/email. Click Apply Schedule to save.")
 
     def _on_set_mode(self):
         # TODO: open a sub-dialog for advanced bulk-mode editing.

@@ -744,6 +744,25 @@ class AddCampaignDialog(BaseDialog):
         row4.addWidget(self._playback_combo,   1, 3)
         v.addLayout(row4)
 
+        # Row 4.5 — Ad Category (competitive separation, 2026-07-04).
+        # The break-policy interleaver uses this to keep same-category
+        # clients (3 schools…) from airing back-to-back. Client-level:
+        # one pick covers every spot file the campaign ever gets.
+        row45 = QGridLayout(); row45.setContentsMargins(0, 0, 0, 0)
+        row45.setHorizontalSpacing(10); row45.setVerticalSpacing(2)
+        row45.addWidget(_field_label(
+            "Ad Category  ·  same-category ads never play "
+            "back-to-back"), 0, 0)
+        self._ad_category_combo = QComboBox()
+        self._ad_category_combo.setFont(inter(10))
+        self._ad_category_combo.setStyleSheet(
+            self._category_combo.styleSheet())
+        self._reload_ad_categories()
+        self._ad_category_combo.activated.connect(
+            self._on_ad_category_activated)
+        row45.addWidget(self._ad_category_combo, 1, 0)
+        v.addLayout(row45)
+
         # Comments
         v.addWidget(_field_label("Comments"))
         self._comments_input = QTextEdit()
@@ -1123,6 +1142,59 @@ class AddCampaignDialog(BaseDialog):
 
     # ── Save ──────────────────────────────────────────────────────────────
 
+    # ── Ad Category (competitive separation) helpers ─────────────────
+
+    _ADD_NEW_SENTINEL = "➕  Add new category…"
+
+    def _reload_ad_categories(self, select_id=None) -> None:
+        cmb = self._ad_category_combo
+        cmb.blockSignals(True)
+        cmb.clear()
+        try:
+            cats = self._db.get_ad_categories()
+        except Exception:
+            cats = []
+        for c in cats:
+            cmb.addItem(c["name"], c["id"])
+        cmb.addItem(self._ADD_NEW_SENTINEL, None)
+        # Preselect: explicit id → campaign's saved id (edit mode) →
+        # 'Others'
+        want = select_id
+        if want is None and self._edit_id is not None:
+            try:
+                row = self._db.execute(
+                    "SELECT ad_category_id FROM campaigns WHERE id = ?",
+                    (int(self._edit_id),))
+                want = row[0]["ad_category_id"] if row else None
+            except Exception:
+                want = None
+        idx = cmb.findData(want) if want is not None else -1
+        if idx < 0:
+            idx = cmb.findText("Others")
+        cmb.setCurrentIndex(max(0, idx))
+        cmb.blockSignals(False)
+
+    def _on_ad_category_activated(self, index: int) -> None:
+        if self._ad_category_combo.itemText(index) != \
+                self._ADD_NEW_SENTINEL:
+            return
+        from PyQt6.QtWidgets import QInputDialog
+        name, ok = QInputDialog.getText(
+            self, "New Ad Category",
+            "Category name (e.g. Jewellery):")
+        if ok and (name or "").strip():
+            try:
+                new_id = self._db.add_ad_category(name.strip())
+                self._reload_ad_categories(select_id=new_id)
+                return
+            except Exception as exc:
+                dialogs.warning(self, "Add category failed", str(exc))
+        self._reload_ad_categories()
+
+    def _selected_ad_category_id(self):
+        data = self._ad_category_combo.currentData()
+        return int(data) if data is not None else None
+
     def _on_save(self):
         title = (self._title_input.text() or "").strip()
         if not title:
@@ -1182,6 +1254,13 @@ class AddCampaignDialog(BaseDialog):
                 target_id = self._db.add_campaign(data)
                 log.info(f"campaign saved id={target_id} "
                          f"auto_code={self._auto_code} name={title!r}")
+
+            # Competitive-separation category (both modes).
+            try:
+                self._db.set_campaign_ad_category(
+                    target_id, self._selected_ad_category_id())
+            except Exception as exc:
+                log.warning(f"ad category save failed: {exc}")
 
             # Persist any audio files queued in the panel.
             # In edit mode, files added during this session are appended;
