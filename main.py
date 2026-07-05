@@ -147,6 +147,62 @@ def main():
     except Exception as exc:
         log.warning(f"win_console patch failed: {exc}")
 
+    # 1.6. Hard-crash black box. The 2026-07-04 01:29 on-air crash
+    # (Qt6Core.dll, 0xc0000409 fail-fast) left NO trace of what Python
+    # was doing — Windows Event Log names the DLL, never our code.
+    # faulthandler dumps every thread's Python stack into
+    # Logs/crash_dump.txt at the moment of a fatal fault, so the next
+    # hard crash is diagnosable. File handle stays open for the whole
+    # process lifetime (faulthandler writes from the crash context).
+    try:
+        import faulthandler
+        from core.constants import LOG_PATH as _LP
+        from datetime import datetime as _fh_dt
+        _crash_f = open(os.path.join(_LP, "crash_dump.txt"), "a",
+                        encoding="utf-8", errors="replace")
+        _crash_f.write(f"\n=== session {_fh_dt.now():%Y-%m-%d %H:%M:%S}"
+                       f" (pid={os.getpid()}) ===\n")
+        _crash_f.flush()
+        faulthandler.enable(file=_crash_f, all_threads=True)
+        globals()["_faulthandler_file"] = _crash_f   # keep alive
+        log.info("faulthandler armed -> Logs/crash_dump.txt")
+    except Exception as exc:
+        log.warning(f"faulthandler setup failed: {exc}")
+
+    # 1.7. Windows structured-exception black box. The overnight crashes
+    # (Qt6Core 0xc0000409) are __fastfail / stack-buffer-overrun that
+    # faulthandler's SIGSEGV/SIGABRT hooks DON'T see. A vectored
+    # exception handler runs BEFORE the OS terminates the process, so
+    # it can dump the Python stack of every thread the moment the fault
+    # is raised — finally giving a real culprit line next time.
+    try:
+        from core.crash_catcher import install_windows_crash_catcher
+        install_windows_crash_catcher()
+        log.info("Windows crash catcher armed (vectored SEH)")
+    except Exception as exc:
+        log.warning(f"crash catcher setup failed: {exc}")
+
+    # 1.8. Uptime heartbeat — both overnight crashes hit at ~8h uptime.
+    # A 30-min marker in the log lets us see how close the fault lands
+    # to an hourly rotation / a specific event, and confirms the app
+    # was alive right up to the crash.
+    try:
+        from PyQt6.QtCore import QTimer as _HbTimer
+        import time as _hb_time
+        _boot_ts = _hb_time.monotonic()
+
+        def _heartbeat():
+            up = int(_hb_time.monotonic() - _boot_ts)
+            log.info(f"[heartbeat] uptime {up // 3600}h{(up % 3600) // 60}m "
+                     f"— alive")
+        _hb = _HbTimer()
+        _hb.setInterval(30 * 60 * 1000)
+        _hb.timeout.connect(_heartbeat)
+        _hb.start()
+        globals()["_heartbeat_timer"] = _hb          # keep alive
+    except Exception as exc:
+        log.warning(f"heartbeat setup failed: {exc}")
+
     # 2. Sleep prevention
     prevent_sleep()
     log.info("Sleep prevention active")
@@ -205,6 +261,14 @@ def main():
         log.info(
             "[boot] another RadioAI instance is already running — "
             "asked it to come to the front; exiting this copy")
+        # Intentional exit — this copy's watchdog (spawned later)
+        # never armed, but stamp the marker anyway so any WAITING
+        # watchdog from a previous session doesn't misread this exit.
+        try:
+            from core.watchdog import write_clean_exit_marker
+            write_clean_exit_marker()
+        except Exception:
+            pass
         sys.exit(0)
     # Clear a stale socket left by a crashed previous instance, then
     # claim the name. If listen still fails, log + continue unguarded
@@ -416,12 +480,29 @@ def main():
     except Exception:
         pass
 
+    # 8.9. Crash watchdog (operator-approved 2026-07-04) — armed AFTER
+    # the single-instance guard so only the real broadcast instance is
+    # watched. Frozen-exe only; dev runs stay freely killable. If the
+    # app dies WITHOUT the clean-exit marker below, the watchdog
+    # relaunches it in ~30s (crash-loop guard: 3 tries / 10 min).
+    try:
+        from core.watchdog import start_watchdog, write_clean_exit_marker
+        start_watchdog()
+    except Exception as exc:
+        log.warning(f"watchdog arm failed: {exc}")
+
     # 9. Event loop
     exit_code = app.exec()
 
     # 10. Cleanup
     bass_free()
     allow_sleep()
+    # Intentional shutdown — stand the watchdog down BEFORE the
+    # process ends (fresh marker = no restart).
+    try:
+        write_clean_exit_marker()
+    except Exception:
+        pass
     log.info(f"RadioAI Studio Pro exiting (code {exit_code})")
     sys.exit(exit_code)
 

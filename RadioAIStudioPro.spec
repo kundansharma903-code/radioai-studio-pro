@@ -48,6 +48,8 @@ datas = [
     ("assets/logo.png",           "assets"),
     ("assets/style.qss",          "assets"),
     ("assets/premium.qss",        "assets"),
+    # Crash watchdog script — spawned by the app at boot (core/watchdog.py)
+    ("assets/watchdog.ps1",       "assets"),
     # Fonts directory — recurse-bundle every TTF/OTF inside
     ("assets/fonts",              "assets/fonts"),
     # Database schema + seeds — used for fresh-install bootstrap
