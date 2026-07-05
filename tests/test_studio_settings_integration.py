@@ -366,6 +366,9 @@ def test_crossfade_overlap_starts_next_song(
     s._fade_triggered_for_cid = None
     s._current_track = {"id": 1, "mix_point_ms": 0}
 
+    logged: list = []
+    s._db.log_play = lambda **kw: logged.append(kw)
+
     s._maybe_trigger_fade_out(11, 55_000)
     # Fade started on the old channel
     assert eng.fade_calls == [(11, 0, 3000)]
@@ -374,6 +377,11 @@ def test_crossfade_overlap_starts_next_song(
     assert s._fading_cid == 11
     assert s._playback_cid == 101  # 100 + first load
     assert s._current_track is next_song
+    # 2026-07-05 fix: the crossfade-advanced song is now written to
+    # broadcast_log (previously only spot-path songs were logged, so
+    # Play History / certificate under-counted songs).
+    assert any(k.get("song_id") == 99 and k.get("entry_type") == "song"
+               for k in logged), "crossfade song must hit broadcast_log"
 
 
 def test_crossfade_tail_eos_cleans_up_old_channel(

@@ -4751,6 +4751,16 @@ class Studio(QWidget):
         except Exception as exc:
             log.debug(f"[studio] crossfade UI sync: {exc}")
 
+        # Log the crossfade-advanced song (2026-07-05 fix): this path
+        # bypassed _on_queue_song_play, so smoothly-segued songs never
+        # reached broadcast_log — Play History / reports / the
+        # certificate under-counted songs. Now every aired song lands.
+        try:
+            self._write_broadcast_log(nxt)
+            self._refresh_history()
+        except Exception as exc:
+            log.debug(f"[studio] crossfade log_play: {exc}")
+
         log.info(
             f"[studio] crossfade started — old_ch={old_cid} "
             f"new_ch={new_cid} song={nxt.get('title')!r}")
@@ -4930,13 +4940,40 @@ class Studio(QWidget):
         # accepts Optional clock_id / slot_idx so legacy/manual plays
         # land cleanly with NULL attribution columns.
         #
-        # Rapid-fire guard: skip log_play if the same song id was just
-        # logged within the last 5 seconds. Prevents the rapid-fire EOS
-        # loop pattern (file errors out 0ms in → auto-advance picks
-        # same song from single-slot clock → repeats) from polluting
-        # broadcast_log with duplicate rows that swamp the History
-        # panel. Spots are NOT guarded — back-to-back spots from
-        # different campaigns are legitimate.
+        self._write_broadcast_log(song)
+
+        # Phase 1 (2026-05-17) — register a BASS_SYNC_POS at the song's
+        # mix point so the audio engine notifies us SAMPLE-ACCURATELY
+        # when the trigger position is reached. Falls back to
+        # fade_out_start (seconds before EOS) when no per-song mix
+        # point is set.
+        try:
+            self._register_mix_point_sync(cid, song)
+        except Exception as exc:
+            log.debug(f"[studio] mix-point sync registration failed: {exc}")
+
+        _clk = song.get("_clock_id")
+        log.info(
+            f"[studio] deck play ch={cid} "
+            f"{song.get('_item_type', 'song')} id={song.get('id')} "
+            f"{song.get('title')!r} dur_ms={self._current_duration_ms}"
+            + (f" — scheduler clock_id={_clk}" if _clk else " — manual"))
+
+        # Refresh the History panel so the just-started track appears
+        # at the top immediately, not on the next spot-EOS event.
+        self._refresh_history()
+
+    def _write_broadcast_log(self, song: dict) -> None:
+        """Write ONE broadcast_log row for a just-started item. Shared
+        by the queue-play path AND the crossfade auto-advance path
+        (2026-07-05 fix: crossfade-advanced songs were airing but never
+        logged, so Play History / reports / the broadcast certificate
+        under-counted songs while every ad showed — ~137 songs aired
+        overnight but only 34 logged).
+
+        Rapid-fire guard: skip if the same song id was logged within
+        the last 5s (EOS-loop dedupe). Spots are never guarded —
+        back-to-back spots from different campaigns are legitimate."""
         from datetime import datetime as _dt, timedelta as _td
         clock_id  = song.get("_clock_id")
         slot_idx  = song.get("_slot_idx")
@@ -4945,56 +4982,32 @@ class Studio(QWidget):
         song_id = (int(song.get("id"))
                    if (item_type == "song" and song.get("id")) else None)
         now_dt = _dt.now()
-        skip_log = False
         if item_type == "song" and song_id is not None:
             last = self._recent_song_logs.get(song_id)
             if last is not None and now_dt - last < _td(seconds=5):
-                skip_log = True
                 log.warning(
                     f"[studio] skipping duplicate log for song {song_id} "
                     f"(< 5s since last log) — likely EOS-loop guard")
-        if not skip_log:
-            try:
-                self._db.log_play(
-                    entry_type=item_type,
-                    song_id=song_id,
-                    duration_ms=int(self._current_duration_ms),
-                    deck="A",
-                    was_manual=was_manual,
-                    clock_id=int(clock_id) if clock_id is not None else None,
-                    slot_idx=int(slot_idx) if slot_idx is not None else None,
-                )
-                if item_type == "song" and song_id is not None:
-                    self._recent_song_logs[song_id] = now_dt
-                    # prune stale entries so the dict never grows past
-                    # the handful of songs seen in the last minute
-                    if len(self._recent_song_logs) > 32:
-                        cutoff = now_dt - _td(seconds=60)
-                        self._recent_song_logs = {
-                            k: v for k, v in self._recent_song_logs.items()
-                            if v >= cutoff}
-            except Exception as exc:
-                log.warning(f"[studio] {item_type} log_play failed: {exc}")
-        # Refresh the History panel so the just-started track appears
-        # at the top immediately, not on the next spot-EOS event.
-        self._refresh_history()
-
-        # Phase 1 (2026-05-17) — register a BASS_SYNC_POS at the song's
-        # mix point so the audio engine notifies us SAMPLE-ACCURATELY
-        # when the trigger position is reached. Replaces the prior
-        # 250ms position-polling fade trigger that could miss by up to
-        # one poll-tick. Falls back to fade_out_start (in seconds)
-        # before EOS when the song has no per-song mix_point.
+                return
         try:
-            self._register_mix_point_sync(cid, song)
+            self._db.log_play(
+                entry_type=item_type,
+                song_id=song_id,
+                duration_ms=int(self._current_duration_ms),
+                deck="A",
+                was_manual=was_manual,
+                clock_id=int(clock_id) if clock_id is not None else None,
+                slot_idx=int(slot_idx) if slot_idx is not None else None,
+            )
+            if item_type == "song" and song_id is not None:
+                self._recent_song_logs[song_id] = now_dt
+                if len(self._recent_song_logs) > 32:
+                    cutoff = now_dt - _td(seconds=60)
+                    self._recent_song_logs = {
+                        k: v for k, v in self._recent_song_logs.items()
+                        if v >= cutoff}
         except Exception as exc:
-            log.debug(f"[studio] mix-point sync registration failed: {exc}")
-
-        log.info(
-            f"[studio] deck play ch={cid} {item_type} id={song.get('id')} "
-            f"{song.get('title')!r} dur_ms={self._current_duration_ms}"
-            + (f" — scheduler clock_id={clock_id}"
-               if clock_id else " — manual"))
+            log.warning(f"[studio] {item_type} log_play failed: {exc}")
 
     def _register_mix_point_sync(self, cid: int, song: dict) -> None:
         """Compute the per-song mix-point position and register a
