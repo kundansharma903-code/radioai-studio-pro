@@ -13,8 +13,11 @@
 >
 > **Read order for a cold start:**
 >   1. THIS file (PROJECT_BIBLE.md) — complete architecture
->   2. `HANDOVER_2026_05_17.md` — the most recent session state +
->      3 critical invariants + pending work
+>   2. `HANDOVER_2026_07_09.md` — **the latest session state**
+>      (2026-07-03 → 07-09: Break Policy, aircheck, watchdog, backup/
+>      restore, the ONE open task A+B, current live state, lessons).
+>      Then `HANDOVER_2026_05_17.md` for the 3 critical invariants +
+>      older feature history.
 >   3. `CLAUDE.md` — the short project guide (note: its Figma table
 >      is STALE; use the table in this bible instead)
 >   4. Older `HANDOVER_*.md` files only if you need historical
