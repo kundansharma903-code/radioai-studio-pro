@@ -1009,16 +1009,58 @@ class SettingsGeneral(QWidget):
             "All General Settings preferences saved.")
 
     def _on_backup_now(self) -> None:
-        dialogs.info(
-            self, "Backup Now",
-            "Backup Now — coming in v1.1.\n\n"
-            "Path is saved; manual filesystem copy works for now.")
+        """Copy the whole station DB (categories, songs, spots, clocks,
+        settings) to a folder the operator picks — e.g. the music
+        drive. Insurance for a DB that gets deleted or corrupted; a
+        normal reinstall/update already keeps the data automatically."""
+        from core.backup_restore import backup_now
+        start = (self._fld_backup_path.text() or "").strip() or ""
+        folder = QFileDialog.getExistingDirectory(
+            self, "Choose backup folder", start)
+        if not folder:
+            return
+        out = backup_now(folder)
+        if out:
+            dialogs.info(
+                self, "Backup complete",
+                f"Station backed up to:\n{out}\n\n"
+                f"Keep this file safe. To recover later: "
+                f"Restore Backup → pick this file.")
+        else:
+            dialogs.error(
+                self, "Backup failed",
+                "Could not write the backup — check the folder is "
+                "writable and try again. (See the log for details.)")
 
     def _on_restore_backup(self) -> None:
-        dialogs.info(
-            self, "Restore Backup",
-            "Restore Backup — coming in v1.1.\n\n"
-            "Manual restore from the backup folder works for now.")
+        """Pick a backup .db → validate → STAGE it. The actual swap
+        happens on the next launch, before any DB connection opens, so
+        a restore can never corrupt a live database (restart-based)."""
+        from core.backup_restore import stage_restore
+        f, _ = QFileDialog.getOpenFileName(
+            self, "Choose a RadioAI backup file", "",
+            "RadioAI backup (*.db);;All files (*.*)")
+        if not f:
+            return
+        if not dialogs.confirm(
+                self, "Restore station data?",
+                "This will REPLACE all current songs, categories, "
+                "spots and schedules with the chosen backup.\n\n"
+                "Your current data is saved as a safety copy first. "
+                "RadioAI must restart to apply.",
+                danger=True, yes_label="Restore & Restart"):
+            return
+        if stage_restore(f):
+            dialogs.info(
+                self, "Restore staged",
+                "Backup verified and staged.\n\nClose and reopen "
+                "RadioAI now — your station data will be restored on "
+                "the next launch.")
+        else:
+            dialogs.error(
+                self, "Restore failed",
+                "That file is not a valid RadioAI backup, or could "
+                "not be read. Nothing was changed.")
 
     # ── Public API ────────────────────────────────────────────────────
 

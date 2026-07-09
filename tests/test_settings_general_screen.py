@@ -208,34 +208,50 @@ def test_time_format_shorthand_round_trip(
     s.deleteLater()
 
 
-# ── Backup placeholders ────────────────────────────────────────────────
+# ── Backup / Restore (real wiring, 2026-07-09) ──────────────────────────
 
 
-def test_backup_now_shows_coming_soon(qapp, db, monkeypatch):
+def test_backup_now_writes_file(qapp, db, monkeypatch, tmp_path):
+    """Backup Now → folder picker → backup_now() writes a file and
+    reports success (no more 'coming soon' stub)."""
     from ui.settings_general import SettingsGeneral
-    from PyQt6.QtWidgets import QMessageBox
-    calls = []
+    from PyQt6.QtWidgets import QFileDialog
+    import core.backup_restore as _br
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory",
+        staticmethod(lambda *a, **k: str(tmp_path)))
+    monkeypatch.setattr(_br, "backup_now",
+                        lambda folder: str(tmp_path / "out.db"))
+    info = []
     monkeypatch.setattr(_dialogs, "info",
-                         staticmethod(
-                             lambda *a, **k: calls.append(a) or 0))
+                        staticmethod(lambda *a, **k: info.append(a)))
     s = SettingsGeneral(db)
     s._on_backup_now()
-    assert len(calls) == 1
-    assert "Backup Now" in calls[0][1]
+    assert info and "Backup complete" in info[0][1]
     s.deleteLater()
 
 
-def test_restore_backup_shows_coming_soon(qapp, db, monkeypatch):
+def test_restore_stages_and_prompts_restart(qapp, db, monkeypatch,
+                                             tmp_path):
+    """Restore → file picker → confirm → stage_restore() → 'restart to
+    apply' info. The live DB is never mutated in-session."""
     from ui.settings_general import SettingsGeneral
-    from PyQt6.QtWidgets import QMessageBox
-    calls = []
+    from PyQt6.QtWidgets import QFileDialog
+    import core.backup_restore as _br
+    monkeypatch.setattr(
+        QFileDialog, "getOpenFileName",
+        staticmethod(lambda *a, **k: (str(tmp_path / "b.db"), "")))
+    monkeypatch.setattr(_dialogs, "confirm",
+                        staticmethod(lambda *a, **k: True))
+    staged = []
+    monkeypatch.setattr(_br, "stage_restore",
+                        lambda f: staged.append(f) or True)
+    info = []
     monkeypatch.setattr(_dialogs, "info",
-                         staticmethod(
-                             lambda *a, **k: calls.append(a) or 0))
+                        staticmethod(lambda *a, **k: info.append(a)))
     s = SettingsGeneral(db)
     s._on_restore_backup()
-    assert len(calls) == 1
-    assert "Restore Backup" in calls[0][1]
+    assert staged and info and "staged" in info[0][2].lower()
     s.deleteLater()
 
 

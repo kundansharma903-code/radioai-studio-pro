@@ -310,6 +310,17 @@ def main():
     from core.paths import (
         migrate_legacy_database, bootstrap_fresh_database,
     )
+    # Station Restore (2026-07-09) — if the operator staged a backup
+    # from Settings, apply it HERE, before any DB connection opens, so
+    # the swap only ever touches closed files (restart-based restore =
+    # never a live-DB mutation). No-op when nothing is staged.
+    try:
+        from core.backup_restore import apply_staged_restore
+        if apply_staged_restore():
+            log.info("[boot] staged station backup restored — all "
+                     "songs / categories / spots reloaded")
+    except Exception as exc:
+        log.warning(f"[boot] staged-restore apply failed: {exc}")
     if migrate_legacy_database():
         log.info(
             "[boot] legacy database migrated to new professional "
