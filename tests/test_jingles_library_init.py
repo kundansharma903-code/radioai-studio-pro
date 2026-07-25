@@ -223,12 +223,116 @@ def test_jingle_selected_signal_fires(qapp, db, seeded):
     s.deleteLater()
 
 
+# ── Delete (2026-07-09) ─────────────────────────────────────────────────────
+
+
+def test_delete_removes_selected_jingle(qapp, db, seeded, monkeypatch):
+    """✕ Delete → confirm accepted → row gone from DB + screen list."""
+    prefix, ids = seeded
+    monkeypatch.setattr(_dialogs, "confirm", lambda *a, **k: True)
+    s = JinglesLibrary(db)
+    target_id = next(x["id"] for x in s._jingles
+                     if x["name"].startswith(prefix))
+    s._on_row_clicked(target_id)
+
+    s._on_delete()
+
+    row = db._conn().execute(
+        "SELECT 1 FROM jingles WHERE id = ?", [target_id]).fetchone()
+    assert row is None
+    assert all(x["id"] != target_id for x in s._jingles)
+    s.deleteLater()
+
+
+def test_delete_cancelled_keeps_jingle(qapp, db, seeded, monkeypatch):
+    prefix, ids = seeded
+    monkeypatch.setattr(_dialogs, "confirm", lambda *a, **k: False)
+    s = JinglesLibrary(db)
+    target_id = next(x["id"] for x in s._jingles
+                     if x["name"].startswith(prefix))
+    s._on_row_clicked(target_id)
+
+    s._on_delete()
+
+    row = db._conn().execute(
+        "SELECT 1 FROM jingles WHERE id = ?", [target_id]).fetchone()
+    assert row is not None
+    assert s._selected_id == target_id
+    s.deleteLater()
+
+
+def test_delete_without_selection_shows_info_and_deletes_nothing(
+        qapp, db, seeded, monkeypatch):
+    prefix, ids = seeded
+    infos: list = []
+    monkeypatch.setattr(_dialogs, "info", lambda *a, **k: infos.append(a))
+    monkeypatch.setattr(
+        _dialogs, "confirm",
+        lambda *a, **k: pytest.fail("confirm shown without a selection"))
+    s = JinglesLibrary(db)
+    s._selected_id = None
+
+    s._on_delete()
+
+    assert infos
+    remaining = db._conn().execute(
+        "SELECT COUNT(*) FROM jingles WHERE name LIKE ? ESCAPE '\\'",
+        [prefix.replace("_", r"\_") + "%"]).fetchone()[0]
+    assert int(remaining) == 4
+    s.deleteLater()
+
+
+def test_delete_confirm_mentions_pinned_clock_slots(
+        qapp, db, seeded, monkeypatch):
+    """The danger confirm must surface the on-air consequence (a pinned
+    clock slot falling back to random) + the file-safety note."""
+    prefix, ids = seeded
+    bodies: list[str] = []
+
+    def _capture(parent, title, text, **kw):
+        bodies.append(text)
+        return False        # cancel — this test only inspects the copy
+
+    monkeypatch.setattr(_dialogs, "confirm", _capture)
+    s = JinglesLibrary(db)
+    target_id = next(x["id"] for x in s._jingles
+                     if x["name"].startswith(prefix))
+    s._on_row_clicked(target_id)
+
+    cid = int(db.create_clock(f"{prefix}pinclock"))
+    try:
+        db.save_clock_slots(cid, [
+            {"slot_type": "jingle", "duration_seconds": 8,
+             "minute_position": 0, "filter_json": "{}",
+             "selection_mode": "specific", "item_id": target_id},
+        ])
+        s._on_delete()
+        assert bodies
+        assert "1 clock slot" in bodies[0]
+        assert "not deleted" in bodies[0].lower()
+    finally:
+        conn = db._conn()
+        conn.execute("DELETE FROM clock_slots WHERE clock_id = ?", [cid])
+        conn.commit()
+        try:
+            db.delete_clock(cid)
+        except Exception:
+            pass
+    s.deleteLater()
+
+
 def test_add_jingle_signal_fires_on_add_new(qapp, db, monkeypatch):
-    """Stub QMessageBox so the test isn't gated on a modal dialog —
-    the signal still has to fire when the button is clicked."""
-    from PyQt6.QtWidgets import QMessageBox
+    """Stub the editor dialog so the test isn't gated on a modal —
+    the signal still has to fire when the button is clicked.
+
+    2026-07-09: previously only ``dialogs.info`` was stubbed while
+    ``_on_add_new`` still ran ``JingleEditorDialog(...).exec()``, opening
+    a REAL modal that blocked the suite until a human closed it. Patch
+    the dialog opener itself."""
     monkeypatch.setattr(_dialogs, "info",
                         lambda *a, **k: None)
+    monkeypatch.setattr(JinglesLibrary, "_open_editor_dialog",
+                        lambda self, jingle_id=None: None)
     s = JinglesLibrary(db)
     captured: list[bool] = []
     s.add_jingle_clicked.connect(lambda: captured.append(True))

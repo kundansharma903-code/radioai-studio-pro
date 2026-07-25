@@ -2791,6 +2791,59 @@ class Database:
             f"UPDATE sweepers SET {', '.join(sets)} WHERE id = ?", vals)
         conn.commit()
 
+    def count_sweeper_clock_slots(self, sweeper_id: int) -> int:
+        """How many clock slots are PINNED to this sweeper
+        (selection_mode='specific'). Read-only — the Sweepers Library
+        delete confirmation shows this so the operator knows a clock
+        will fall back to a random sweeper."""
+        try:
+            row = self._conn().execute(
+                "SELECT COUNT(*) FROM clock_slots "
+                "WHERE slot_type = 'sweeper' AND item_id = ?",
+                [int(sweeper_id)],
+            ).fetchone()
+            return int(row[0] or 0) if row else 0
+        except Exception as exc:
+            log.warning(f"count_sweeper_clock_slots failed: {exc}")
+            return 0
+
+    def delete_sweeper(self, sweeper_id: int) -> None:
+        """Permanently remove a sweeper row. Manual cascade — nothing
+        referencing sweepers declares ON DELETE CASCADE (clock_slots
+        holds a SOFT reference with no FK at all).
+
+        Cleanup chain (single transaction):
+          • ``clock_slots`` — un-pin: any slot pinned to this sweeper
+            gets ``item_id = 0`` + ``selection_mode`` back to
+            'random_from_category'. Without this the scheduler's
+            ``_pick_sweeper`` looks up a ghost id, returns None, and
+            SILENTLY SKIPS that slot on every rotation — on-air holes
+            that are very hard to trace.
+          • ``sweepers`` row itself last.
+
+        The audio FILE on disk is never touched — only the DB row.
+        ``broadcast_log`` has no sweeper id column (sweeper plays are
+        logged by ``entry_type`` only), so airtime history is unaffected.
+        """
+        sid = int(sweeper_id)
+        conn = self._conn()
+        try:
+            conn.execute("BEGIN")
+            # Un-pin clock slots (exact id match — never a LIKE pattern)
+            conn.execute(
+                "UPDATE clock_slots "
+                "SET item_id = 0, selection_mode = 'random_from_category' "
+                "WHERE slot_type = 'sweeper' AND item_id = ?",
+                [sid],
+            )
+            conn.execute("DELETE FROM sweepers WHERE id = ?", [sid])
+            conn.commit()
+            log.info(f"Sweeper id={sid} deleted (clock slots un-pinned)")
+        except Exception as exc:
+            conn.rollback()
+            log.error(f"delete_sweeper({sid}) failed, rolled back: {exc}")
+            raise
+
     def get_station_ids_active(self) -> List[sqlite3.Row]:
         return self._conn().execute(
             "SELECT * FROM jingles "
@@ -2951,6 +3004,76 @@ class Database:
                 [int(jingle_id), int(cid)],
             )
         conn.commit()
+
+    def count_jingle_clock_slots(self, jingle_id: int) -> int:
+        """How many clock slots are PINNED to this jingle. Covers BOTH
+        'jingle' and 'station_id' slot types — station-ID slots pick
+        from the jingles table too. Read-only (delete confirmation)."""
+        try:
+            row = self._conn().execute(
+                "SELECT COUNT(*) FROM clock_slots "
+                "WHERE slot_type IN ('jingle', 'station_id') AND item_id = ?",
+                [int(jingle_id)],
+            ).fetchone()
+            return int(row[0] or 0) if row else 0
+        except Exception as exc:
+            log.warning(f"count_jingle_clock_slots failed: {exc}")
+            return 0
+
+    def delete_jingle(self, jingle_id: int) -> None:
+        """Permanently remove a jingle row. Manual cascade — the live DB
+        was created from an older schema, so declared cascades can't be
+        relied on (same reason as ``delete_clock`` / ``delete_song``).
+
+        Cleanup chain (single transaction):
+          • ``clock_slots``          — un-pin any slot pinned to this
+            jingle (slot_type 'jingle' OR 'station_id'): ``item_id = 0``
+            + ``selection_mode='random_from_category'``. A ghost id makes
+            the scheduler's picker return None and skip the slot silently.
+          • ``broadcast_log``        — NULL out ``jingle_id`` only.
+            Airtime history is precious; the row stays, just loses the link.
+          • ``final_log_entries``    — DELETE (a planned log entry with no
+            target jingle is meaningless; mirrors ``delete_song``).
+          • ``jingle_linked_spots``  — DELETE (join-table rows).
+          • ``jingles`` row itself last.
+
+        The audio FILE on disk is never touched. Instant-jingle pads are
+        file-path based (``jingle_pads`` has no jingle_id), so live pads
+        keep working.
+        """
+        jid = int(jingle_id)
+        conn = self._conn()
+        try:
+            conn.execute("BEGIN")
+            # Un-pin clock slots (exact id match — never a LIKE pattern)
+            conn.execute(
+                "UPDATE clock_slots "
+                "SET item_id = 0, selection_mode = 'random_from_category' "
+                "WHERE slot_type IN ('jingle', 'station_id') AND item_id = ?",
+                [jid],
+            )
+            # Historical reference — preserve the row, clear the link
+            conn.execute(
+                "UPDATE broadcast_log SET jingle_id = NULL WHERE jingle_id = ?",
+                [jid])
+            # Membership rows — meaningless without the jingle
+            conn.execute(
+                "DELETE FROM final_log_entries WHERE jingle_id = ?", [jid])
+            # Join table may not exist on very old DBs
+            try:
+                conn.execute(
+                    "DELETE FROM jingle_linked_spots WHERE jingle_id = ?",
+                    [jid])
+            except Exception:
+                pass
+            conn.execute("DELETE FROM jingles WHERE id = ?", [jid])
+            conn.commit()
+            log.info(f"Jingle id={jid} deleted (clock slots un-pinned, "
+                     f"broadcast_log link cleared)")
+        except Exception as exc:
+            conn.rollback()
+            log.error(f"delete_jingle({jid}) failed, rolled back: {exc}")
+            raise
 
     # ── Stitcher config (Figma 46:481) ────────────────────────────────────
 

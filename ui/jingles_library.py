@@ -20,8 +20,11 @@ extra columns (auto_code, author, comments, bpm, etc.).
 
 Phase status:
   [✓] header / sidebar / table / details panel / status bar / live clock
-  [ ] + Add New Jingle → opens 106:2 dialog (separate commit)
-  [ ] Mass Import / Edit Categories / Delete / Export to Playlister
+  [✓] + Add New Jingle → opens 106:2 dialog
+  [✓] Delete → premium danger confirm → db.delete_jingle (un-pins clock
+      slots, clears broadcast_log link, unlinks spots; audio file on disk
+      is never removed and Instant-Jingle pads are unaffected)
+  [ ] Mass Import / Edit Categories / Export to Playlister
       (toast stubs — same pattern as Sweepers Library)
   [ ] Schedule + Usage Stats tabs (placeholder content)
   [ ] Audio scrubber wires to AudioEngine for actual preview
@@ -1394,15 +1397,67 @@ class JinglesLibrary(QWidget):
             "Edit Categories will let you manage jingle category labels.")
 
     def _on_delete(self):
-        log.info("[jingles] Delete — TODO (waiting for confirm flow)")
+        """Sidebar ✕ Delete — confirm, then drop the selected jingle via
+        ``db.delete_jingle`` (manual cascade un-pins clock slots, clears
+        the broadcast_log link). The audio file on disk is never touched,
+        and Instant-Jingle pads are file-path based so they keep working."""
         if self._selected_id is None:
             dialogs.info(
                 self, "No selection", "Select a jingle row first.")
             return
-        dialogs.info(
-            self, "Coming soon",
-            "Jingle delete will land alongside the editor dialog so "
-            "the destructive confirmation matches the rest of the app.")
+        jid = int(self._selected_id)
+        cur = next((j for j in self._jingles if j["id"] == jid), None)
+        if cur is None:
+            dialogs.info(
+                self, "No selection", "Select a jingle row first.")
+            return
+        name = cur.get("name") or f"Jingle #{jid}"
+
+        try:
+            pinned = int(self._db.count_jingle_clock_slots(jid))
+        except Exception as exc:
+            log.warning(f"[jingles] pinned-slot count failed: {exc}")
+            pinned = 0
+        try:
+            linked = len(list(self._db.get_jingle_linked_spots(jid)))
+        except Exception:
+            linked = 0
+
+        body = f"Delete “{name}” from the Jingles Library?"
+        if pinned:
+            body += (f"\n\n{pinned} clock slot{'s' if pinned != 1 else ''} "
+                     f"pinned to this jingle will switch back to a random "
+                     f"pick.")
+        if linked:
+            body += (f"\n\n{linked} linked spot"
+                     f"{'s' if linked != 1 else ''} will be unlinked "
+                     f"(the campaigns themselves stay).")
+        body += ("\n\nThe audio file on disk is NOT deleted — only the "
+                 "library entry. Airtime history is preserved.")
+
+        if not dialogs.confirm(self, "Delete Jingle", body,
+                               danger=True, yes_label="Delete"):
+            log.info(f"[jingles] delete cancelled id={jid}")
+            return
+
+        # Never delete a row whose audio is mid-preview on our channel.
+        if self._preview_cid is not None:
+            self._stop_preview()
+
+        try:
+            self._db.delete_jingle(jid)
+        except Exception as exc:
+            log.error(f"[jingles] delete failed id={jid}: {exc}")
+            dialogs.error(
+                self, "Delete Failed",
+                f"Could not delete “{name}”.\n\n{exc}")
+            return
+
+        log.info(f"[jingles] deleted id={jid} name={name!r} "
+                 f"(pinned slots un-pinned: {pinned}, unlinked: {linked})")
+        self._selected_id = None
+        self._load_jingles()       # re-selects the first row if any remain
+        self._refresh_details()
 
     def _on_export_playlister(self):
         log.info("[jingles] Export to Playlister — TODO")

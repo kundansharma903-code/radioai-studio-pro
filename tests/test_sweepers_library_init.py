@@ -155,12 +155,116 @@ def test_sweeper_selected_signal_fires(qapp, db, seeded):
 
 # ── Breadcrumb / studio signals ─────────────────────────────────────────────
 
+def test_delete_removes_selected_sweeper(qapp, db, seeded, monkeypatch):
+    """✕ Delete → confirm accepted → row gone from DB + screen list."""
+    prefix, ids = seeded
+    monkeypatch.setattr(_dialogs, "confirm", lambda *a, **k: True)
+    s = SweepersLibrary(db)
+    target_id = next(x["id"] for x in s._sweepers
+                     if x["name"].startswith(prefix))
+    s._on_row_clicked(target_id)
+
+    s._on_delete()
+
+    row = db._conn().execute(
+        "SELECT 1 FROM sweepers WHERE id = ?", [target_id]).fetchone()
+    assert row is None
+    assert all(x["id"] != target_id for x in s._sweepers)
+    s.deleteLater()
+
+
+def test_delete_cancelled_keeps_row(qapp, db, seeded, monkeypatch):
+    prefix, ids = seeded
+    monkeypatch.setattr(_dialogs, "confirm", lambda *a, **k: False)
+    s = SweepersLibrary(db)
+    target_id = next(x["id"] for x in s._sweepers
+                     if x["name"].startswith(prefix))
+    s._on_row_clicked(target_id)
+
+    s._on_delete()
+
+    row = db._conn().execute(
+        "SELECT 1 FROM sweepers WHERE id = ?", [target_id]).fetchone()
+    assert row is not None
+    assert s._selected_id == target_id     # selection preserved
+    s.deleteLater()
+
+
+def test_delete_without_selection_shows_info_and_deletes_nothing(
+        qapp, db, seeded, monkeypatch):
+    prefix, ids = seeded
+    infos: list = []
+    monkeypatch.setattr(_dialogs, "info",
+                        lambda *a, **k: infos.append(a))
+    # confirm must never be reached
+    monkeypatch.setattr(
+        _dialogs, "confirm",
+        lambda *a, **k: pytest.fail("confirm shown without a selection"))
+    s = SweepersLibrary(db)
+    s._selected_id = None
+
+    s._on_delete()
+
+    assert infos            # the "No selection" toast fired
+    remaining = db._conn().execute(
+        "SELECT COUNT(*) FROM sweepers WHERE name LIKE ? ESCAPE '\\'",
+        [prefix.replace("_", r"\_") + "%"]).fetchone()[0]
+    assert int(remaining) == 3
+    s.deleteLater()
+
+
+def test_delete_confirm_mentions_pinned_clock_slots(
+        qapp, db, seeded, monkeypatch):
+    """The danger confirm must tell the operator a pinned clock slot
+    will fall back to random — that's the on-air consequence."""
+    prefix, ids = seeded
+    bodies: list[str] = []
+
+    def _capture(parent, title, text, **kw):
+        bodies.append(text)
+        return False        # cancel — this test only inspects the copy
+
+    monkeypatch.setattr(_dialogs, "confirm", _capture)
+    s = SweepersLibrary(db)
+    target_id = next(x["id"] for x in s._sweepers
+                     if x["name"].startswith(prefix))
+    s._on_row_clicked(target_id)
+
+    cid = int(db.create_clock(f"{prefix}pinclock"))
+    try:
+        db.save_clock_slots(cid, [
+            {"slot_type": "sweeper", "duration_seconds": 8,
+             "minute_position": 0, "filter_json": "{}",
+             "selection_mode": "specific", "item_id": target_id},
+        ])
+        s._on_delete()
+        assert bodies
+        assert "1 clock slot" in bodies[0]
+        assert "not deleted" in bodies[0].lower()   # file-safety note
+    finally:
+        conn = db._conn()
+        conn.execute("DELETE FROM clock_slots WHERE clock_id = ?", [cid])
+        conn.commit()
+        try:
+            db.delete_clock(cid)
+        except Exception:
+            pass
+    s.deleteLater()
+
+
 def test_add_sweeper_signal_fires_on_add_new(qapp, db, monkeypatch):
-    """Stub QMessageBox so the test isn't gated on a modal dialog —
-    the signal still has to fire."""
-    from PyQt6.QtWidgets import QMessageBox
+    """Stub the editor dialog so the test isn't gated on a modal —
+    the signal still has to fire.
+
+    2026-07-09: previously this stubbed only ``dialogs.info`` while
+    ``_on_add_new`` went on to ``SweeperEditorDialog(...).exec()``, so a
+    REAL modal opened on the machine running the suite and blocked the
+    run until a human closed it (5+ min on the operator's box). Patch
+    the dialog opener itself."""
     monkeypatch.setattr(_dialogs, "info",
                         lambda *a, **k: None)
+    monkeypatch.setattr(SweepersLibrary, "_open_editor_dialog",
+                        lambda self, sweeper_id=None: None)
     s = SweepersLibrary(db)
     captured: list[bool] = []
     s.add_sweeper_clicked.connect(lambda: captured.append(True))

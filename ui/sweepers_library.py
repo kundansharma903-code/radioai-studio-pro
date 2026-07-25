@@ -18,8 +18,10 @@ screen. `last_used` falls back to "—" until broadcast_log lookup is wired (TOD
 
 Phase status:
   [✓] header / sidebar / table / details panel / how-positions / status bar
-  [ ] + Add New → opens 108:2 dialog (deferred — separate session)
-  [ ] Mass Import / Edit Categories / Delete / Export to Playlister (toast stubs)
+  [✓] + Add New → opens 108:2 dialog
+  [✓] Delete → premium danger confirm → db.delete_sweeper (un-pins clock
+      slots; audio file on disk is never removed)
+  [ ] Mass Import / Edit Categories / Export to Playlister (toast stubs)
   [ ] Audio scrubber wires to AudioEngine for actual preview (toast stub for now)
   [ ] last_used pulls from broadcast_log
 """
@@ -1399,15 +1401,58 @@ class SweepersLibrary(QWidget):
             "Edit Categories will let you manage sweeper category labels.")
 
     def _on_delete(self):
-        log.info("[sweepers] Delete — TODO (waiting for confirm flow)")
+        """Sidebar ✕ Delete — confirm, then drop the selected sweeper
+        via ``db.delete_sweeper`` (manual cascade un-pins clock slots).
+        The audio file on disk is never touched."""
         if self._selected_id is None:
             dialogs.info(
                 self, "No selection", "Select a sweeper row first.")
             return
-        dialogs.info(
-            self, "Coming soon",
-            "Sweeper delete will land alongside the editor dialog "
-            "so the destructive confirmation matches the rest of the app.")
+        sid = int(self._selected_id)
+        cur = next((s for s in self._sweepers if s["id"] == sid), None)
+        if cur is None:
+            dialogs.info(
+                self, "No selection", "Select a sweeper row first.")
+            return
+        name = cur.get("name") or f"Sweeper #{sid}"
+
+        try:
+            pinned = int(self._db.count_sweeper_clock_slots(sid))
+        except Exception as exc:
+            log.warning(f"[sweepers] pinned-slot count failed: {exc}")
+            pinned = 0
+
+        body = f"Delete “{name}” from the Sweepers Library?"
+        if pinned:
+            body += (f"\n\n{pinned} clock slot{'s' if pinned != 1 else ''} "
+                     f"pinned to this sweeper will switch back to a random "
+                     f"sweeper.")
+        body += ("\n\nThe audio file on disk is NOT deleted — only the "
+                 "library entry.")
+
+        if not dialogs.confirm(self, "Delete Sweeper", body,
+                               danger=True, yes_label="Delete"):
+            log.info(f"[sweepers] delete cancelled id={sid}")
+            return
+
+        # Never delete a row whose audio is mid-preview on our channel.
+        if self._preview_cid is not None:
+            self._stop_preview()
+
+        try:
+            self._db.delete_sweeper(sid)
+        except Exception as exc:
+            log.error(f"[sweepers] delete failed id={sid}: {exc}")
+            dialogs.error(
+                self, "Delete Failed",
+                f"Could not delete “{name}”.\n\n{exc}")
+            return
+
+        log.info(f"[sweepers] deleted id={sid} name={name!r} "
+                 f"(pinned slots un-pinned: {pinned})")
+        self._selected_id = None
+        self._load_sweepers()      # re-selects the first row if any remain
+        self._refresh_details()
 
     def _on_export_playlister(self):
         log.info("[sweepers] Export to Playlister — TODO")
