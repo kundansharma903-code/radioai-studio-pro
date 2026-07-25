@@ -54,7 +54,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QPoint, QSize
+from PyQt6.QtCore import Qt, QPoint, QRect, QSize
 from PyQt6.QtGui import (
     QFont, QColor, QKeyEvent, QMouseEvent, QPainter, QPen, QBrush,
 )
@@ -216,7 +216,20 @@ class _PremiumDialog(QDialog):
         self._body_lbl.setStyleSheet(
             f"color: {TEXT_SEC}; background: transparent;")
         self._body_lbl.setWordWrap(True)
-        self._body_lbl.setMinimumHeight(20)
+        # Height must be resolved from the WRAPPED text at the card's
+        # real inner width. Relying on the layout's height-for-width
+        # left multi-paragraph bodies one line short whenever a
+        # paragraph wrapped — the LAST paragraph was then clipped out of
+        # view entirely (found 2026-07-09 on the Delete Sweeper confirm,
+        # where the "file on disk is not deleted" note was invisible).
+        # Measuring at CARD_W (the MINIMUM width) can only over-estimate
+        # the line count, so short bodies keep the old 20px floor and
+        # every existing dialog's geometry is unchanged.
+        _inner_w = self.CARD_W - 2 * self.PAD
+        _wrapped_h = self._body_lbl.fontMetrics().boundingRect(
+            QRect(0, 0, _inner_w, 10000),
+            int(Qt.TextFlag.TextWordWrap), body).height()
+        self._body_lbl.setMinimumHeight(max(20, _wrapped_h))
         self._body_lbl.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.MinimumExpanding)
