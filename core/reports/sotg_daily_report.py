@@ -259,12 +259,30 @@ class _Painter:
 # ── Layout drawers ──────────────────────────────────────────────────────────
 
 def _draw_logo_tile(pp: _Painter, x: int, y: int, size: int = 48) -> None:
-    """Purple→cyan gradient ellipse + 5 white speaker bars (matches the
-    on-screen header logo so the PDF feels first-party)."""
+    """Station logo when the operator uploaded one, else the built-in
+    purple→cyan gradient ellipse + 5 white speaker bars (matches the
+    on-screen header logo so the PDF feels first-party).
+
+    Same contract as the Spot Play report: the stored PNG is clipped
+    into this report's circular mask, and ANY failure falls through to
+    the painted placeholder."""
     p = pp.p
     rect = QRectF(x, y, size, size)
     path = QPainterPath()
     path.addEllipse(rect)
+
+    try:
+        from core.branding import load_station_logo
+        logo = load_station_logo()
+    except Exception:
+        logo = None
+    if logo is not None and not logo.isNull():
+        p.save()
+        p.setClipPath(path)
+        p.drawImage(rect, logo)
+        p.restore()
+        return
+
     p.save()
     p.setClipPath(path)
     grad = QLinearGradient(x, y, x + size, y + size)

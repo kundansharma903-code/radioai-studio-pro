@@ -49,6 +49,7 @@ from PyQt6.QtCore import Qt, QRectF, QTimer, pyqtSignal
 from core import dialogs
 from PyQt6.QtGui import (
     QPainter, QColor, QPen, QBrush, QLinearGradient, QFont, QCursor,
+    QPixmap,
 )
 from PyQt6.QtWidgets import (
     QWidget, QFrame, QLabel, QPushButton, QLineEdit, QComboBox,
@@ -336,6 +337,124 @@ class _LabeledComboBox(QWidget):
             # Unknown value — prepend so the user's choice is preserved
             self._cmb.insertItem(0, txt)
             self._cmb.setCurrentIndex(0)
+
+
+class _LogoField(QWidget):
+    """Station-logo row — 48×48 preview + Upload / Remove buttons.
+
+    The picked image is normalised and copied into the app's Branding
+    folder by ``core.branding`` (never referenced in place), and both
+    PDF reports fall back to their painted tile when none is set.
+    Saving is immediate — it writes a file, so it does NOT wait for the
+    card's Save button like the text fields do.
+    """
+
+    PREVIEW = 48
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        v = QVBoxLayout(self)
+        v.setContentsMargins(0, 0, 0, 0); v.setSpacing(4)
+        v.addWidget(_FieldLabel("Station Logo", self))
+
+        row = QFrame(self)
+        row.setStyleSheet("QFrame { background: transparent; }")
+        h = QHBoxLayout(row)
+        h.setContentsMargins(0, 0, 0, 0); h.setSpacing(10)
+
+        self._preview = QLabel(row)
+        self._preview.setFixedSize(self.PREVIEW, self.PREVIEW)
+        self._preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._preview.setStyleSheet(
+            f"QLabel {{ background: {BG_ELEVATED}; "
+            f"border: 1px solid {rgba('#ffffff', 0.10)}; "
+            f"border-radius: 10px; color: {TEXT_SEC}; }}")
+        h.addWidget(self._preview)
+
+        def _btn(text: str, accent: str) -> QPushButton:
+            b = QPushButton(text, row)
+            b.setFixedHeight(34)
+            b.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+            b.setFont(inter(11, QFont.Weight.Medium))
+            b.setStyleSheet(
+                f"QPushButton {{ background: {BG_ELEVATED}; "
+                f"color: {TEXT_PRI}; "
+                f"border: 1px solid {rgba('#ffffff', 0.10)}; "
+                f"border-radius: 6px; padding: 0 14px; }}"
+                f"QPushButton:hover {{ border: 1px solid {rgba(accent, 0.5)}; }}")
+            return b
+
+        self._btn_upload = _btn("Upload Logo…", CYAN)
+        self._btn_remove = _btn("Remove", RED)
+        self._btn_upload.clicked.connect(self._on_upload)
+        self._btn_remove.clicked.connect(self._on_remove)
+        h.addWidget(self._btn_upload)
+        h.addWidget(self._btn_remove)
+        h.addStretch(1)
+        v.addWidget(row)
+
+        v.addWidget(_SubFieldLabel(
+            "Square image works best — shown on Spot and SOTG report "
+            "headers. A copy is stored with your station data.", self))
+        self.refresh()
+
+    # ── State ────────────────────────────────────────────────────────
+
+    def refresh(self) -> None:
+        """Re-read the stored logo and update preview + button states."""
+        from core.branding import station_logo_path
+        p = station_logo_path()
+        if p is None:
+            self._preview.setPixmap(QPixmap())
+            self._preview.setText("No\nlogo")
+            self._preview.setFont(inter(8, QFont.Weight.Medium))
+            self._btn_remove.setEnabled(False)
+            return
+        pm = QPixmap(str(p))
+        if pm.isNull():
+            self._preview.setText("!")
+            self._btn_remove.setEnabled(True)
+            return
+        self._preview.setText("")
+        self._preview.setPixmap(pm.scaled(
+            self.PREVIEW, self.PREVIEW,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation))
+        self._btn_remove.setEnabled(True)
+
+    # ── Actions ──────────────────────────────────────────────────────
+
+    def _on_upload(self) -> None:
+        from core.branding import set_station_logo
+        f, _ = QFileDialog.getOpenFileName(
+            self, "Choose your station logo", "",
+            "Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp);;"
+            "All files (*.*)")
+        if not f:
+            return
+        if set_station_logo(f) is None:
+            dialogs.error(
+                self, "Could not use that image",
+                "That file could not be read as an image.\n\n"
+                "Try a PNG or JPG — a square image looks best.")
+            return
+        self.refresh()
+        dialogs.info(
+            self, "Logo updated",
+            "Your station logo will now appear on the Spot and "
+            "SOTG report headers.")
+
+    def _on_remove(self) -> None:
+        from core.branding import clear_station_logo
+        if not dialogs.confirm(
+                self, "Remove station logo?",
+                "Reports will go back to the default RadioAI tile.\n\n"
+                "Your original image file is not touched — only the "
+                "copy stored with the station data.",
+                danger=True, yes_label="Remove"):
+            return
+        clear_station_logo()
+        self.refresh()
 
 
 class _BrowseField(QWidget):
@@ -747,10 +866,14 @@ class SettingsGeneral(QWidget):
             "Station Slogan", caption="Used in RDS and exports")
         self._fld_email = _LabeledLineEdit(
             "Contact Email", caption="For system notifications")
+        # Logo row saves immediately (it copies a file), so it is not
+        # part of the text-field save batch below.
+        self._fld_logo = _LogoField()
         for w in (self._fld_name, self._fld_city, self._fld_region,
-                  self._fld_freq, self._fld_slogan, self._fld_email):
+                  self._fld_freq, self._fld_slogan, self._fld_email,
+                  self._fld_logo):
             self._card_identity.add_row(w)
-        self._card_identity.setFixedHeight(36 + 6 * 76 + 16)
+        self._card_identity.setFixedHeight(36 + 6 * 76 + 96 + 16)
         v.addWidget(self._card_identity)
 
         # FILE PATHS card
@@ -876,6 +999,12 @@ class SettingsGeneral(QWidget):
         self._fld_freq.set_text(s.get("station_frequency", "") or "")
         self._fld_slogan.set_text(s.get("station_slogan", "") or "")
         self._fld_email.set_text(s.get("station_email", "") or "")
+        # Logo lives on disk, not in the form — re-read its preview so a
+        # change made elsewhere (or a removed file) shows up on re-entry.
+        try:
+            self._fld_logo.refresh()
+        except Exception as exc:
+            log.debug(f"[settings] logo preview refresh: {exc}")
 
         # FILE PATHS
         self._fld_path_music.set_text(

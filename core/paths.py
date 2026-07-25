@@ -115,6 +115,12 @@ REPORTS_DIR   = APP_DATA_ROOT / "Reports"
 CACHE_DIR     = APP_DATA_ROOT / "Cache"
 CONFIG_DIR    = APP_DATA_ROOT / "Config"
 BACKUPS_DIR   = APP_DATA_ROOT / "Backups"
+# Operator-supplied branding (station logo). The uploaded image is
+# COPIED here rather than referenced in place — an external path can be
+# moved or deleted behind the app's back (exactly how 18 jingle rows
+# lost their audio on 2026-07-25), and a report must never break
+# because of that.
+BRANDING_DIR  = APP_DATA_ROOT / "Branding"
 
 # Direct file paths
 DB_PATH       = DB_DIR / "radioai.db"
@@ -130,7 +136,8 @@ def ensure_dirs() -> None:
     """Create the professional folder hierarchy if missing. Idempotent
     — safe to call on every boot."""
     for d in (APP_DATA_ROOT, DB_DIR, LOGS_DIR,
-              REPORTS_DIR, CACHE_DIR, CONFIG_DIR, BACKUPS_DIR):
+              REPORTS_DIR, CACHE_DIR, CONFIG_DIR, BACKUPS_DIR,
+              BRANDING_DIR):
         try:
             d.mkdir(parents=True, exist_ok=True)
         except (OSError, PermissionError) as exc:
