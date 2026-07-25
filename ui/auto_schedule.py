@@ -64,7 +64,7 @@ from PyQt6.QtCore import (
     Qt, QRect, QRectF, QPoint, QPointF, QTimer, pyqtSignal,
 )
 from PyQt6.QtGui import (
-    QPainter, QColor, QPen, QBrush, QLinearGradient, QFont,
+    QPainter, QColor, QPen, QBrush, QLinearGradient, QFont, QFontMetricsF,
     QMouseEvent, QKeyEvent, QPaintEvent, QPolygonF, QWheelEvent,
 )
 from PyQt6.QtWidgets import (
@@ -811,6 +811,13 @@ class _ScheduleGrid(QWidget):
 
     DRAG_THRESHOLD_PX = 4
 
+    # Cell text metrics (2026-07-25 overlap fix). The clock name is
+    # centred in a rect that excludes the right-aligned AUTO watermark,
+    # so the two can never paint over each other.
+    _AUTO_TAG = "AUTO"
+    _AUTO_TAG_GAP = 4          # breathing room between name and tag
+    _CELL_TEXT_PAD = 4         # inset from the cell's rounded border
+
     selection_changed = pyqtSignal()
 
     def __init__(self, parent=None):
@@ -838,6 +845,11 @@ class _ScheduleGrid(QWidget):
         self._font_time = mono(10, bold=False)
         self._font_cell = inter(10, QFont.Weight.Bold, letter_spacing=-0.1)
         self._font_auto = inter(7, QFont.Weight.Bold, letter_spacing=0.6)
+        # Cache the AUTO tag's pixel width once — _paint_cell runs 168×
+        # per repaint, and QFontMetricsF construction there would be the
+        # hot path (perf invariant: cache painter resources in __init__).
+        self._auto_tag_w = QFontMetricsF(
+            self._font_auto).horizontalAdvance(self._AUTO_TAG)
         # Cached row backgrounds (alternating)
         self._row_bg_a = QColor(255, 255, 255, 4)
         self._row_bg_b = QColor(255, 255, 255, 8)
@@ -1101,17 +1113,35 @@ class _ScheduleGrid(QWidget):
         p.drawRoundedRect(rf.adjusted(0.5, 0.5, -0.5, -0.5), 4, 4)
         # Label (clock name) — only when assigned
         if meta:
+            # The AUTO watermark is right-aligned inside the same cell, so
+            # the name must be given a rect that STOPS before it. Painting
+            # both across the full rect (pre-2026-07-25) centred the name
+            # underneath the tag → visible overlap. And a name wider than
+            # the cell was clipped mid-glyph on BOTH sides (centred), e.g.
+            # "AUTO · Pool 07 + Testing 01" rendering as
+            # "UTO · Pool 07 + Testing 0" — so elide it instead.
+            name_rect = rf.adjusted(self._CELL_TEXT_PAD, 0,
+                                    -self._CELL_TEXT_PAD, 0)
+            if is_auto:
+                name_rect = name_rect.adjusted(
+                    0, 0, -(self._auto_tag_w + self._AUTO_TAG_GAP), 0)
             p.setPen(QColor(COL_TEXT_PRIMARY))
             p.setFont(self._font_cell)
-            p.drawText(rf, Qt.AlignmentFlag.AlignCenter, meta["name"])
+            name = meta["name"] or ""
+            if name_rect.width() > 0:
+                fm = QFontMetricsF(self._font_cell)
+                if fm.horizontalAdvance(name) > name_rect.width():
+                    name = fm.elidedText(name, Qt.TextElideMode.ElideRight,
+                                         name_rect.width())
+                p.drawText(name_rect, Qt.AlignmentFlag.AlignCenter, name)
             # AUTO watermark tag, right-aligned inside the cell
             if is_auto:
                 p.setPen(self._auto_tag_ink)
                 p.setFont(self._font_auto)
-                p.drawText(rf.adjusted(0, 0, -5, 0),
+                p.drawText(rf.adjusted(0, 0, -self._CELL_TEXT_PAD, 0),
                            Qt.AlignmentFlag.AlignRight
                            | Qt.AlignmentFlag.AlignVCenter,
-                           "AUTO")
+                           self._AUTO_TAG)
 
 
 # ════════════════════════════════════════════════════════════════════════

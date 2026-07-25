@@ -35,8 +35,8 @@ from typing import Optional
 
 from PyQt6.QtCore import QRectF, Qt
 from PyQt6.QtGui import (
-    QBrush, QColor, QFont, QFontDatabase, QLinearGradient, QPageLayout,
-    QPageSize, QPainter, QPainterPath, QPdfWriter, QPen,
+    QBrush, QColor, QFont, QFontDatabase, QFontMetricsF, QLinearGradient,
+    QPageLayout, QPageSize, QPainter, QPainterPath, QPdfWriter, QPen,
 )
 
 from core.database import Database
@@ -331,12 +331,25 @@ class _Painter:
 
     def text(self, x, y, w, h, s, *,
              family=INTER_FAMILY, size=10, weight=QFont.Weight.Normal,
-             color=INK_PRI, align=None, letter_spacing=0.0):
-        self.p.setFont(_font(family, size, weight, letter_spacing))
+             color=INK_PRI, align=None, letter_spacing=0.0,
+             elide=False):
+        """Draw ``s`` inside (x, y, w, h).
+
+        ``elide=True`` shortens the string with a trailing ellipsis when
+        it is wider than ``w``. Opt-in: QPainter.drawText otherwise CLIPS
+        mid-glyph, which is how the metadata block used to lose the tail
+        of long values (2026-07-25 report bug). Every existing caller
+        keeps its previous behaviour."""
+        font = _font(family, size, weight, letter_spacing)
+        self.p.setFont(font)
         self.p.setPen(_qcolor(color))
         rect = QRectF(x, y, w, h)
         flags = align or (Qt.AlignmentFlag.AlignLeft
                           | Qt.AlignmentFlag.AlignVCenter)
+        if elide and s:
+            fm = QFontMetricsF(font)
+            if fm.horizontalAdvance(s) > w:
+                s = fm.elidedText(s, Qt.TextElideMode.ElideRight, w)
         self.p.drawText(rect, int(flags), s)
 
     def rect(self, x, y, w, h, *, fill=None, stroke=None,
@@ -356,11 +369,31 @@ class _Painter:
 
 
 def _draw_logo_tile(pp: _Painter, x: int, y: int, size: int = 48) -> None:
-    """Purple gradient tile + 5 white speaker bars (matches Figma 415:2)."""
+    """Station logo when the operator uploaded one, else the built-in
+    purple gradient tile + 5 white speaker bars (Figma 415:2).
+
+    The uploaded image is already stored as a normalised square PNG
+    (core.branding), so it just gets clipped into the same rounded rect
+    the placeholder uses — identical geometry either way. Any failure
+    falls through to the painted tile: a report must never lose its
+    header because a logo file went missing."""
     p = pp.p
     rect = QRectF(x, y, size, size)
     path = QPainterPath()
     path.addRoundedRect(rect, 12, 12)
+
+    try:
+        from core.branding import load_station_logo
+        logo = load_station_logo()
+    except Exception:
+        logo = None
+    if logo is not None and not logo.isNull():
+        p.save()
+        p.setClipPath(path)
+        p.drawImage(rect, logo)
+        p.restore()
+        return
+
     p.save()
     p.setClipPath(path)
     grad = QLinearGradient(x, y, x + size, y + size)
@@ -432,16 +465,93 @@ def _draw_metadata(pp: _Painter, campaign: dict, spot_files: list[dict],
         ("Client:", client, None, None),
         ("Start & Expire:", start_expire, None, None),
     ]
+    # Column geometry (2026-07-25 clipping fix).
+    #   • A single-column row owns the full width up to the right margin.
+    #     Before, EVERY value was boxed at 200px, so "Start & Expire"
+    #     ("Saturday, July 04, 2026 > Monday, August 03, 2026" ≈ 265px)
+    #     and long "Client" descriptions were clipped mid-word while
+    #     ~160px of page sat empty to their right.
+    #   • The right-hand pair moved left so "Media Shop:" has 170px for
+    #     its value. The old 100px box silently truncated every real
+    #     station name; 170 clears the longest branding we know of
+    #     ("KISS FM 91.5 / FCP Radio", ~154px) with room to spare —
+    #     exact metrics shift slightly with the loaded font, so leave
+    #     headroom rather than sizing to the measured minimum. The left
+    #     value on that row shrinks to 133px, which costs nothing
+    #     (Ad Company is currently always blank).
+    VAL_X = 156
+    VAL_W_FULL = PAGE_W - MARGIN_X - VAL_X          # 399
+    SHOP_VAL_W = 170
+    SHOP_VAL_X = PAGE_W - MARGIN_X - SHOP_VAL_W     # 385
+    SHOP_LBL_W = 82
+    SHOP_LBL_X = SHOP_VAL_X - 6 - SHOP_LBL_W        # 297
+    VAL_W_SPLIT = SHOP_LBL_X - 8 - VAL_X            # 133
     y = 120
     for lbl, val, lbl2, val2 in rows:
         pp.text(40, y, 110, 14, lbl, **label_opts)
-        pp.text(156, y, 200, 14, val, **val_opts)
+        pp.text(VAL_X, y, VAL_W_SPLIT if lbl2 else VAL_W_FULL, 14, val,
+                elide=True, **val_opts)
         if lbl2:
-            pp.text(360, y, 90, 14, lbl2, **label_opts)
-            pp.text(456, y, 100, 14, val2, **val_opts)
+            pp.text(SHOP_LBL_X, y, SHOP_LBL_W, 14, lbl2, **label_opts)
+            pp.text(SHOP_VAL_X, y, SHOP_VAL_W, 14, val2,
+                    elide=True, **val_opts)
         y += 18
     pp.hr(MARGIN_X, y + 6, PAGE_W - MARGIN_X * 2)
     return y + 16
+
+
+def _wrap_entries(entries: list[str], fm: QFontMetricsF, width: float,
+                  sep: str = ", ") -> list[str]:
+    """Pack ``entries`` into as few ``sep``-joined lines as fit ``width``.
+
+    Every entry is kept — an entry wider than the whole line gets its own
+    line rather than being dropped. Used by the Spots List, which is a
+    factual record: eliding it would hide files the operator attached.
+    """
+    if not entries:
+        return []
+    lines: list[str] = []
+    cur = ""
+    for e in entries:
+        trial = f"{cur}{sep}{e}" if cur else e
+        if cur and fm.horizontalAdvance(trial) > width:
+            lines.append(cur + sep.rstrip())
+            cur = e
+        else:
+            cur = trial
+    if cur:
+        lines.append(cur)
+    return lines
+
+
+# Spots List geometry — shared by the renderer AND the pagination pass
+# so page 1's grid start always matches what actually gets painted.
+SPOTS_LIST_X = 156
+SPOTS_LIST_W = PAGE_W - MARGIN_X - SPOTS_LIST_X
+
+
+def _spots_list_lines(spot_files: list[dict]) -> list[str]:
+    """The Spots List, wrapped to the printable width.
+
+    A campaign can carry any number of audio files and EVERY one of them
+    belongs here — the operator reads this block as the contract's file
+    manifest, so eliding would hide files they attached. Before
+    2026-07-25 the whole list went into ONE 400px single-line drawText,
+    so a campaign with >2 files had the rest clipped mid-word (6 files
+    needed 850px).
+
+    Pure function of ``spot_files`` → callers can rely on the line count
+    matching what ``_draw_spots_list`` will paint.
+    """
+    if not spot_files:
+        return ["(no audio files attached to this campaign)"]
+    entries = [
+        f"({i + 1}) {sf.get('filename') or '—'} - "
+        f"{_fmt_dur(sf.get('duration_ms') or 0)}"
+        for i, sf in enumerate(spot_files)
+    ]
+    fm = QFontMetricsF(_font(MONO_FAMILY, 10, QFont.Weight.Normal, 0.0))
+    return _wrap_entries(entries, fm, SPOTS_LIST_W)
 
 
 def _draw_spots_list(pp: _Painter, spot_files: list[dict], y: int) -> int:
@@ -449,16 +559,11 @@ def _draw_spots_list(pp: _Painter, spot_files: list[dict], y: int) -> int:
             family=INTER_FAMILY, size=10, weight=QFont.Weight.Bold,
             color=INK_MUTED, align=Qt.AlignmentFlag.AlignRight
             | Qt.AlignmentFlag.AlignVCenter)
-    if spot_files:
-        line = ", ".join(
-            f"({i + 1}) {sf.get('filename') or '—'} - "
-            f"{_fmt_dur(sf.get('duration_ms') or 0)}"
-            for i, sf in enumerate(spot_files))
-    else:
-        line = "(no audio files attached to this campaign)"
-    pp.text(156, y, 400, 14, line,
-            family=MONO_FAMILY, size=10, color=INK_PRI)
-    y += 22
+    lines = _spots_list_lines(spot_files)
+    for i, line in enumerate(lines):
+        pp.text(SPOTS_LIST_X, y + i * ROW_LINE_H, SPOTS_LIST_W, 14, line,
+                family=MONO_FAMILY, size=10, color=INK_PRI)
+    y += 22 + max(0, len(lines) - 1) * ROW_LINE_H
 
     pp.text(40, y, 110, 14, "Play Order:",
             family=INTER_FAMILY, size=10, weight=QFont.Weight.Bold,
@@ -606,7 +711,14 @@ def generate_spot_play_report(
 
     # Page 1: header(100) + metadata(~110) + spots-list(~50) → grid starts ~290
     # Pages 2+: header(100) → grid starts ~110
-    PAGE1_GRID_START = 290
+    #
+    # The spots list WRAPS (2026-07-25) — a campaign with many audio
+    # files pushes the grid further down. Account for the extra lines
+    # here or page 1 gets over-filled and its last day-row runs into the
+    # footer. _spots_list_lines is the same pure function the renderer
+    # uses, so the two can never disagree.
+    _extra_spot_lines = max(0, len(_spots_list_lines(spot_files)) - 1)
+    PAGE1_GRID_START = 290 + _extra_spot_lines * ROW_LINE_H
     PAGEN_GRID_START = 110
     # Reserve space at the bottom of the LAST page for the Total banner
     # + footer (40 + 70 ≈ 110). On non-last pages just need footer (60).
