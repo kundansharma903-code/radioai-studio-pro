@@ -3783,9 +3783,20 @@ class Studio(QWidget):
     # break-tease montage finishes — queued back onto the Qt main
     # thread so _on_stitcher_tease_done can continue the spot chain.
     _stitcher_tease_done = pyqtSignal()
+    # Sweeper ducking (2026-07-25). BOTH are emitted from the
+    # SweeperEngine's watcher THREAD via its on_start / on_end hooks —
+    # never touch Qt or the DB there. Qt queues them onto the main
+    # thread, where _apply_sweeper_duck / _apply_sweeper_unduck do the
+    # actual volume slide. Args: (deck_cid, target_pct, fade_ms) and
+    # (deck_cid, fade_ms).
+    _sweeper_duck_requested   = pyqtSignal(int, int, int)
+    _sweeper_unduck_requested = pyqtSignal(int, int)
 
     DEFAULT_VOLUME = 85
     FADE_OUT_MS = 3000
+    # Grace period before the 1Hz duck watchdog may force a restore —
+    # long enough that it can never race a just-applied duck.
+    _DUCK_WATCHDOG_S = 3.0
 
     # Master-library jingles fired through the IJE share the broadcast
     # device with `jingle_pads`-driven plays. The IJE keys plays by
@@ -3904,6 +3915,17 @@ class Studio(QWidget):
         # new active deck. Both channels exist simultaneously for the
         # crossfade window.
         self._fading_cid: Optional[int] = None
+        # ── Sweeper ducking (2026-07-25) ────────────────────────────
+        # While an OVERLAY sweeper plays on top of the deck song, the
+        # song is slid down to the sweeper's `volume_song_pct` and slid
+        # back to _master_volume when the sweeper ends. Only engages
+        # when that column is < 100 — a sweeper left at 100 behaves
+        # exactly as before this feature existed.
+        # _ducked_cid is the channel currently held down (None = not
+        # ducking) so the restore can verify it is still the live deck.
+        self._ducked_cid: Optional[int] = None
+        self._ducked_at: Optional[datetime] = None
+        self._cfg_sweeper_ducking: bool = True
         # Studio Settings (Figma 69:2) snapshot. _apply_studio_settings
         # reloads these from the settings table at __init__ end and on
         # every SettingsStudio.settings_saved broadcast — keeps the
@@ -4013,6 +4035,10 @@ class Studio(QWidget):
         self._teased_songs: list[dict] = []
         self._stitcher_tease_playing: bool = False
         self._stitcher_tease_done.connect(self._on_stitcher_tease_done)
+        # Sweeper ducking — cross-thread (SweeperEngine watcher) →
+        # main thread. Qt auto-selects a queued connection.
+        self._sweeper_duck_requested.connect(self._apply_sweeper_duck)
+        self._sweeper_unduck_requested.connect(self._apply_sweeper_unduck)
         # Played-songs tracking — tracks song ids that have been
         # dispatched (play-started) since Studio launch. Used by the
         # Up Coming panel's fallback path to filter out songs that
@@ -4459,6 +4485,11 @@ class Studio(QWidget):
         self._cfg_show_crossfade_preview = s.get_bool(
             "show_crossfade_preview", False)
         self._cfg_flash_mix_point = s.get_bool("flash_mix_point", False)
+        # Kill switch for sweeper ducking — lets the operator disable
+        # the duck on air (settings table) without a rebuild. Default ON;
+        # per-sweeper volume_song_pct=100 already means "never duck".
+        self._cfg_sweeper_ducking = s.get_bool("sweeper_ducking_enabled",
+                                               True)
 
         # Live master-volume on the currently playing deck channel.
         new_master = s.get_int("master_volume", self.DEFAULT_VOLUME)
@@ -5710,14 +5741,43 @@ class Studio(QWidget):
                                             or item.get("position_offset")
                                             or 0.0),
             }
+            # ── Ducking (2026-07-25) ────────────────────────────────
+            # Slide the DECK song down while the sweeper talks, back up
+            # when it ends. Engages only when the sweeper explicitly
+            # asks for it (volume_song_pct < 100) and the operator
+            # hasn't flipped the kill switch — otherwise on_start /
+            # on_end stay None and playback is byte-identical to
+            # before this feature.
+            duck_pct = int(item.get("volume_song_pct")
+                           if item.get("volume_song_pct") is not None
+                           else 100)
+            duck_pct = max(0, min(100, duck_pct))
+            fade_ms = max(0, int(float(item.get("fade_seconds") or 0.5)
+                                 * 1000))
+            on_start = on_end = None
+            if self._cfg_sweeper_ducking and duck_pct < 100:
+                duck_cid = int(self._playback_cid)
+                # Bound to plain lambdas that ONLY emit — they run on
+                # the SweeperEngine watcher thread, where touching Qt
+                # widgets or the DB directly is forbidden.
+                on_start = (
+                    lambda c=duck_cid, p=duck_pct, f=fade_ms:
+                    self._sweeper_duck_requested.emit(c, p, f))
+                on_end = (
+                    lambda c=duck_cid, f=fade_ms:
+                    self._sweeper_unduck_requested.emit(c, f))
+
             self._sweeper_engine.schedule_for_song(
-                song_info, sweeper_info, self._playback_cid)
+                song_info, sweeper_info, self._playback_cid,
+                on_start=on_start, on_end=on_end)
             log.info(
                 f"[studio] sweeper overlay scheduled: "
                 f"id={item.get('item_id')!r} "
                 f"file={(sweeper_info['file_path'] or '')[-32:]!r} "
                 f"position={sweeper_info['position']!r} "
-                f"vol={sweeper_info['sweeper_volume']}%")
+                f"vol={sweeper_info['sweeper_volume']}% "
+                f"duck={'off' if on_start is None else f'{duck_pct}%'}"
+                f"{'' if on_start is None else f' fade={fade_ms}ms'}")
         except Exception as exc:
             log.warning(f"[studio] sweeper overlay failed: {exc}",
                         exc_info=True)
@@ -5738,6 +5798,105 @@ class Studio(QWidget):
             )
         except Exception as exc:
             log.warning(f"[studio] sweeper log_play failed: {exc}")
+
+    # ── Sweeper ducking — MAIN-THREAD slots (2026-07-25) ────────────
+    # Both are reached only via queued signals emitted from the
+    # SweeperEngine watcher thread, so by the time they run we are back
+    # on the Qt main thread and may touch the engine safely.
+
+    def _tick_duck_watchdog(self) -> None:
+        """1Hz safety net: never leave the deck stuck under a duck.
+
+        The authoritative restore is SweeperEngine's ``on_end`` hook
+        (which its ``finally`` block guarantees). This catches the
+        pathological case where that hook never arrives at all. Waits
+        ≥``_DUCK_WATCHDOG_S`` so it can't race a duck that was applied
+        a fraction of a second ago, and only acts once the overlay has
+        actually stopped."""
+        if self._ducked_cid is None:
+            return
+        held_s = (datetime.now() - (self._ducked_at or datetime.now())
+                  ).total_seconds()
+        if held_s < self._DUCK_WATCHDOG_S:
+            return
+        eng = self._sweeper_engine
+        still_playing = False
+        if eng is not None:
+            try:
+                still_playing = bool(eng.is_playing)
+            except Exception:
+                still_playing = False
+        if still_playing:
+            return
+        cid = int(self._ducked_cid)
+        log.warning(f"[studio] duck watchdog restoring cid={cid} — held "
+                    f"{held_s:.1f}s with no overlay playing")
+        self._apply_sweeper_unduck(cid, 300)
+
+    def _apply_sweeper_duck(self, cid: int, target_pct: int,
+                            fade_ms: int) -> None:
+        """Slide the deck song down under a talking sweeper."""
+        if self._engine is None:
+            return
+        # The deck may have moved on between scheduling and firing
+        # (song ended, operator hit Next). Only duck the live deck.
+        if self._playback_cid is None or int(cid) != int(self._playback_cid):
+            log.debug(f"[studio] duck skipped — cid {cid} is no longer "
+                      f"the deck ({self._playback_cid})")
+            return
+        # Never fight a crossfade: the outgoing channel is already
+        # sliding to 0 and a duck slide would override it.
+        if self._fading_cid is not None and int(cid) == int(self._fading_cid):
+            log.debug(f"[studio] duck skipped — cid {cid} is crossfading")
+            return
+        try:
+            self._engine.fade_volume_to(int(cid), int(target_pct),
+                                        int(fade_ms))
+            self._ducked_cid = int(cid)
+            self._ducked_at = datetime.now()
+            log.info(f"[studio] ducked deck cid={cid} → {target_pct}% "
+                     f"over {fade_ms}ms (sweeper overlay)")
+        except Exception as exc:
+            self._ducked_cid = None
+            self._ducked_at = None
+            log.warning(f"[studio] duck failed on cid={cid}: {exc}")
+
+    def _apply_sweeper_unduck(self, cid: int, fade_ms: int) -> None:
+        """Restore the deck song after the sweeper finishes.
+
+        Always clears ``_ducked_cid`` — even when the restore itself is
+        skipped — so a stale duck can never wedge the state machine.
+        The restore target is read LIVE from ``_master_volume`` so a
+        volume change made during the sweeper is respected.
+        """
+        was_ducked = self._ducked_cid
+        self._ducked_cid = None
+        self._ducked_at = None
+        if self._engine is None:
+            return
+        if was_ducked is None or int(was_ducked) != int(cid):
+            # Duck never actually applied (guarded out / failed) —
+            # nothing to restore, and restoring blindly could stomp a
+            # volume the deck legitimately holds.
+            return
+        if self._playback_cid is None or int(cid) != int(self._playback_cid):
+            # Song already moved on; the new channel was started at
+            # _master_volume by _on_queue_song_play. The old channel is
+            # being torn down — leave it alone.
+            log.debug(f"[studio] unduck skipped — cid {cid} no longer deck")
+            return
+        if self._fading_cid is not None and int(cid) == int(self._fading_cid):
+            # A crossfade owns this channel's volume now; restoring
+            # would audibly pull the outgoing song back up.
+            log.debug(f"[studio] unduck skipped — cid {cid} is crossfading")
+            return
+        try:
+            self._engine.fade_volume_to(int(cid), int(self._master_volume),
+                                        int(fade_ms))
+            log.info(f"[studio] unducked deck cid={cid} → "
+                     f"{self._master_volume}% over {fade_ms}ms")
+        except Exception as exc:
+            log.warning(f"[studio] unduck failed on cid={cid}: {exc}")
 
     def _on_play_sweeper_overlay(self, sweeper_id: int) -> None:
         """Manual sweeper play hook — fired from the Libraries panel
@@ -5764,6 +5923,12 @@ class Studio(QWidget):
             "position":           row["position"]    if "position"    in keys else None,
             "volume_sweeper_pct": row["volume_sweeper_pct"]
                                     if "volume_sweeper_pct" in keys else 100,
+            # Ducking fields — same contract as the auto path so a
+            # manual click behaves identically to a scheduled slot.
+            "volume_song_pct":    row["volume_song_pct"]
+                                    if "volume_song_pct"    in keys else 100,
+            "fade_seconds":       row["fade_seconds"]
+                                    if "fade_seconds"       in keys else 0.5,
             "offset_seconds":     row["offset_seconds"]
                                     if "offset_seconds"     in keys else 0.0,
             "clock_id":           None,   # manual play — no slot context
@@ -8533,6 +8698,15 @@ class Studio(QWidget):
             now.strftime("%H:%M:%S"),
             day=now.strftime("%A").upper(),
             date=now.strftime("%b %d, %Y").upper())
+        # Sweeper-duck watchdog — a song must NEVER stay ducked. The
+        # normal restore is the engine's on_end hook; this is the
+        # belt-and-braces for the case where that hook never arrives
+        # (watcher thread died, stream failed to open). Held ≥3s AND
+        # the overlay is no longer playing → restore.
+        try:
+            self._tick_duck_watchdog()
+        except Exception as exc:
+            log.warning(f"[studio] duck watchdog failed: {exc}")
         # Break Policy — release held spots at window minutes. No-op
         # when the pool is empty (policy OFF keeps it empty).
         try:

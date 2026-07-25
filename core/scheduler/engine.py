@@ -1235,6 +1235,29 @@ class SchedulerEngine(QObject):
             # Custom) always fell through to the deck-load branch.
             "position":    (row["position"]
                             if row and "position" in row.keys() else "") or "",
+            # 2026-07-25 — carry the mix fields too. Previously only the
+            # MANUAL play path (Studio._on_play_sweeper_overlay) read
+            # these off the row, so an auto-dispatched sweeper silently
+            # fell back to volume 100 / offset 0 and the per-sweeper
+            # settings in the Sweeper Editor did nothing on air.
+            # Columns are added by _ensure_sweepers_columns (idempotent),
+            # so guard with key checks for very old DBs.
+            "volume_sweeper_pct": (
+                int(row["volume_sweeper_pct"])
+                if row and "volume_sweeper_pct" in row.keys()
+                and row["volume_sweeper_pct"] is not None else 100),
+            "volume_song_pct": (
+                int(row["volume_song_pct"])
+                if row and "volume_song_pct" in row.keys()
+                and row["volume_song_pct"] is not None else 100),
+            "offset_seconds": (
+                float(row["offset_seconds"])
+                if row and "offset_seconds" in row.keys()
+                and row["offset_seconds"] is not None else 0.0),
+            "fade_seconds": (
+                float(row["fade_seconds"])
+                if row and "fade_seconds" in row.keys()
+                and row["fade_seconds"] is not None else 0.5),
         }
 
     def _pick_station_id(self, slot) -> Optional[dict]:
