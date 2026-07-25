@@ -1388,6 +1388,145 @@ class _Checkbox(QWidget):
         p.end()
 
 
+class _ClockContentsList(QWidget):
+    """Readable play-order list — sits in the empty band to the RIGHT of
+    the clock face circle inside the face frame (task B, 2026-07-09).
+
+    Display-only mirror of the screen's element list so the operator can
+    READ what the clock plays (type + category / pinned item) without
+    decoding the arc ring. Rows are precomputed dicts:
+        {"title": "Song", "sub": "Pool 08", "color": "#fcd34d"}
+    Click a row → ``row_clicked(idx)`` (screen syncs the face selection).
+    """
+
+    row_clicked = pyqtSignal(int)
+
+    _HEADER_H = 24
+    _ROW_H    = 30
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(156, 364)
+        self._rows: list[dict] = []
+        self._selected: Optional[int] = None
+
+        self._font_hdr   = inter(9, QFont.Weight.Bold, letter_spacing=1.2)
+        self._font_num   = mono(9)
+        self._font_title = inter(11, QFont.Weight.Bold, letter_spacing=-0.1)
+        self._font_sub   = inter(9, QFont.Weight.Medium)
+
+    # ── Public API ───────────────────────────────────────────────────────
+
+    def set_rows(self, rows: list[dict]) -> None:
+        self._rows = list(rows or [])
+        if self._selected is not None and self._selected >= len(self._rows):
+            self._selected = None
+        self.update(self.rect())
+
+    def set_selected(self, idx: Optional[int]) -> None:
+        if idx == self._selected:
+            return
+        self._selected = idx
+        self.update(self.rect())
+
+    def _max_visible(self) -> int:
+        return max(1, (self.height() - self._HEADER_H - 6) // self._ROW_H)
+
+    def _row_at(self, y: int) -> Optional[int]:
+        if y < self._HEADER_H:
+            return None
+        idx = (y - self._HEADER_H) // self._ROW_H
+        if 0 <= idx < min(len(self._rows), self._max_visible()):
+            return int(idx)
+        return None
+
+    def mousePressEvent(self, e: QMouseEvent) -> None:
+        if e.button() == Qt.MouseButton.LeftButton:
+            idx = self._row_at(int(e.position().y()))
+            if idx is not None:
+                self.row_clicked.emit(idx)
+        super().mousePressEvent(e)
+
+    # ── Paint ────────────────────────────────────────────────────────────
+
+    def paintEvent(self, e: QPaintEvent) -> None:
+        p = QPainter(self); p.setClipRect(e.rect())
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(0, 0, self.width(), self.height())
+        p.fillRect(r, QColor(255, 255, 255, 8))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(QColor(255, 255, 255, 14)))
+        p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 8, 8)
+
+        # Header
+        p.setPen(QColor(COL_TEXT_DIM)); p.setFont(self._font_hdr)
+        p.drawText(QRectF(10, 0, self.width() - 20, self._HEADER_H),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   "PLAY ORDER")
+
+        if not self._rows:
+            p.setPen(QColor(COL_TEXT_MUTED)); p.setFont(self._font_sub)
+            p.drawText(QRectF(10, self._HEADER_H, self.width() - 20, 30),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                       "No elements")
+            p.end(); return
+
+        max_vis = self._max_visible()
+        overflow = len(self._rows) - max_vis
+        visible = self._rows[:max_vis] if overflow > 0 else self._rows
+        # Overflow steals the last row slot for the "+N more" line
+        if overflow > 0:
+            visible = self._rows[:max_vis - 1]
+            overflow = len(self._rows) - len(visible)
+
+        fm_title = None
+        fm_sub = None
+        for i, row in enumerate(visible):
+            y = self._HEADER_H + i * self._ROW_H
+            rr = QRectF(2, y, self.width() - 4, self._ROW_H)
+            color = QColor(row.get("color") or COL_AMBER_LT)
+            if self._selected == i:
+                p.fillRect(rr, QColor(255, 255, 255, 18))
+                p.fillRect(QRectF(2, y + 4, 3, self._ROW_H - 8), color)
+            # number
+            p.setPen(QColor(COL_TEXT_MUTED)); p.setFont(self._font_num)
+            p.drawText(QRectF(10, y, 14, 16),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                       str(i + 1))
+            # type color dot
+            p.setPen(Qt.PenStyle.NoPen); p.setBrush(QBrush(color))
+            p.drawEllipse(QPointF(30, y + 8), 3.0, 3.0)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            # title line
+            p.setPen(QColor(COL_TEXT_PRIMARY)); p.setFont(self._font_title)
+            if fm_title is None:
+                fm_title = p.fontMetrics()
+            title = fm_title.elidedText(
+                str(row.get("title") or ""), Qt.TextElideMode.ElideRight,
+                self.width() - 50)
+            p.drawText(QRectF(40, y, self.width() - 50, 16),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                       title)
+            # sub line (category / random / pinned name)
+            p.setPen(QColor(COL_TEXT_SECONDARY)); p.setFont(self._font_sub)
+            if fm_sub is None:
+                fm_sub = p.fontMetrics()
+            sub = fm_sub.elidedText(
+                str(row.get("sub") or ""), Qt.TextElideMode.ElideRight,
+                self.width() - 50)
+            p.drawText(QRectF(40, y + 15, self.width() - 50, 12),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                       sub)
+
+        if overflow > 0:
+            y = self._HEADER_H + len(visible) * self._ROW_H
+            p.setPen(QColor(COL_TEXT_MUTED)); p.setFont(self._font_sub)
+            p.drawText(QRectF(10, y, self.width() - 20, self._ROW_H),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                       f"+{overflow} more…")
+        p.end()
+
+
 class _ClockEditorCard(QWidget):
     """680 × 564 right-side card. Title + Colorize By + status bar +
     clock face + bottom checkboxes."""
@@ -1424,6 +1563,11 @@ class _ClockEditorCard(QWidget):
         self._face.move(int(self._face_frame.x()), int(self._face_frame.y()))
         self._face.element_clicked.connect(self.element_clicked.emit)
 
+        # Play-order list — created AFTER the face so it stacks on top of
+        # the empty band right of the circle (circle glow ends at x≈499).
+        self._contents = _ClockContentsList(self)
+        self._contents.move(504, 107)
+
         # Checkboxes at y=499
         self._loop_cb = _Checkbox("Loop / Cycle clock elements",
                                   COL_CYAN, self)
@@ -1439,6 +1583,9 @@ class _ClockEditorCard(QWidget):
 
     def face(self) -> ClockFaceWidget:
         return self._face
+
+    def contents_list(self) -> "_ClockContentsList":
+        return self._contents
 
     def set_status(self, state: str, text: str) -> None:
         self._status_state = state if state in ("ok", "warn", "error") else "ok"
@@ -1707,6 +1854,8 @@ class ClockEditor(QWidget):
         self._editor = _ClockEditorCard(self)
         self._editor.move(704, 320)
         self._editor.element_clicked.connect(self._on_face_element_clicked)
+        self._editor.contents_list().row_clicked.connect(
+            self._on_content_row_clicked)
         self._editor.colorize_changed.connect(self._on_colorize_changed)
         self._editor.loop_changed.connect(self._on_dirty)
         self._editor.show_only_descriptions_changed.connect(self._on_dirty)
@@ -1823,6 +1972,7 @@ class ClockEditor(QWidget):
         # Sync UI to elements
         self._editor.face().set_elements(self._elements)
         self._editor.face().set_selected(None)
+        self._sync_contents_list()
         self._editor.set_status("ok", "No Errors Found")
         self._refresh_action_states()
         self._refresh_filter_results()
@@ -1849,18 +1999,31 @@ class ClockEditor(QWidget):
                 fj = json.loads(fjs) if fjs else {}
             except Exception:
                 fj = {}
+            mp_raw = s["minute_position"] if "minute_position" in keys else None
             out.append({
                 "element_type":      ui_type,
                 "slot_type_db":      stype_db,
                 "category_id":       int(cat_id) if cat_id else None,
                 "category_color":    cat_color,
+                "cat_name":          str(s["cat_name"])
+                                     if "cat_name" in keys and s["cat_name"] else None,
                 "filter_json":       fj,
-                "minute_position":   int(s["minute_position"] or 0)
-                                     if "minute_position" in keys else 0,
+                # 0/NULL means "sequential" (the auto-grid builder writes 0
+                # for every slot) → None so the face chains the element after
+                # the previous one instead of stacking all arcs at minute 0
+                # (the "empty AUTO clock face" bug, 2026-07-09 task A).
+                "minute_position":   int(mp_raw) if mp_raw else None,
                 "duration_seconds":  int(s["duration_seconds"] or 0)
                                      if "duration_seconds" in keys else 0,
                 "selection_mode":    str(s["selection_mode"] or "")
                                      if "selection_mode" in keys else "",
+                # Carry the pin columns so a load→save round-trip keeps a
+                # pinned sweeper/jingle (save payload forwards them when set).
+                "item_id":           int(s["item_id"])
+                                     if "item_id" in keys and s["item_id"] else None,
+                "sweeper_position":  s["sweeper_position"]
+                                     if "sweeper_position" in keys else None,
+                "ref_text":          s["ref_text"] if "ref_text" in keys else None,
                 "era":               fj.get("era") if isinstance(fj, dict) else None,
             })
         return out
@@ -1918,12 +2081,17 @@ class ClockEditor(QWidget):
             for c in self._categories_cache:
                 if int(c["id"]) == int(cat_id):
                     cat_color = c.get("color"); break
-        # Minute position = end of last element
+        # Minute position = end of last element. Mirrors the face's
+        # running-minute layout so sequential elements (minute_position
+        # None — see _slots_to_elements) chain instead of counting as 0.
         next_min = 0.0
+        running = 0.0
         for e in self._elements:
-            mp = e.get("minute_position") or 0
+            mp = e.get("minute_position")
+            start = float(mp) if mp is not None else running
             ds = e.get("duration_seconds") or 0
-            next_min = max(next_min, float(mp) + float(ds) / 60.0)
+            running = start + float(ds) / 60.0
+            next_min = max(next_min, running)
         # Sweeper / Jingle slots can be pinned to a specific row from
         # the corresponding library or left as random_from_category.
         # The picker dropdowns only show for matching element_type;
@@ -1965,6 +2133,7 @@ class ClockEditor(QWidget):
         self._on_dirty()
         self._editor.face().set_elements(self._elements)
         self._editor.face().set_selected(len(self._elements) - 1)
+        self._sync_contents_list()
         self._refresh_action_states()
         self._update_status_bar()
 
@@ -1977,6 +2146,7 @@ class ClockEditor(QWidget):
         self._on_dirty()
         self._editor.face().set_elements(self._elements)
         self._editor.face().set_selected(idx)
+        self._sync_contents_list()
         self._refresh_action_states()
         self._update_status_bar()
 
@@ -1991,6 +2161,7 @@ class ClockEditor(QWidget):
         self._on_dirty()
         self._editor.face().set_elements(self._elements)
         self._editor.face().set_selected(idx)
+        self._sync_contents_list()
         self._refresh_action_states()
         self._update_status_bar()
 
@@ -2003,13 +2174,84 @@ class ClockEditor(QWidget):
         self._editor.face().set_elements(self._elements)
         new_idx = idx if idx < len(self._elements) else None
         self._editor.face().set_selected(new_idx)
+        self._sync_contents_list()
         self._refresh_action_states()
         self._update_status_bar()
 
     def _on_face_element_clicked(self, idx: int) -> None:
         # idx == -1 means clicked empty area
+        self._editor.contents_list().set_selected(idx if idx >= 0 else None)
         self._refresh_action_states()
         self._update_status_bar()
+
+    def _on_content_row_clicked(self, idx: int) -> None:
+        """Play-order list row click → select the matching face arc."""
+        if idx < 0 or idx >= len(self._elements):
+            return
+        self._editor.face().set_selected(idx)
+        self._editor.contents_list().set_selected(idx)
+        self._refresh_action_states()
+
+    # ── Play-order list (task B, 2026-07-09) ────────────────────────────
+
+    def _sync_contents_list(self) -> None:
+        """Rebuild the readable play-order list from the element list and
+        mirror the face's current selection. Display-only."""
+        lst = self._editor.contents_list()
+        lst.set_rows(self._content_rows())
+        lst.set_selected(self._editor.face().selected_idx())
+
+    def _content_rows(self) -> list[dict]:
+        rows: list[dict] = []
+        for el in self._elements:
+            t = el.get("element_type") or "song"
+            title = ELEMENT_TYPE_LABELS.get(t, t.title())
+            color = ELEMENT_TYPE_COLORS.get(t, COL_AMBER_LT)
+            if t == "song":
+                sub = self._category_display_name(el) or "Any song"
+            elif t in ("jingle", "sweeper"):
+                if (el.get("selection_mode") or "") == "specific" \
+                        and el.get("item_id"):
+                    sub = self._item_display_name(t, int(el["item_id"])) \
+                          or "Pinned"
+                else:
+                    sub = "Random"
+            elif t == "spot":
+                sub = "Commercial break"
+            elif t == "voice":
+                sub = str(el.get("ref_text") or "Voice track")
+            else:
+                sub = ""
+            rows.append({"title": title, "sub": sub, "color": color})
+        return rows
+
+    def _category_display_name(self, el: dict) -> Optional[str]:
+        cid = el.get("category_id")
+        if cid is None:
+            return None
+        for c in self._categories_cache:
+            if int(c["id"]) == int(cid):
+                return str(c["name"])
+        # Cache miss (e.g. category renamed mid-session) — the load JOIN
+        # already gave us the name; last resort one exact-id SELECT.
+        if el.get("cat_name"):
+            return str(el["cat_name"])
+        try:
+            row = self._db.get_category(int(cid))
+            return str(row["name"]) if row is not None else None
+        except Exception:
+            return None
+
+    def _item_display_name(self, ui_type: str, item_id: int) -> Optional[str]:
+        """Name of a pinned sweeper/jingle. Read-only exact-id SELECT."""
+        table = "sweepers" if ui_type == "sweeper" else "jingles"
+        try:
+            row = self._db._conn().execute(
+                f"SELECT name FROM {table} WHERE id = ?", [int(item_id)]
+            ).fetchone()
+            return str(row["name"]) if row is not None else None
+        except Exception:
+            return None
 
     # ── Status bar / button-state sync ──────────────────────────────────
 

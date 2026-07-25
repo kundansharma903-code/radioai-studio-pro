@@ -448,3 +448,156 @@ def test_clock_face_colorize_by_changes_segments(qtbot):
     assert f._segment_paths[0][1] == "#ff0000"
     f.set_colorize_by("type")
     assert f._segment_paths[0][1] != "#ff0000"
+
+
+# ── A+B 2026-07-09: sequential AUTO clocks render + play-order list ──────
+
+
+def _seed_auto_grid_slots(env, cid: int) -> None:
+    """3 slots the way the auto-grid builder writes them — ALL at
+    minute_position 0 (the 'empty AUTO clock face' repro)."""
+    env.db.save_clock_slots(cid, [
+        {"slot_type": "sweeper", "duration_seconds": 8,
+         "minute_position": 0, "filter_json": "{}",
+         "selection_mode": "random_from_category"},
+        {"slot_type": "song", "duration_seconds": 240,
+         "minute_position": 0, "filter_json": "{}",
+         "selection_mode": "random_from_category"},
+        {"slot_type": "jingle", "duration_seconds": 8,
+         "minute_position": 0, "filter_json": "{}",
+         "selection_mode": "random_from_category"},
+    ])
+
+
+def test_auto_grid_mp_zero_loads_as_sequential(screen):
+    """minute_position 0/NULL → None so the face chains elements."""
+    s, env, _ = screen
+    cid = env.make_clock("auto")
+    _seed_auto_grid_slots(env, cid)
+    s.load_for_mode(MODE_EDIT, clock_id=cid)
+    assert len(s._elements) == 3
+    assert all(e["minute_position"] is None for e in s._elements)
+
+
+def test_auto_grid_face_arcs_spread_not_stacked(screen):
+    """The 3 arcs must start at increasing minutes (was: all at 0)."""
+    s, env, _ = screen
+    cid = env.make_clock("auto_face")
+    _seed_auto_grid_slots(env, cid)
+    s.load_for_mode(MODE_EDIT, clock_id=cid)
+    starts = [seg[2] for seg in s._editor.face()._segment_paths]
+    assert len(starts) == 3
+    assert starts[0] < starts[1] < starts[2]
+    assert starts[0] == 0.0          # first element still anchors at 12:00
+
+
+def test_explicit_minute_position_preserved(screen):
+    """A slot with a real (non-zero) minute_position keeps it."""
+    s, env, _ = screen
+    cid = env.make_clock("explicit_mp")
+    env.db.save_clock_slots(cid, [
+        {"slot_type": "song", "duration_seconds": 240,
+         "minute_position": 0, "filter_json": "{}",
+         "selection_mode": "random_from_category"},
+        {"slot_type": "jingle", "duration_seconds": 8,
+         "minute_position": 30, "filter_json": "{}",
+         "selection_mode": "random_any"},
+    ])
+    s.load_for_mode(MODE_EDIT, clock_id=cid)
+    assert s._elements[1]["minute_position"] == 30
+    starts = [seg[2] for seg in s._editor.face()._segment_paths]
+    assert starts[1] == 30.0
+
+
+def test_auto_grid_roundtrip_save_keeps_order(screen):
+    """Load an all-zero clock → save unchanged → slot order intact."""
+    s, env, _ = screen
+    cid = env.make_clock("auto_rt")
+    _seed_auto_grid_slots(env, cid)
+    s.load_for_mode(MODE_EDIT, clock_id=cid)
+    s._save()
+    saved = list(env.db.get_clock_slots(int(cid)))
+    assert [r["slot_type"] for r in saved] == ["sweeper", "song", "jingle"]
+
+
+def test_pinned_item_id_survives_load_save_roundtrip(screen):
+    """selection_mode='specific' + item_id must not be dropped by a
+    load → save round-trip (elements now carry the pin columns)."""
+    s, env, _ = screen
+    cid = env.make_clock("pin_rt")
+    env.db.save_clock_slots(cid, [
+        {"slot_type": "sweeper", "duration_seconds": 8,
+         "minute_position": 0, "filter_json": "{}",
+         "selection_mode": "specific", "item_id": 12345,
+         "sweeper_position": "START_OF_SONG"},
+    ])
+    s.load_for_mode(MODE_EDIT, clock_id=cid)
+    assert s._elements[0]["item_id"] == 12345
+    s._save()
+    saved = list(env.db.get_clock_slots(int(cid)))
+    assert int(saved[0]["item_id"]) == 12345
+    assert saved[0]["selection_mode"] == "specific"
+
+
+def test_contents_list_rows_readable(screen):
+    """Play-order list shows type + detail per element."""
+    s, env, _ = screen
+    cid = env.make_clock("contents")
+    _seed_auto_grid_slots(env, cid)
+    s.load_for_mode(MODE_EDIT, clock_id=cid)
+    rows = s._content_rows()
+    assert [r["title"] for r in rows] == ["Sweeper", "Song", "Jingle"]
+    assert rows[0]["sub"] == "Random"          # random sweeper
+    assert rows[1]["sub"] == "Any song"        # no category on the slot
+    assert rows[2]["sub"] == "Random"          # random jingle
+    # The widget mirrors the same rows
+    lst = s._editor.contents_list()
+    assert len(lst._rows) == 3
+
+
+def test_contents_list_shows_category_name(screen):
+    """A song slot with a category shows the category's NAME."""
+    s, env, _ = screen
+    cats = list(env.db.get_categories())
+    if not cats:
+        pytest.skip("live DB has no categories")
+    cat_id = int(cats[0]["id"]); cat_name = str(cats[0]["name"])
+    cid = env.make_clock("cat_name")
+    env.db.save_clock_slots(cid, [
+        {"slot_type": "song", "category_id": cat_id,
+         "duration_seconds": 240, "minute_position": 0,
+         "filter_json": "{}",
+         "selection_mode": "random_from_category"},
+    ])
+    s.load_for_mode(MODE_EDIT, clock_id=cid)
+    rows = s._content_rows()
+    assert rows[0]["title"] == "Song"
+    assert rows[0]["sub"] == cat_name
+
+
+def test_contents_list_row_click_selects_face_arc(screen):
+    s, env, _ = screen
+    cid = env.make_clock("row_click")
+    _seed_auto_grid_slots(env, cid)
+    s.load_for_mode(MODE_EDIT, clock_id=cid)
+    assert s._editor.face().selected_idx() is None
+    s._on_content_row_clicked(1)
+    assert s._editor.face().selected_idx() == 1
+    assert s._editor.contents_list()._selected == 1
+    # Out-of-range click is a no-op
+    s._on_content_row_clicked(99)
+    assert s._editor.face().selected_idx() == 1
+
+
+def test_contents_list_syncs_on_crud(screen):
+    s, _, _ = screen
+    s.load_for_mode(MODE_NEW)
+    lst = s._editor.contents_list()
+    assert lst._rows == []
+    s._on_add()
+    assert len(lst._rows) == 1
+    s._on_add()
+    assert len(lst._rows) == 2
+    s._editor.face().set_selected(0)
+    s._on_delete()
+    assert len(lst._rows) == 1
