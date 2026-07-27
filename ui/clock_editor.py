@@ -879,8 +879,24 @@ class _AvailableElementsCard(QWidget):
         self._dd_jingle_pick.setVisible(False)
         self._jingle_id_by_label: dict[str, int] = {}
 
+        # Voice-type config — only visible when element_type='voice'.
+        # Mirrors the jingle picker: "Random (any)" leaves the slot on
+        # the scheduler's date-window pick over `voice_tracks`, a
+        # specific choice pins it via item_id. Added 2026-07-25 — before
+        # that the Voice tile showed the SONG filter panel, which the
+        # voice-track picker (_pick_voice_track) never reads.
+        self._dd_voice_pick = _SmallDropdown(
+            ["Random (any)"], 400, 32, parent=self)
+        self._dd_voice_pick.move(15, 183)
+        self._dd_voice_pick.selection_changed.connect(
+            lambda _: self.filter_changed.emit())
+        self._dd_voice_pick.setVisible(False)
+        self._voice_id_by_label: dict[str, int] = {}
+        # Per-type library counts, for the "N AVAIL" badge.
+        self._lib_counts: dict[str, int] = {}
+
         # Final visibility pass after every widget exists.
-        self._apply_sweeper_visibility()
+        self._apply_type_visibility()
 
     # ── Public API ────────────────────────────────────────────────────────
 
@@ -914,16 +930,28 @@ class _AvailableElementsCard(QWidget):
 
     # ── Sweeper-type config ──────────────────────────────────────────────
 
-    def _apply_sweeper_visibility(self) -> None:
-        """Filters-tab visibility is per element type:
-          • song / spot / voice → song-filter dropdowns visible
-          • sweeper             → sweeper picker + position visible
-          • jingle              → jingle picker visible (no position)
-        All groups hide when the sub-tab leaves Filters."""
+    def _apply_type_visibility(self) -> None:
+        """Show ONLY the controls the scheduler actually reads for the
+        selected element type. All groups hide off the Filters sub-tab.
+
+          • song    → song filter dropdowns + Pick Category
+                      (scheduler reads filter_json + category_id)
+          • jingle  → jingle picker            (selection_mode + item_id)
+          • sweeper → sweeper picker + position(+ sweeper_position)
+          • voice   → voice-track picker       (selection_mode + item_id)
+          • spot    → NOTHING. _pick_break ignores the slot entirely and
+                      pulls the campaign scheduled for the hour, so any
+                      control here would be a lie. Operator confirmed
+                      2026-07-25: spots always run from the dedicated
+                      Spots & Commercials section.
+
+        Before 2026-07-25 this treated spot and voice as "song-like",
+        so both showed the full song filter panel — including
+        "Pick Category → All Songs · 394 songs" on a Spot slot, which
+        nothing downstream ever reads.
+        """
         on_filters = self._subtab == "filters"
-        is_sweeper = self._element_type == "sweeper"
-        is_jingle  = self._element_type == "jingle"
-        is_song_like = not (is_sweeper or is_jingle)
+        t = self._element_type
         song_filter_widgets = (
             self._dd_sound_code, self._dd_popularity, self._dd_era,
             self._dd_properties, self._dd_vocal,
@@ -933,10 +961,15 @@ class _AvailableElementsCard(QWidget):
             self._cat_dd,
         )
         for w in song_filter_widgets:
-            w.setVisible(on_filters and is_song_like)
-        self._dd_sweeper_pick.setVisible(on_filters and is_sweeper)
-        self._dd_sweeper_position.setVisible(on_filters and is_sweeper)
-        self._dd_jingle_pick.setVisible(on_filters and is_jingle)
+            w.setVisible(on_filters and t == "song")
+        self._dd_sweeper_pick.setVisible(on_filters and t == "sweeper")
+        self._dd_sweeper_position.setVisible(on_filters and t == "sweeper")
+        self._dd_jingle_pick.setVisible(on_filters and t == "jingle")
+        self._dd_voice_pick.setVisible(on_filters and t == "voice")
+
+    # Historic name kept as an alias — several call sites and older
+    # notes refer to it.
+    _apply_sweeper_visibility = _apply_type_visibility
 
     def set_sweepers(self, sweepers: list) -> None:
         """Populate the specific-sweeper picker. Each entry is either a
@@ -1002,6 +1035,48 @@ class _AvailableElementsCard(QWidget):
         operator left the picker on 'Random (any)'."""
         label = self._dd_jingle_pick.value()
         return self._jingle_id_by_label.get(label)
+
+    def set_voice_tracks(self, tracks: list) -> None:
+        """Populate the specific-voice-track picker from `voice_tracks`.
+        Same shape as the jingle picker; rows expose ``id`` and either
+        ``label`` or ``name`` (the scheduler's _voice_track_to_item
+        prefers ``label``, so match that ordering here)."""
+        labels = ["Random (any)"]
+        self._voice_id_by_label = {}
+        for v in tracks or []:
+            try:
+                vid = int(v["id"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            name = None
+            for key in ("label", "name"):
+                try:
+                    if key in v.keys() and v[key]:
+                        name = str(v[key])
+                        break
+                except Exception:
+                    continue
+            name = name or f"Voice #{vid}"
+            label = f"{name}  (#{vid})"
+            labels.append(label)
+            self._voice_id_by_label[label] = vid
+        self._dd_voice_pick._options = labels
+        if self._dd_voice_pick._value not in labels:
+            self._dd_voice_pick._value = labels[0]
+        self._dd_voice_pick.update()
+
+    def selected_voice_track_id(self):
+        """Return the voice_track id for the current pick, or None for
+        'Random (any)'."""
+        label = self._dd_voice_pick.value()
+        return self._voice_id_by_label.get(label)
+
+    def set_library_counts(self, counts: dict) -> None:
+        """How many rows each library holds — drives the "N AVAIL"
+        badge so it reflects the type on screen instead of always
+        showing the song-category count."""
+        self._lib_counts = dict(counts or {})
+        self.update(self.rect())
 
     def filter_state(self) -> dict:
         """Snapshot the filter UI as a dict matching scheduler's
@@ -1076,36 +1151,13 @@ class _AvailableElementsCard(QWidget):
                    "Available Clock Elements")
 
         if self._subtab == "filters":
-            # "Categories" label
-            p.setPen(QColor(COL_AMBER_LT)); p.setFont(self._font_h_section)
-            p.drawText(QRectF(15, 151, 200, 14),
-                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                       "Categories")
-            # "Pick Category" + count badge
-            p.setPen(QColor(COL_AMBER_LT)); p.setFont(self._font_h_section)
-            p.drawText(QRectF(15, 431, 200, 14),
-                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                       "Pick Category")
-            # "8 AVAIL" badge — show real count
-            badge_count = len(self._categories) or 0
-            badge_rect = QRectF(self.width() - 73, 431, 56, 18)
-            p.fillRect(badge_rect, _qcolor(COL_AMBER, 0.18))
-            p.setPen(QPen(_qcolor(COL_AMBER, 0.4)))
-            p.setBrush(Qt.BrushStyle.NoBrush)
-            p.drawRoundedRect(badge_rect.adjusted(0.5, 0.5, -0.5, -0.5), 9, 9)
-            p.setPen(QColor(COL_AMBER_LT)); p.setFont(self._font_avail)
-            p.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter,
-                       f"{badge_count} AVAIL")
-            # Helper line
-            p.setPen(QColor(COL_TEXT_SECONDARY)); p.setFont(self._font_helper)
-            p.drawText(QRectF(15, 513, 280, 14),
-                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                       self._build_helper_line())
-            # "⚙ Manage" purple link, right
-            p.setPen(QColor(COL_PURPLE_LT)); p.setFont(self._font_manage)
-            p.drawText(QRectF(self.width() - 90, 513, 80, 14),
-                       Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
-                       "⚙  Manage")
+            t = self._element_type
+            if t == "song":
+                self._paint_song_chrome(p)
+            elif t == "spot":
+                self._paint_spot_notice(p)
+            else:
+                self._paint_picker_chrome(p, t)
         else:
             # Placeholder for Song Tracks / Artists tabs
             p.setPen(QColor(COL_TEXT_DIM))
@@ -1122,6 +1174,80 @@ class _AvailableElementsCard(QWidget):
                        Qt.TextFlag.TextWordWrap,
                        "Use Filters tab for category-based rotations.")
         p.end()
+
+    # ── Per-type Filters-tab chrome (2026-07-25) ─────────────────────
+    # Previously ONE block painted "Categories" / "Pick Category" /
+    # "N AVAIL" (song-category count) / a song-category helper line for
+    # EVERY element type, so a Jingle or Sweeper slot was captioned with
+    # song-library data. Each type now paints only what applies to it.
+
+    def _badge(self, p: QPainter, y: int, count: int, label: str = "AVAIL"
+               ) -> None:
+        rect = QRectF(self.width() - 73, y, 56, 18)
+        p.fillRect(rect, _qcolor(COL_AMBER, 0.18))
+        p.setPen(QPen(_qcolor(COL_AMBER, 0.4)))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), 9, 9)
+        p.setPen(QColor(COL_AMBER_LT)); p.setFont(self._font_avail)
+        p.drawText(rect, Qt.AlignmentFlag.AlignCenter, f"{count} {label}")
+
+    def _paint_song_chrome(self, p: QPainter) -> None:
+        p.setPen(QColor(COL_AMBER_LT)); p.setFont(self._font_h_section)
+        p.drawText(QRectF(15, 151, 200, 14),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   "Categories")
+        p.drawText(QRectF(15, 431, 200, 14),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   "Pick Category")
+        self._badge(p, 431, len(self._categories) or 0)
+        p.setPen(QColor(COL_TEXT_SECONDARY)); p.setFont(self._font_helper)
+        p.drawText(QRectF(15, 513, 280, 14),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   self._build_helper_line())
+        p.setPen(QColor(COL_PURPLE_LT)); p.setFont(self._font_manage)
+        p.drawText(QRectF(self.width() - 90, 513, 80, 14),
+                   Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                   "⚙  Manage")
+
+    _PICKER_CHROME = {
+        "jingle":  ("Jingle", "Pick a jingle from the Jingles Library, or "
+                              "leave Random to rotate them all."),
+        "sweeper": ("Sweeper", "Pick a sweeper and its position, or leave "
+                               "Random to rotate the library."),
+        "voice":   ("Voice Track", "Pick a voice track, or leave Random to "
+                                   "rotate today's valid tracks."),
+    }
+
+    def _paint_picker_chrome(self, p: QPainter, t: str) -> None:
+        title, helper = self._PICKER_CHROME.get(
+            t, (ELEMENT_TYPE_LABELS.get(t, "Element"), ""))
+        p.setPen(QColor(COL_AMBER_LT)); p.setFont(self._font_h_section)
+        p.drawText(QRectF(15, 151, 260, 14),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   title)
+        self._badge(p, 149, int(self._lib_counts.get(t, 0)))
+        p.setPen(QColor(COL_TEXT_SECONDARY)); p.setFont(self._font_helper)
+        p.drawText(QRectF(15, 265, self.width() - 30, 40),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+                   | Qt.TextFlag.TextWordWrap, helper)
+
+    def _paint_spot_notice(self, p: QPainter) -> None:
+        """A Break slot carries no per-slot configuration: the scheduler's
+        _pick_break reads the campaign scheduled for the hour and ignores
+        filter_json / category_id / item_id entirely. Saying so beats
+        showing song filters that do nothing."""
+        p.setPen(QColor(COL_AMBER_LT)); p.setFont(self._font_h_section)
+        p.drawText(QRectF(15, 151, 260, 14),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   "Commercial Break")
+        p.setPen(QColor(COL_TEXT_SECONDARY)); p.setFont(self._font_helper)
+        p.drawText(QRectF(15, 183, self.width() - 30, 90),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+                   | Qt.TextFlag.TextWordWrap,
+                   "This slot has no settings here.\n\n"
+                   "Ads are scheduled in Spots & Commercials — add the "
+                   "break element to reserve the airtime, and the "
+                   "campaigns due at that hour will play.")
 
     def _build_helper_line(self) -> str:
         """Top categories preview — first 5 names + +N more."""
@@ -1935,6 +2061,27 @@ class ClockEditor(QWidget):
             self._lib.set_jingles(list(jingle_rows))
         except Exception as exc:
             log.warning(f"load jingles failed: {exc}")
+        # Voice tracks — same pattern. Only rows valid for TODAY, which
+        # is exactly what the scheduler's _pick_voice_track considers.
+        try:
+            from datetime import datetime as _vt_dt
+            voice_rows = list(self._db.get_voice_tracks(
+                _vt_dt.now().strftime("%Y-%m-%d")))
+            self._lib.set_voice_tracks(voice_rows)
+        except Exception as exc:
+            log.warning(f"load voice tracks failed: {exc}")
+            voice_rows = []
+        # Per-type library sizes drive the "N AVAIL" badge so it matches
+        # the type on screen (it used to always show the song-category
+        # count, even on a Jingle or Sweeper slot).
+        try:
+            self._lib.set_library_counts({
+                "jingle":  max(0, len(self._lib._jingle_id_by_label)),
+                "sweeper": max(0, len(self._lib._sweeper_id_by_label)),
+                "voice":   len(voice_rows),
+            })
+        except Exception as exc:
+            log.debug(f"library counts failed: {exc}")
 
         # Populate fields per mode
         if mode == MODE_NEW or self._source_id is None:
@@ -2037,9 +2184,49 @@ class ClockEditor(QWidget):
     def _on_reset_filters(self) -> None:
         self._lib.reset_filters()
 
+    def _non_song_results(self, ui_type: str) -> tuple[int, float]:
+        """(count, avg_seconds) for a non-song element type, read from
+        the library the scheduler will actually pick from.
+
+        Spot returns (0, 0) on purpose: _pick_break ignores the slot and
+        pulls whatever campaign is due that hour, so there is no
+        candidate set to count here."""
+        queries = {
+            "jingle":  ("SELECT COUNT(*), AVG(duration_ms) FROM jingles "
+                        "WHERE is_enabled = 1 AND file_path IS NOT NULL "
+                        "AND file_path != ''"),
+            "sweeper": ("SELECT COUNT(*), AVG(duration_ms) FROM sweepers "
+                        "WHERE is_enabled = 1 AND file_path IS NOT NULL "
+                        "AND file_path != ''"),
+            "voice":   ("SELECT COUNT(*), AVG(duration_ms) FROM voice_tracks "
+                        "WHERE is_active = 1"),
+        }
+        sql = queries.get(ui_type)
+        if sql is None:
+            return (0, 0.0)
+        try:
+            row = self._db._conn().execute(sql).fetchone()
+        except Exception as exc:
+            log.warning(f"{ui_type} results query failed: {exc}")
+            return (0, 0.0)
+        if row is None:
+            return (0, 0.0)
+        count = int(row[0] or 0)
+        avg_s = (float(row[1] or 0) / 1000.0) if count else 0.0
+        return (count, avg_s)
+
     def _refresh_filter_results(self) -> None:
-        """Compute live count + avg duration via the scheduler engine's
-        filter helper (single source of truth for filter→songs SQL)."""
+        """Compute live count + avg duration for the SELECTED element
+        type.
+
+        Until 2026-07-25 this always ran the song-filter query, so the
+        Filter Results card reported a song count and song average even
+        when the operator had Jingle, Sweeper, Voice or Spot selected.
+        Non-song types now report their own library instead."""
+        t = self._lib.element_type()
+        if t != "song":
+            self._results.set_data(*self._non_song_results(t))
+            return
         if self._scheduler is None:
             self._results.set_data(0, 0.0)
             return
@@ -2111,6 +2298,11 @@ class ClockEditor(QWidget):
             jingle_id = self._lib.selected_jingle_id()
             if jingle_id is not None:
                 item_id = jingle_id
+                selection_mode = "specific"
+        elif ui_type == "voice":
+            voice_id = self._lib.selected_voice_track_id()
+            if voice_id is not None:
+                item_id = voice_id
                 selection_mode = "specific"
         return {
             "element_type":     ui_type,
