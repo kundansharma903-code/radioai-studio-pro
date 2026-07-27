@@ -16,6 +16,7 @@ Startup sequence:
 import sys
 import os
 import logging
+import threading
 
 # Force UTF-8 on Windows terminals (dev mode). In PyInstaller's
 # console=False GUI build, sys.stdout / sys.stderr are None (no
@@ -146,6 +147,104 @@ def main():
         log.info("Child console windows hidden (CREATE_NO_WINDOW patch)")
     except Exception as exc:
         log.warning(f"win_console patch failed: {exc}")
+
+    # 1.55. Unhandled-exception black box. THIS is the one that was
+    # missing (2026-07-25).
+    #
+    # PyQt6 calls qFatal() when a Python exception escapes a slot, and
+    # qFatal aborts via __fastfail — which Windows reports as
+    # "Qt6Core.dll / 0xc0000409 / subcode 7 (FATAL_APP_EXIT)". That is
+    # EXACTLY the signature of every on-air crash we have logged
+    # (2026-07-04, 07-05, and twice on 07-25). PyQt prints the
+    # traceback through sys.excepthook first — but the default hook
+    # writes to stderr, and in the windowed frozen exe stderr goes
+    # nowhere. So the one piece of evidence that names our code was
+    # being thrown away every single time.
+    #
+    # Qt's OWN fatal messages take the same path: "QThread: Destroyed
+    # while thread is still running" and friends print to stderr and
+    # then abort with the same signature. qInstallMessageHandler routes
+    # them into the log too.
+    #
+    # Pure observability — nothing here changes behaviour. It cannot
+    # PREVENT the abort (PyQt aborts after the hook returns), but the
+    # next occurrence will name the file and line instead of a DLL
+    # offset.
+    try:
+        import traceback as _tb
+
+        _prev_excepthook = sys.excepthook
+
+        def _log_excepthook(exc_type, exc, tb):
+            try:
+                log.critical(
+                    "UNHANDLED EXCEPTION (PyQt will abort the process "
+                    "after this):\n%s",
+                    "".join(_tb.format_exception(exc_type, exc, tb)))
+                for h in list(log.handlers) + list(
+                        logging.getLogger().handlers):
+                    try:
+                        h.flush()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            try:
+                _prev_excepthook(exc_type, exc, tb)
+            except Exception:
+                pass
+
+        sys.excepthook = _log_excepthook
+
+        # Worker threads (sweeper watcher, stitcher, aircheck encoder,
+        # SOTG) have their own hook — a raise there never reaches
+        # sys.excepthook.
+        def _log_thread_excepthook(args):
+            try:
+                log.critical(
+                    "UNHANDLED EXCEPTION in thread %r:\n%s",
+                    getattr(args.thread, "name", "?"),
+                    "".join(_tb.format_exception(
+                        args.exc_type, args.exc_value, args.exc_traceback)))
+            except Exception:
+                pass
+
+        threading.excepthook = _log_thread_excepthook
+        log.info("Python exception hooks armed (main + threads)")
+    except Exception as exc:
+        log.warning(f"excepthook setup failed: {exc}")
+
+    try:
+        from PyQt6.QtCore import qInstallMessageHandler, QtMsgType
+
+        _QT_LEVEL = {
+            QtMsgType.QtDebugMsg:    logging.DEBUG,
+            QtMsgType.QtInfoMsg:     logging.INFO,
+            QtMsgType.QtWarningMsg:  logging.WARNING,
+            QtMsgType.QtCriticalMsg: logging.ERROR,
+            QtMsgType.QtFatalMsg:    logging.CRITICAL,
+        }
+
+        def _qt_message_handler(mode, context, message):
+            try:
+                lvl = _QT_LEVEL.get(mode, logging.INFO)
+                where = ""
+                if getattr(context, "file", None):
+                    where = f" [{context.file}:{context.line}]"
+                logging.getLogger("Qt").log(lvl, f"{message}{where}")
+                if lvl >= logging.ERROR:
+                    for h in logging.getLogger().handlers:
+                        try:
+                            h.flush()
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+        qInstallMessageHandler(_qt_message_handler)
+        log.info("Qt message handler armed (Qt warnings/fatals → log)")
+    except Exception as exc:
+        log.warning(f"Qt message handler setup failed: {exc}")
 
     # 1.6. Hard-crash black box. The 2026-07-04 01:29 on-air crash
     # (Qt6Core.dll, 0xc0000409 fail-fast) left NO trace of what Python
