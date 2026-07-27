@@ -4600,6 +4600,16 @@ class Studio(QWidget):
                 f"Spot:{len(self._pending_spots)})")
             self._fade_triggered_for_cid = cid  # latch — don't re-eval
             return
+        # Non-music element on the deck → play it to its natural end.
+        # The 8s fade window is longer than most jingles/sweepers, so
+        # fading here dispatches the next item over the top of it.
+        if self._is_non_music_deck_item():
+            log.info(
+                f"[studio] poll-fade SKIPPED cid={cid} — "
+                f"{(self._current_track or {}).get('_item_type')!r} plays "
+                f"to natural EOS (no overlap)")
+            self._fade_triggered_for_cid = cid  # latch — don't re-eval
+            return
         # Threshold: per-song mix_point_ms wins; else fade_out_start
         # seconds before end. 0 + no mix point disables the fade.
         mp_ms = 0
@@ -4669,6 +4679,14 @@ class Studio(QWidget):
                 f"[studio] crossfade DEFERRED — pending dispatch "
                 f"(SOTG:{len(self._pending_sotgs)} "
                 f"Spot:{len(self._pending_spots)}) waits for natural EOS")
+            return False
+        # Never crossfade OUT of a jingle / sweeper / station ID / voice
+        # track — they are short enough that any overlap swallows them.
+        if self._is_non_music_deck_item():
+            log.info(
+                f"[studio] crossfade SKIPPED — "
+                f"{(self._current_track or {}).get('_item_type')!r} on deck "
+                f"plays to natural EOS (no overlap)")
             return False
         try:
             cur_id = (self._current_track or {}).get("id")
@@ -5501,6 +5519,48 @@ class Studio(QWidget):
         """
         return bool(self._pending_sotgs or self._pending_spots)
 
+    #: Deck item types that are NOT music. These play to their natural
+    #: end — never faded early, never crossfaded out of.
+    _NON_MUSIC_DECK_TYPES = frozenset({
+        "jingle", "sweeper", "station_id", "voice_track", "voice", "break",
+        "spot",
+    })
+
+    def _is_non_music_deck_item(self) -> bool:
+        """True when the deck is playing a jingle / sweeper / station ID /
+        voice track rather than a song.
+
+        ════════════════════════════════════════════════════════════════
+        COMPANION TO INVARIANT #2 — added 2026-07-27
+        ════════════════════════════════════════════════════════════════
+        The fade threshold is ``duration - fade_out_start`` (8s by
+        default), which is sized for 3-5 minute SONGS. On a 9-second
+        sweeper that threshold lands about ONE SECOND in, so the next
+        item was dispatched almost immediately and played over the top:
+
+            deck play ch=1 sweeper 'RR-Musical 01' dur_ms=9052
+            fade-out triggered ch=1 trigger=fade_out_start=8s
+            crossfade started — old_ch=1 new_ch=2
+
+        Operator (2026-07-27): "jingle pura baje, sweeper overlap na ho,
+        sweeper ko pura hone do phir song baje — no overlap."
+
+        So: element-to-anything transitions are SEQUENTIAL. Only
+        song→song keeps the musical crossfade. Checked at the same three
+        fade triggers as _has_pending_dispatch():
+          • _on_engine_mix_point_reached
+          • _maybe_trigger_fade_out
+          • _dispatch_crossfade_overlap
+        Removing the gate brings the overlap straight back — a short
+        element is ALWAYS shorter than the fade window.
+        ════════════════════════════════════════════════════════════════
+        """
+        try:
+            t = (self._current_track or {}).get("_item_type") or "song"
+        except Exception:
+            return False
+        return str(t).strip().lower() in self._NON_MUSIC_DECK_TYPES
+
     def _on_engine_mix_point_reached(self, channel_id: int) -> None:
         """Fired by the AudioEngine the EXACT sample the playback head
         crosses the song's registered mix point. Triggers fade + dispatch
@@ -5527,6 +5587,15 @@ class Studio(QWidget):
                     f"{len(self._pending_spots)}) will fire on EOS")
                 # Mark as triggered so the polling backstop also skips —
                 # song must play to full duration uninterrupted.
+                self._fade_triggered_for_cid = channel_id
+                return
+            # Jingle / sweeper / station ID / voice track → sequential.
+            # See _is_non_music_deck_item for the 9s-sweeper evidence.
+            if self._is_non_music_deck_item():
+                log.info(
+                    f"[studio] mix-point sync SKIPPED cid={channel_id} — "
+                    f"{(self._current_track or {}).get('_item_type')!r} "
+                    f"plays to natural EOS (no overlap)")
                 self._fade_triggered_for_cid = channel_id
                 return
             crossfade_ms = max(
@@ -6376,6 +6445,11 @@ class Studio(QWidget):
     #   song (natural EOS) → tease block (standalone, deck silent)
     #   → spot chain → the teased songs, in order (pinned).
     _STITCHER_REFIRE_GUARD_S = 120   # don't re-tease within 2 min
+    # How many post-break songs the tease keeps pinned. Each break
+    # consumes one, so the arm step tops the list back up to this —
+    # below stitcher_config.min_hooks_required the montage can't be
+    # assembled at all (see _arm_stitcher_tease).
+    _TEASE_TARGET_PINS = 3
 
     def _on_scheduler_break_warn(self, seconds_until: int) -> None:
         log.info(f"[studio] scheduler: break_approaching in {seconds_until}s")
@@ -6429,8 +6503,26 @@ class Studio(QWidget):
           2. visible Up Coming song cards (live-assist / idle)
           3. consumed-aware static-queue walk (no scheduler at all)
         Config-gated (module_enabled + trigger_before_every_break).
-        Idempotent while a tease is already armed."""
-        if self._teased_songs or self._stitcher_tease_playing:
+
+        TOP-UP, not all-or-nothing (2026-07-27). This used to bail out
+        whenever ANY pin was still queued ("idempotent while armed").
+        But each break consumes ONE pin as its promised post-break song,
+        so the list drains 3 → 2 → 1 while re-arming stays blocked — and
+        at 1 pin ``assemble_sequence`` can't meet min_hooks_required (2)
+        and the montage is dropped:
+
+            tease armed — 3 songs pinned
+            playing promised post-break song  (2 more pinned)
+            playing promised post-break song  (1 more pinned)
+            tease skipped — no valid sequence      ← only 1 pin left
+            playing promised post-break song  (0 more pinned)
+
+        Now it only skips when the list is already full, and otherwise
+        TOPS UP while keeping the existing pins in place — a promise
+        already made on air must still be honoured in order."""
+        if self._stitcher_tease_playing:
+            return
+        if len(self._teased_songs or []) >= self._TEASE_TARGET_PINS:
             return
         if self._stitcher_engine is None:
             return
@@ -6444,8 +6536,16 @@ class Studio(QWidget):
         if not int(cfg.get("trigger_before_every_break") or 0):
             return
 
-        picked: list[dict] = []
+        # Seed with the pins already promised so they keep their slot
+        # and can't be picked twice.
+        picked: list[dict] = [dict(s) for s in (self._teased_songs or [])]
         seen: set = set()
+        for s in picked:
+            try:
+                seen.add(int(s.get("id") or 0))
+            except (TypeError, ValueError):
+                pass
+        carried = len(picked)
         # 1st choice (operator directive 2026-07-04: "spot apni jagah,
         # categories apni jagah"): the ACTIVE CLOCK's own upcoming
         # songs via a non-destructive peek. Overnight 07-03 every ~10min
@@ -6477,14 +6577,14 @@ class Studio(QWidget):
                             "duration_ms": it.get("duration_ms"),
                         })
                         seen.add(sid)
-                        if len(picked) >= 3:
+                        if len(picked) >= self._TEASE_TARGET_PINS:
                             break
             except Exception as exc:
                 log.debug(f"[stitcher] tease peek failed: {exc}")
         # 2nd choice: song cards already visible in Up Coming
         # (live-assist / scheduler idle — promise what the operator
         # sees).
-        if len(picked) < 3:
+        if len(picked) < self._TEASE_TARGET_PINS:
             for card in list(getattr(self, "_upcoming_preview", [])
                              or []):
                 if (card.get("_item_type") or "song") != "song":
@@ -6494,13 +6594,13 @@ class Studio(QWidget):
                     continue
                 picked.append(dict(card))
                 seen.add(sid)
-                if len(picked) >= 3:
+                if len(picked) >= self._TEASE_TARGET_PINS:
                     break
         # 3rd choice (2026-07-05): the ACTIVE CLOCK'S OWN category pool
         # — keeps pins in-category even when peek/preview came up short,
         # instead of the blind id-order static queue that leaked
         # Morning Vibes into Pool hours.
-        if len(picked) < 3 and self._scheduler is not None:
+        if len(picked) < self._TEASE_TARGET_PINS and self._scheduler is not None:
             try:
                 for s in self._active_clock_song_pool():
                     sid = int(s.get("id") or 0)
@@ -6508,16 +6608,16 @@ class Studio(QWidget):
                         continue
                     picked.append(dict(s))
                     seen.add(sid)
-                    if len(picked) >= 3:
+                    if len(picked) >= self._TEASE_TARGET_PINS:
                         break
             except Exception as exc:
                 log.debug(f"[stitcher] clock-pool fallback failed: {exc}")
         # Last resort: walk the static queue exactly like dispatch
         # would with no scheduler at all.
-        if len(picked) < 3:
+        if len(picked) < self._TEASE_TARGET_PINS:
             after = (self._current_track or {}).get("id")
             probe = self._static_next_after(after)
-            while probe is not None and len(picked) < 3:
+            while probe is not None and len(picked) < self._TEASE_TARGET_PINS:
                 sid = int(probe.get("id") or 0)
                 if sid > 0 and sid not in seen:
                     picked.append(dict(probe))
@@ -6542,7 +6642,9 @@ class Studio(QWidget):
         self._teased_songs = picked
         log.info(
             f"[stitcher] tease armed — post-break songs pinned: "
-            f"{[s.get('title') for s in picked]}")
+            f"{[s.get('title') for s in picked]}"
+            + (f" (carried {carried}, added {len(picked) - carried})"
+               if carried else ""))
         try:
             self._load_upcoming_queue()
         except Exception:
