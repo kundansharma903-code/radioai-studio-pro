@@ -56,11 +56,28 @@ import time
 from datetime import datetime, date
 from typing import Optional
 
-from PyQt6.QtCore import QObject, QThread, QTimer, Qt, pyqtSignal, QMetaObject
+from PyQt6.QtCore import (
+    QObject, QThread, QTimer, Qt, pyqtSignal, QMetaObject, QCoreApplication,
+)
+from PyQt6 import sip
 
 from core.scheduler.events import EventType, ScheduledEvent
 
 log = logging.getLogger("Scheduler")
+
+# QThreads that refused to stop even after terminate(). They are kept
+# alive here for the rest of the process: dropping the last reference
+# to a RUNNING QThread makes Qt call qFatal("QThread: Destroyed while
+# thread is still running"), which Windows reports as Qt6Core.dll
+# 0xC0000409 — the on-air crash signature.
+_PARKED_THREADS: list = []
+
+
+def _same_thread(a, b) -> bool:
+    try:
+        return sip.unwrapinstance(a) == sip.unwrapinstance(b)
+    except Exception:
+        return a is b
 
 
 class SchedulerEngine(QObject):
@@ -119,6 +136,9 @@ class SchedulerEngine(QObject):
         self._tick_count: int = 0
         self._running: bool = False
         self._lock = threading.Lock()
+        # Set by shutdown(): once the app is tearing down, NOTHING may
+        # start the engine again (see shutdown()).
+        self._shut_down: bool = False
 
         # Phase D3+ event queue (populated by D5; consumed by _on_tick)
         self._event_queue: list[ScheduledEvent] = []
@@ -165,6 +185,15 @@ class SchedulerEngine(QObject):
             "active": False, "rest_ids": set(), "picks": []}
         self._rot_dec_cache_at: float = 0.0   # monotonic ts of last fetch
 
+        # Category air-time tags (core.category_air_time). Read with a
+        # 60 s TTL — peek_next simulates 5 picks per refresh — so a tag
+        # saved in Edit Categories goes live within a minute.
+        self._air_time_parts: list = []
+        self._air_time_playable: set = set()   # tagged cats with songs
+        self._air_time_names: dict = {}
+        self._air_time_at: float = -1e9
+        self._air_time_logged: set = set()
+
     def set_rotation_engine(self, engine) -> None:
         """Install a RotationAIEngine handle. Pass None to detach
         (reverts to native random + separation pick)."""
@@ -176,12 +205,41 @@ class SchedulerEngine(QObject):
         return self._running
 
     def start(self) -> None:
-        """Spin up the QThread and kick the timer. Idempotent."""
+        """Spin up the QThread and kick the timer. Idempotent.
+
+        Restartable (2026-10-16). Before this, stop() left the engine
+        bound to its dead thread, so on the next start() moveToThread()
+        failed with "Current thread is not the object's thread" and the
+        engine reported running=True while its timer never fired. Studio
+        still pulled songs via pick_next_item(), so playout SOUNDED fine
+        — but spot_due comes from the tick, so ads silently stopped
+        after AUTO off→on or a missing-file "Stop playback" + Play.
+        _on_thread_finished now hands the engine back to the main thread.
+        """
         with self._lock:
+            if self._shut_down:
+                log.info("scheduler.start() ignored — engine is shut down")
+                return
             if self._running:
                 log.debug("scheduler.start() — already running, skipping")
                 return
             self._running = True
+
+        # Only an object that lives on THIS thread can be moved. If the
+        # previous thread never handed us back (it hung and was parked),
+        # starting would produce a scheduler that claims to run but never
+        # ticks — refuse loudly so Studio falls back visibly instead.
+        if not _same_thread(self.thread(), QThread.currentThread()):
+            with self._lock:
+                self._running = False
+            msg = ("SchedulerEngine.start() refused — engine is still "
+                   "bound to a previous thread that did not shut down")
+            log.error(msg)
+            try:
+                self.error_occurred.emit(msg)
+            except Exception:
+                pass
+            return
 
         # Detach parent before moveToThread (Qt requirement)
         self.setParent(None)
@@ -194,6 +252,22 @@ class SchedulerEngine(QObject):
         log.info(
             f"SchedulerEngine started (tick={self._tick_interval_ms}ms)")
 
+    def shutdown(self) -> None:
+        """Final stop for app exit: stop, and refuse every later start().
+
+        Found 2026-10-16 with the exact on-air crash signature: the
+        150 ms startup auto-mode timer (MainWindow._apply_startup_auto_mode
+        → Studio Play → scheduler.start()) can fire AFTER
+        MainWindow._cleanup_engine has stopped everything. That started
+        a fresh scheduler thread, and when its owner was garbage-collected
+        the running QThread was destroyed → qFatal("QThread: Destroyed
+        while thread is still running") → Qt6Core.dll 0xC0000409.
+        Any late caller (timer, showEvent auto-arm, AUTO pill) is now a
+        logged no-op instead."""
+        with self._lock:
+            self._shut_down = True
+        self.stop()
+
     def stop(self) -> None:
         """Stop the timer + tear down the thread. Idempotent. Blocks
         for up to 2s waiting for the thread to exit cleanly.
@@ -204,26 +278,27 @@ class SchedulerEngine(QObject):
                 return
             self._running = False
 
-        # The timer was created on the scheduler thread; ask it to stop
-        # via a queued metacall so we don't touch a foreign-thread QObject.
-        if self._timer is not None:
-            try:
-                QMetaObject.invokeMethod(
-                    self._timer, "stop",
-                    Qt.ConnectionType.QueuedConnection)
-            except Exception as exc:
-                log.debug(f"timer.stop invokeMethod failed: {exc}")
-            self._timer = None
-
-        if self._thread is not None:
-            self._thread.quit()
-            ok = self._thread.wait(2000)
+        # The tick timer lives on the scheduler thread and is torn down
+        # THERE, in _on_thread_finished. It used to be dropped from this
+        # (main) thread with `self._timer = None`, which deleted a QObject
+        # owned by another, still-running thread.
+        thread = self._thread
+        if thread is not None:
+            thread.quit()
+            ok = thread.wait(2000)
             if not ok:
                 log.warning(
                     "SchedulerEngine: thread did not exit within 2s; "
                     "calling terminate (last resort)")
-                self._thread.terminate()
-                self._thread.wait(500)
+                thread.terminate()
+                ok = thread.wait(2000)
+            if not ok or thread.isRunning():
+                # Never drop the last reference to a running QThread —
+                # that is qFatal() → Qt6Core 0xC0000409 on Windows.
+                _PARKED_THREADS.append(thread)
+                log.error(
+                    "SchedulerEngine: thread still running after "
+                    "terminate — parked to avoid a hard crash")
             self._thread = None
 
         log.info("SchedulerEngine stopped")
@@ -241,7 +316,26 @@ class SchedulerEngine(QObject):
         log.debug(f"scheduler thread {QThread.currentThread()!r} ready")
 
     def _on_thread_finished(self) -> None:
-        """Runs on the scheduler thread (right before it exits)."""
+        """Runs on the scheduler thread (right before it exits).
+
+        Tears the tick timer down on its OWN thread, then hands the
+        engine back to the main thread. moveToThread() may only be
+        called from the object's current thread, so this is the one
+        place it can happen — without it the next start() cannot move
+        the engine onto a fresh QThread (see start())."""
+        t, self._timer = self._timer, None
+        if t is not None:
+            try:
+                t.stop()
+            except Exception as exc:
+                log.debug(f"timer stop on finish: {exc}")
+            del t                       # deleted here, on its own thread
+        try:
+            app = QCoreApplication.instance()
+            if app is not None:
+                self.moveToThread(app.thread())
+        except Exception as exc:
+            log.warning(f"SchedulerEngine: hand-back to main failed: {exc}")
         self.stopped.emit()
 
     def _on_tick(self) -> None:
@@ -549,6 +643,7 @@ class SchedulerEngine(QObject):
             return None
         if not slots:
             return None
+        slots = self._apply_category_air_time(slots, clock_id, now)
 
         # Phase E5: stash per-pick context so _pick_song can consult
         # the rotation engine (which needs clock_id + hour)
@@ -607,6 +702,64 @@ class SchedulerEngine(QObject):
                         f"queue_changed emit (advance) failed: {exc}")
             return item
         return None
+
+    def _apply_category_air_time(self, slots, clock_id: int,
+                                 now: datetime) -> list:
+        """This hour's view of the clock with category air-time tags
+        applied (see core.category_air_time). Never raises — on any
+        error the clock plays exactly as built."""
+        try:
+            from core.category_air_time import (
+                apply_air_time, tagged_categories_at)
+            if time.monotonic() - self._air_time_at >= 60.0:
+                parts = self._db.get_all_category_dayparts() or []
+                cats = sorted({int(p["category_id"]) for p in parts})
+                playable: set = set()
+                if cats:
+                    marks = ",".join("?" * len(cats))
+                    playable = {int(r[0]) for r in self._db._conn().execute(
+                        f"SELECT DISTINCT category_id FROM songs "
+                        f"WHERE is_enabled = 1 AND category_id IN ({marks})",
+                        cats).fetchall()}
+                self._air_time_parts = parts
+                self._air_time_playable = playable
+                self._air_time_names = {
+                    int(p["category_id"]): p.get("category_name")
+                    for p in parts}
+                self._air_time_at = time.monotonic()
+            tagged = [c for c in tagged_categories_at(
+                          self._air_time_parts, now.weekday(), now.hour)
+                      if c in self._air_time_playable]
+            if not tagged:
+                return slots
+            seed = f"{now.date().isoformat()}|{now.hour}|{int(clock_id)}"
+            out, swaps = apply_air_time(slots, tagged, seed,
+                                        self._air_time_names)
+            key = (now.date(), now.hour, int(clock_id))
+            if key not in self._air_time_logged:
+                self._air_time_logged = {
+                    k for k in self._air_time_logged if k[0] == now.date()}
+                self._air_time_logged.add(key)
+                names = self._air_time_names
+                if swaps:
+                    desc = ", ".join(
+                        f"{names.get(old, 'All Songs') if old else 'All Songs'}"
+                        f" → {names.get(new, new)}"
+                        for new, old in swaps.items())
+                    log.info(f"[air-time] {now:%H}:00 clock={clock_id}: "
+                             f"{desc}")
+                present = {s["category_id"] for s in slots
+                           if "category_id" in s.keys()}
+                for c in tagged:
+                    if c in swaps or c in present:
+                        continue          # placed / already in the clock
+                    log.warning(f"[air-time] {now:%H}:00 clock={clock_id}: "
+                                f"{names.get(c, c)!r} could not be placed "
+                                f"— no free song category left to replace")
+            return out
+        except Exception as exc:
+            log.warning(f"[air-time] skipped (clock plays as built): {exc}")
+            return slots
 
     def pick_next_song(self, now: Optional[datetime] = None) -> Optional[dict]:
         """Backward-compat wrapper. Loops pick_next_item until a 'song'
@@ -799,28 +952,41 @@ class SchedulerEngine(QObject):
             if row:
                 return self._song_row_to_item({k: row[k] for k in row.keys()})
 
-        # 2) specific artist — random from artist's catalog
+        # 2) specific artist — random from artist's catalog. Songs hold
+        #    the artist as TEXT (there is no songs.artist_id column — the
+        #    old query referenced one, raised "no such column" and was
+        #    swallowed, so an artist pin silently never worked; found
+        #    2026-10-16). Match by the artists row's name.
         aid = slot["specific_artist_id"] if "specific_artist_id" in slot.keys() else None
         if aid:
             try:
                 rows = self._db._conn().execute(
                     "SELECT s.* FROM songs s "
-                    "WHERE s.is_enabled = 1 AND "
-                    "(s.artist_id = ? OR s.artist = "
+                    "WHERE s.is_enabled = 1 AND LOWER(s.artist) = LOWER("
                     " (SELECT name FROM artists WHERE id = ?))",
-                    [int(aid), int(aid)],
+                    [int(aid)],
                 ).fetchall()
-            except Exception:
+            except Exception as exc:
+                log.warning(f"_pick_song: artist pin {aid} query failed: {exc}")
                 rows = []
+            playable = [r for r in rows
+                        if r["file_path"] and os.path.exists(r["file_path"])]
+            rows = playable or rows
             if rows:
                 _rc = random.choice(rows)
                 return self._song_row_to_item({k: _rc[k] for k in _rc.keys()})
 
-        # 3) filter_json — Jazler-style filter spec
-        fj = slot["filter_json"] if "filter_json" in slot.keys() else None
+        # 3) filter_json — Jazler-style filter spec. Only REAL
+        #    constraints count: a filter that just names the slot's
+        #    category (how the Clock Editor saves a category pick) or is
+        #    empty is no filter, so the slot keeps Rotation AI + the
+        #    category path below (core/slot_filter.py, 2026-10-16).
+        import json as _json
+        from core.slot_filter import effective_filter, sound_code_only
+        spec = effective_filter(slot)
         songs: list = []
-        if fj:
-            songs = self._songs_matching_filter_json(fj)
+        if spec:
+            songs = self._songs_matching_filter_json(_json.dumps(spec))
 
         # 3.4) Honor the operator-approved daily plan (BUG-2 fix).
         #      When today's plan is approved/auto_applied, its pick/
@@ -831,9 +997,22 @@ class SchedulerEngine(QObject):
         #      (enabled + file on disk) and the scheduler's existing
         #      separation vetoes still apply — no new veto invented.
         category_id = self._slot_category_id(slot)
+        if category_id is None and sound_code_only(slot):
+            try:
+                r = self._db._conn().execute(
+                    "SELECT id FROM categories WHERE name = ?",
+                    [sound_code_only(slot)]).fetchone()
+                category_id = int(r[0]) if r else None
+            except Exception:
+                category_id = None
         rot = self._active_rotation_decisions()
         rest_ids: set = rot["rest_ids"] if rot["active"] else set()
-        if not songs and rot["active"] and rot["picks"]:
+        # A slot swapped to an air-time category this hour skips the
+        # plan picks: the plan was built for the clock's own categories,
+        # so honoring it here would air the category the tag replaced.
+        air_time_slot = "_air_time_from" in slot.keys()
+        if (not songs and not air_time_slot
+                and rot["active"] and rot["picks"]):
             try:
                 recent_artists  = self._recent_artists(
                     self.SEPARATION_SAME_ARTIST_MIN)

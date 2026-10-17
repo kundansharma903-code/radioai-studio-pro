@@ -71,6 +71,7 @@ from PyQt6.QtGui import (
 from PyQt6.QtWidgets import (
     QWidget, QMessageBox, QGraphicsDropShadowEffect, QLineEdit,
     QMenu, QApplication, QStyledItemDelegate, QFrame,
+    QListWidget, QListWidgetItem, QAbstractItemView,
 )
 
 from ui.widgets.tokens import (
@@ -169,6 +170,14 @@ BPM_OPTIONS         = ["(All)"] + [str(b) for b in range(60, 201, 10)]
 SOUND_CODE_OPTIONS  = ["(All)"]
 POPULARITY_OPTIONS  = ["(All)"]
 PROPERTIES_OPTIONS  = ["(All)"]
+
+# clock_slots columns the editor does not edit directly but must carry
+# through a load → save round-trip (found 2026-10-16: they were dropped).
+_CARRIED_SLOT_FIELDS = (
+    "specific_song_id", "specific_artist_id", "energy_pref", "vocal_pref",
+    "priority_pref", "separation_override", "fallback_category_id",
+    "pin_to_time", "ref_text",
+)
 
 # ── Settings keys ────────────────────────────────────────────────────────
 
@@ -755,6 +764,119 @@ class _RangeArrow(QWidget):
         p.end()
 
 
+class _SearchList(QWidget):
+    """Native search box + list (2026-10-16). Backs the Song Tracks and
+    Artists pickers and the read-only Spot schedule list.
+
+    Rows are (label, key) pairs; selected_key() returns the key of the
+    highlighted row or None. With search=False only the list shows; with
+    selectable=False rows are display-only."""
+
+    selection_changed = pyqtSignal()
+
+    _LIST_QSS = (
+        "QListWidget { background: rgba(7,8,16,0.7); "
+        "border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; "
+        f"color: {COL_TEXT_PRIMARY}; padding: 4px; outline: 0; }} "
+        "QListWidget::item { padding: 6px 8px; border-radius: 6px; } "
+        "QListWidget::item:hover { background: rgba(245,158,11,0.10); } "
+        "QListWidget::item:selected { background: rgba(245,158,11,0.24); "
+        f"color: {COL_TEXT_PRIMARY}; }}"
+    )
+    _EDIT_QSS = (
+        "QLineEdit { background: rgba(7,8,16,0.7); "
+        "border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; "
+        f"color: {COL_TEXT_PRIMARY}; padding: 0 11px; }} "
+        "QLineEdit:focus { border-color: rgba(245,158,11,0.55); }"
+    )
+
+    def __init__(self, width: int, height: int, placeholder: str = "",
+                 search: bool = True, selectable: bool = True,
+                 parent=None):
+        super().__init__(parent)
+        self.setFixedSize(width, height)
+        self._rows: list[tuple[str, object]] = []
+        top = 0
+        self._edit: Optional[QLineEdit] = None
+        if search:
+            self._edit = QLineEdit(self)
+            self._edit.setGeometry(0, 0, width, 32)
+            self._edit.setPlaceholderText(placeholder)
+            self._edit.setFont(inter(12, QFont.Weight.Medium))
+            self._edit.setStyleSheet(self._EDIT_QSS)
+            self._edit.setClearButtonEnabled(True)
+            self._edit.textChanged.connect(self._refill)
+            top = 40
+        self._list = QListWidget(self)
+        self._list.setGeometry(0, top, width, height - top)
+        self._list.setFont(inter(11, QFont.Weight.Medium))
+        self._list.setStyleSheet(self._LIST_QSS)
+        self._list.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._list.setSelectionMode(
+            QAbstractItemView.SelectionMode.SingleSelection if selectable
+            else QAbstractItemView.SelectionMode.NoSelection)
+        if not selectable:
+            self._list.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._list.itemSelectionChanged.connect(self.selection_changed.emit)
+
+    def set_rows(self, rows: list[tuple[str, object]]) -> None:
+        keep = self.selected_key()
+        self._rows = list(rows or [])
+        self._refill(keep=keep)
+
+    def set_placeholder_row(self, text: str) -> None:
+        """Single greyed, unselectable line (empty-state message)."""
+        self._rows = []
+        self._list.blockSignals(True)
+        self._list.clear()
+        it = QListWidgetItem(text)
+        it.setFlags(Qt.ItemFlag.NoItemFlags)
+        it.setForeground(QColor(COL_TEXT_DIM))
+        self._list.addItem(it)
+        self._list.blockSignals(False)
+        self.selection_changed.emit()
+
+    def _refill(self, *_a, keep=None) -> None:
+        needle = (self._edit.text().strip().lower()
+                  if self._edit is not None else "")
+        if keep is None:
+            keep = self.selected_key()
+        self._list.blockSignals(True)
+        self._list.clear()
+        for label, key in self._rows:
+            if needle and needle not in label.lower():
+                continue
+            it = QListWidgetItem(label)
+            it.setData(Qt.ItemDataRole.UserRole, key)
+            self._list.addItem(it)
+            if keep is not None and key == keep:
+                it.setSelected(True)
+                self._list.setCurrentItem(it)
+        self._list.blockSignals(False)
+        self.selection_changed.emit()
+
+    def selected_key(self):
+        items = self._list.selectedItems()
+        if not items:
+            return None
+        return items[0].data(Qt.ItemDataRole.UserRole)
+
+    def select_key(self, key) -> None:
+        for i in range(self._list.count()):
+            it = self._list.item(i)
+            if it.data(Qt.ItemDataRole.UserRole) == key:
+                self._list.setCurrentItem(it)
+                it.setSelected(True)
+                return
+
+    def clear_selection(self) -> None:
+        self._list.clearSelection()
+
+    def row_count(self) -> int:
+        return len(self._rows)
+
+
 class _AvailableElementsCard(QWidget):
     """Left card (432×540) containing type icons, sub-tabs, filter panel."""
 
@@ -895,6 +1017,29 @@ class _AvailableElementsCard(QWidget):
         # Per-type library counts, for the "N AVAIL" badge.
         self._lib_counts: dict[str, int] = {}
 
+        # Song Tracks / Artists pickers (2026-10-16 — were "coming
+        # soon"). A track pins the slot to that song (specific_song_id),
+        # an artist to any song by that artist (specific_artist_id).
+        self._track_info: dict[int, dict] = {}
+        self._tracks_list = _SearchList(
+            400, 356, "Search title or artist…", parent=self)
+        self._tracks_list.move(15, 164)
+        self._tracks_list.selection_changed.connect(
+            lambda: self.filter_changed.emit())
+        self._artist_counts: dict[str, int] = {}
+        self._artists_list = _SearchList(
+            400, 356, "Search artists…", parent=self)
+        self._artists_list.move(15, 164)
+        self._artists_list.selection_changed.connect(
+            lambda: self.filter_changed.emit())
+        # Spot: READ-ONLY list of the spots scheduled in this clock's
+        # hours. Operator decision 2026-10-16: show, don't pin — when a
+        # spot airs stays owned by Spots & Commercials.
+        self._spot_list = _SearchList(
+            400, 268, search=False, selectable=False, parent=self)
+        self._spot_list.move(15, 252)
+        self._spot_count = 0
+
         # Final visibility pass after every widget exists.
         self._apply_type_visibility()
 
@@ -903,12 +1048,19 @@ class _AvailableElementsCard(QWidget):
     def element_type(self) -> str:
         return self._element_type
 
+    def subtab(self) -> str:
+        return self._subtab
+
     def set_element_type(self, t: str) -> None:
         if t not in ELEMENT_TYPES or t == self._element_type:
             return
         self._element_type = t
         for k, tile in self._type_tiles.items():
             tile.set_active(k == t)
+        # Song Tracks / Artists only exist for songs.
+        if t != "song" and self._subtab != "filters":
+            self.set_subtab("filters")
+            self.subtab_changed.emit("filters")
         self._apply_sweeper_visibility()
 
     def set_subtab(self, key: str) -> None:
@@ -939,11 +1091,14 @@ class _AvailableElementsCard(QWidget):
           • jingle  → jingle picker            (selection_mode + item_id)
           • sweeper → sweeper picker + position(+ sweeper_position)
           • voice   → voice-track picker       (selection_mode + item_id)
-          • spot    → NOTHING. _pick_break ignores the slot entirely and
-                      pulls the campaign scheduled for the hour, so any
-                      control here would be a lie. Operator confirmed
-                      2026-07-25: spots always run from the dedicated
-                      Spots & Commercials section.
+          • spot    → no controls. _pick_break ignores the slot entirely
+                      and pulls the campaign scheduled for the hour.
+                      Operator confirmed 2026-07-25: spots always run
+                      from Spots & Commercials. Since 2026-10-16 a
+                      READ-ONLY list shows the spots due in this clock's
+                      hours (operator: "sirf dikhaye").
+          • song, Song Tracks / Artists sub-tabs → searchable pickers
+                      (specific_song_id / specific_artist_id).
 
         Before 2026-07-25 this treated spot and voice as "song-like",
         so both showed the full song filter panel — including
@@ -966,6 +1121,14 @@ class _AvailableElementsCard(QWidget):
         self._dd_sweeper_position.setVisible(on_filters and t == "sweeper")
         self._dd_jingle_pick.setVisible(on_filters and t == "jingle")
         self._dd_voice_pick.setVisible(on_filters and t == "voice")
+        self._tracks_list.setVisible(
+            t == "song" and self._subtab == "tracks")
+        self._artists_list.setVisible(
+            t == "song" and self._subtab == "artists")
+        self._spot_list.setVisible(on_filters and t == "spot")
+        self._sub_filters.setVisible(True)
+        self._sub_tracks.setVisible(t == "song")
+        self._sub_artists.setVisible(t == "song")
 
     # Historic name kept as an alias — several call sites and older
     # notes refer to it.
@@ -1071,6 +1234,59 @@ class _AvailableElementsCard(QWidget):
         label = self._dd_voice_pick.value()
         return self._voice_id_by_label.get(label)
 
+    def set_song_tracks(self, songs: list) -> None:
+        """Enabled songs for the Song Tracks picker. Each row needs id,
+        title, artist; category_id / duration_ms are kept for the slot's
+        colour and the results card."""
+        rows = []
+        self._track_info = {}
+        for s in songs or []:
+            try:
+                sid = int(s["id"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            title = str(s["title"] or "—")
+            artist = str(s["artist"] or "")
+            self._track_info[sid] = {
+                "id": sid, "title": title, "artist": artist,
+                "category_id": s["category_id"] if "category_id" in s.keys()
+                else None,
+                "duration_ms": s["duration_ms"] if "duration_ms" in s.keys()
+                else 0,
+            }
+            rows.append((f"{title}  —  {artist}" if artist else title, sid))
+        self._tracks_list.set_rows(rows)
+
+    def selected_track(self) -> Optional[dict]:
+        sid = self._tracks_list.selected_key()
+        return self._track_info.get(sid) if sid is not None else None
+
+    def set_artists(self, counts: dict) -> None:
+        """{artist name: enabled song count} for the Artists picker."""
+        self._artist_counts = dict(counts or {})
+        rows = [(f"{name}  ·  {n} song{'s' if n != 1 else ''}", name)
+                for name, n in sorted(self._artist_counts.items(),
+                                      key=lambda kv: kv[0].lower())]
+        self._artists_list.set_rows(rows)
+
+    def selected_artist(self) -> Optional[str]:
+        return self._artists_list.selected_key()
+
+    def selected_artist_song_count(self) -> int:
+        a = self.selected_artist()
+        return int(self._artist_counts.get(a, 0)) if a else 0
+
+    def set_spot_schedule(self, lines: list[str], empty_note: str) -> None:
+        self._spot_count = len(lines or [])
+        if lines:
+            self._spot_list.set_rows([(ln, i) for i, ln in enumerate(lines)])
+        else:
+            self._spot_list.set_placeholder_row(empty_note)
+        self.update(self.rect())
+
+    def spot_count(self) -> int:
+        return self._spot_count
+
     def set_library_counts(self, counts: dict) -> None:
         """How many rows each library holds — drives the "N AVAIL"
         badge so it reflects the type on screen instead of always
@@ -1159,20 +1375,14 @@ class _AvailableElementsCard(QWidget):
             else:
                 self._paint_picker_chrome(p, t)
         else:
-            # Placeholder for Song Tracks / Artists tabs
-            p.setPen(QColor(COL_TEXT_DIM))
-            p.setFont(inter(13, QFont.Weight.Bold))
-            label = ("Song Tracks picker — coming soon."
-                     if self._subtab == "tracks"
-                     else "Artists picker — coming soon.")
-            p.drawText(QRectF(15, 160, self.width() - 30, 30),
+            tracks = self._subtab == "tracks"
+            p.setPen(QColor(COL_AMBER_LT)); p.setFont(self._font_h_section)
+            p.drawText(QRectF(15, 141, 260, 14),
                        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                       label)
-            p.setFont(inter(11, QFont.Weight.Medium))
-            p.drawText(QRectF(15, 195, self.width() - 30, 40),
-                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop |
-                       Qt.TextFlag.TextWordWrap,
-                       "Use Filters tab for category-based rotations.")
+                       "Pin a Song" if tracks else "Pin an Artist")
+            n = (self._tracks_list.row_count() if tracks
+                 else self._artists_list.row_count())
+            self._badge(p, 139, n)
         p.end()
 
     # ── Per-type Filters-tab chrome (2026-07-25) ─────────────────────
@@ -1240,14 +1450,14 @@ class _AvailableElementsCard(QWidget):
         p.drawText(QRectF(15, 151, 260, 14),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                    "Commercial Break")
+        self._badge(p, 149, self._spot_count, "DUE")
         p.setPen(QColor(COL_TEXT_SECONDARY)); p.setFont(self._font_helper)
-        p.drawText(QRectF(15, 183, self.width() - 30, 90),
+        p.drawText(QRectF(15, 177, self.width() - 30, 66),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
                    | Qt.TextFlag.TextWordWrap,
-                   "This slot has no settings here.\n\n"
-                   "Ads are scheduled in Spots & Commercials — add the "
-                   "break element to reserve the airtime, and the "
-                   "campaigns due at that hour will play.")
+                   "Add the break element to reserve the airtime. Spots "
+                   "are scheduled in Spots & Commercials — below are the "
+                   "ones due in the hours this clock runs (view only).")
 
     def _build_helper_line(self) -> str:
         """Top categories preview — first 5 names + +N more."""
@@ -2083,6 +2293,9 @@ class ClockEditor(QWidget):
         except Exception as exc:
             log.debug(f"library counts failed: {exc}")
 
+        self._load_song_pickers()
+        self._load_spot_schedule()
+
         # Populate fields per mode
         if mode == MODE_NEW or self._source_id is None:
             self._meta.set_name("New Clock")
@@ -2131,6 +2344,70 @@ class ClockEditor(QWidget):
             self._dirty = True
         self.update(self.rect())
 
+    def _load_song_pickers(self) -> None:
+        """Song Tracks + Artists picker contents — enabled songs only,
+        the same pool the scheduler draws pinned picks from."""
+        try:
+            songs = list(self._db.get_songs())
+        except Exception as exc:
+            log.warning(f"load song tracks failed: {exc}")
+            songs = []
+        self._lib.set_song_tracks(songs)
+        counts: dict[str, int] = {}
+        for s in songs:
+            name = str(s["artist"] or "").strip()
+            if name:
+                counts[name] = counts.get(name, 0) + 1
+        self._lib.set_artists(counts)
+
+    _DAY_NAMES = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+    def _load_spot_schedule(self) -> None:
+        """Read-only list for the Spot type: spots due in the hours this
+        clock is assigned on the weekly grid. Uses the scheduler's own
+        query (get_active_breaks_for_day) so the list matches what will
+        actually fire."""
+        if self._source_id is None or self._mode == MODE_DUPLICATE:
+            self._lib.set_spot_schedule(
+                [], "Save this clock and assign it on the schedule — "
+                    "the spots due in its hours will show here.")
+            return
+        try:
+            cells = self._db._conn().execute(
+                "SELECT day_of_week, hour_start, hour_end FROM auto_schedule "
+                "WHERE clock_id = ?", [int(self._source_id)]).fetchall()
+        except Exception as exc:
+            log.warning(f"spot schedule: grid read failed: {exc}")
+            cells = []
+        hours: dict[int, set] = {}
+        for c in cells:
+            h1, h2 = int(c["hour_start"]), int(c["hour_end"] or 0)
+            span = range(h1, h2) if h2 > h1 else \
+                list(range(h1, 24)) + list(range(0, h2))
+            hours.setdefault(int(c["day_of_week"]), set()).update(span)
+        if not hours:
+            self._lib.set_spot_schedule(
+                [], "This clock is not on the weekly schedule yet.")
+            return
+        lines: list[str] = []
+        for dow in sorted(hours):
+            try:
+                rows = self._db.get_active_breaks_for_day(dow)
+            except Exception as exc:
+                log.warning(f"spot schedule: day {dow} failed: {exc}")
+                continue
+            for r in rows:
+                t = str(r["break_time"] or "")
+                try:
+                    hr = int(t.split(":")[0])
+                except ValueError:
+                    continue
+                if hr in hours[dow]:
+                    lines.append(f"{self._DAY_NAMES[dow % 7]}  {t[:5]}   "
+                                 f"{r['campaign_name'] or '—'}")
+        self._lib.set_spot_schedule(
+            lines, "No spots are scheduled in this clock's hours.")
+
     @staticmethod
     def _slots_to_elements(slots) -> list[dict]:
         """Convert sqlite Rows → element dicts the screen owns."""
@@ -2172,6 +2449,11 @@ class ClockEditor(QWidget):
                                      if "sweeper_position" in keys else None,
                 "ref_text":          s["ref_text"] if "ref_text" in keys else None,
                 "era":               fj.get("era") if isinstance(fj, dict) else None,
+                # Settings this screen has no control for still survive a
+                # load → save round-trip (save_clock_slots DELETEs and
+                # re-INSERTs every row, so anything not carried is lost).
+                **{k: s[k] for k in _CARRIED_SLOT_FIELDS
+                   if k in keys and s[k] not in (None, "")},
             })
         return out
 
@@ -2224,8 +2506,27 @@ class ClockEditor(QWidget):
         when the operator had Jingle, Sweeper, Voice or Spot selected.
         Non-song types now report their own library instead."""
         t = self._lib.element_type()
+        if t == "spot":
+            # Count = spots due in this clock's hours (view-only list);
+            # no average — a Break slot has no candidate set of its own.
+            self._results.set_data(self._lib.spot_count(), 0.0)
+            self._refresh_action_states()
+            return
         if t != "song":
             self._results.set_data(*self._non_song_results(t))
+            return
+        sub = self._lib.subtab()
+        if sub == "tracks":
+            tr = self._lib.selected_track()
+            self._results.set_data(
+                1 if tr else 0,
+                (int(tr.get("duration_ms") or 0) / 1000.0) if tr else 0.0)
+            self._refresh_action_states()
+            return
+        if sub == "artists":
+            self._results.set_data(self._lib.selected_artist_song_count(),
+                                   0.0)
+            self._refresh_action_states()
             return
         if self._scheduler is None:
             self._results.set_data(0, 0.0)
@@ -2304,7 +2605,37 @@ class ClockEditor(QWidget):
             if voice_id is not None:
                 item_id = voice_id
                 selection_mode = "specific"
+        # Song Tracks / Artists sub-tabs pin the song slot (scheduler
+        # steps 1 and 2 in _pick_song). The category filters do not
+        # apply to a pinned slot, so they are not saved with it.
+        pins: dict = {}
+        if ui_type == "song" and self._lib.subtab() == "tracks":
+            tr = self._lib.selected_track()
+            if tr:
+                pins = {"specific_song_id": int(tr["id"])}
+                cat_id = tr.get("category_id")
+                cat_color = None
+                for c in self._categories_cache:
+                    if cat_id is not None and int(c["id"]) == int(cat_id):
+                        cat_color = c.get("color"); break
+                fdict = {}
+                if tr.get("duration_ms"):
+                    avg_s = float(tr["duration_ms"]) / 1000.0
+                selection_mode = "specific"
+        elif ui_type == "song" and self._lib.subtab() == "artists":
+            name = self._lib.selected_artist()
+            aid = None
+            if name:
+                try:
+                    aid = self._db.get_or_create_artist_id(name)
+                except Exception as exc:
+                    log.warning(f"artist pin for {name!r} failed: {exc}")
+            if aid:
+                pins = {"specific_artist_id": int(aid)}
+                cat_id = None; cat_color = None; fdict = {}
+                selection_mode = "specific"
         return {
+            **pins,
             "element_type":     ui_type,
             "slot_type_db":     ELEMENT_TYPE_TO_DB[ui_type],
             "category_id":      cat_id,
@@ -2399,7 +2730,12 @@ class ClockEditor(QWidget):
             t = el.get("element_type") or "song"
             title = ELEMENT_TYPE_LABELS.get(t, t.title())
             color = ELEMENT_TYPE_COLORS.get(t, COL_AMBER_LT)
-            if t == "song":
+            if t == "song" and el.get("specific_song_id"):
+                sub = self._song_display_name(int(el["specific_song_id"]))
+            elif t == "song" and el.get("specific_artist_id"):
+                sub = self._artist_display_name(
+                    int(el["specific_artist_id"]))
+            elif t == "song":
                 sub = self._category_display_name(el) or "Any song"
             elif t in ("jingle", "sweeper"):
                 if (el.get("selection_mode") or "") == "specific" \
@@ -2433,6 +2769,25 @@ class ClockEditor(QWidget):
             return str(row["name"]) if row is not None else None
         except Exception:
             return None
+
+    def _song_display_name(self, song_id: int) -> str:
+        try:
+            row = self._db.get_song(int(song_id))
+        except Exception:
+            row = None
+        if row is None:
+            return f"Song #{song_id} (missing)"
+        return f"♪ {row['title']} — {row['artist']}"
+
+    def _artist_display_name(self, artist_id: int) -> str:
+        try:
+            row = self._db._conn().execute(
+                "SELECT name FROM artists WHERE id = ?",
+                [int(artist_id)]).fetchone()
+        except Exception:
+            row = None
+        return f"Artist: {row[0]}" if row is not None else \
+            f"Artist #{artist_id}"
 
     def _item_display_name(self, ui_type: str, item_id: int) -> Optional[str]:
         """Name of a pinned sweeper/jingle. Read-only exact-id SELECT."""
@@ -2617,6 +2972,9 @@ class ClockEditor(QWidget):
                 slot["item_id"] = int(el["item_id"])
             if el.get("sweeper_position"):
                 slot["sweeper_position"] = el["sweeper_position"]
+            for k in _CARRIED_SLOT_FIELDS:
+                if el.get(k) not in (None, ""):
+                    slot[k] = el[k]
             out.append(slot)
         return out
 

@@ -177,12 +177,14 @@ def test_results_use_each_type_own_library(editor, db):
         assert editor._results._count == n, f"{t}: {editor._results._count} != {n}"
 
 
-def test_spot_results_are_zero(editor):
-    """No candidate set exists for a Break slot — reporting a song
-    count there is what made the panel look wired to the wrong data."""
+def test_spot_results_count_the_due_spots(editor):
+    """No candidate set exists for a Break slot, so no song count and
+    no average. Since 2026-10-16 the count is the number of spots due
+    in this clock's hours (the view-only Spot list) — a NEW clock is on
+    no grid cell, so that is 0."""
     _select(editor, "spot")
     editor._refresh_filter_results()
-    assert editor._results._count == 0
+    assert editor._results._count == editor._lib.spot_count() == 0
     assert editor._results._avg_s == 0.0
 
 
