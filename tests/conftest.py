@@ -79,6 +79,28 @@ def _live_db_shield():
         pass
     print(f"\n[conftest] live-DB shield: session redirected to {copy}")
     yield
+    # Close the session's SQLite connections first — Windows will not
+    # delete an open file, so rmtree(ignore_errors=True) silently left
+    # every copy behind (1213 folders / 1.7 GB in TEMP by 2026-10-16).
+    try:
+        inst = _cdb.Database._instance
+        if inst is not None:
+            conns = list(getattr(inst, "_foreign_conns", {}).values())
+            main = getattr(inst._local, "conn", None)
+            if main is not None:
+                conns.append(main)
+            for c in conns:
+                try:
+                    c.close()
+                except Exception:
+                    pass
+            inst._local = __import__("threading").local()
+            if hasattr(inst, "_foreign_conns"):
+                inst._foreign_conns.clear()
+    except Exception:
+        pass
+    import gc
+    gc.collect()
     shutil.rmtree(tmpdir, ignore_errors=True)
 
 
@@ -119,6 +141,37 @@ def _aircheck_shield(_live_db_shield):
 
 
 # ── AudioEngine fixture ─────────────────────────────────────────────────────
+
+@pytest.fixture(autouse=True)
+def _flush_deferred_deletes():
+    """After every test, process pending deleteLater()s and collect
+    garbage while the test's objects are still in a known state.
+
+    Without this, widgets released with deleteLater() piled up and were
+    torn down much later — during some other test's event processing or
+    at interpreter exit — in an arbitrary order. Files that build a full
+    Studio per test (settings_integration, stitcher_trigger, library
+    tiles) then died with a native access violation (0xC0000005) on a
+    thread with no Python frame. It depended on heap layout, so it
+    showed in the main checkout and not in a fresh worktree: measured
+    3/3 crashes without this flush, 0/3 with it (2026-10-16).
+
+    Production is unaffected: the app builds one Studio for its whole
+    lifetime and never tears it down mid-run."""
+    yield
+    try:
+        from PyQt6.QtCore import QCoreApplication, QEvent
+        app = QCoreApplication.instance()
+        if app is not None:
+            for _ in range(3):
+                QCoreApplication.sendPostedEvents(
+                    None, QEvent.Type.DeferredDelete.value)
+                app.processEvents()
+    except Exception:
+        pass
+    import gc
+    gc.collect()
+
 
 @pytest.fixture
 def engine():

@@ -380,7 +380,15 @@ def test_overlay_writes_sweeper_row_to_broadcast_log(qapp, db):
     sched = _FakeScheduler()
     swe = _FakeSweeperEngine()
     studio = _make_studio(db, scheduler=sched, sweeper_engine=swe)
-    sched.queue(_sweeper_item(33), _song_item(200))
+    # Use a clock that exists — the item helper's clock_id=1 is not a
+    # real row, so this used to trip broadcast_log's FOREIGN KEY and
+    # the test failed for a reason unrelated to what it checks.
+    real = db._conn().execute("SELECT id FROM clocks LIMIT 1").fetchone()
+    if real is None:
+        pytest.skip("no clocks in this database")
+    item = _sweeper_item(33)
+    item["clock_id"] = int(real["id"])
+    sched.queue(item, _song_item(200))
     studio._playback_cid = 1
     studio._current_track = {"id": 1, "duration_ms": 180000}
     studio._current_duration_ms = 180000

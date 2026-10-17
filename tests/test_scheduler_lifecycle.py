@@ -48,13 +48,62 @@ def test_tick_fires_at_configured_interval(qtbot, scheduler):
     """100ms interval × ~500ms wait → expect ≥3 ticks (with some
     tolerance for thread startup latency)."""
     scheduler.start()
-    qtbot.wait(50)   # let thread start + first tick fire
+    # Wait for the FIRST tick rather than a fixed 50 ms: on a full-size
+    # station DB the first tick opens the thread's connection and loads
+    # the day's breaks (~120 ms), so a 50 ms warm-up measured start-up
+    # cost instead of the interval and failed spuriously.
+    # tick_count is bumped at the START of _on_tick, so ≥1 only means
+    # the slow first tick has begun — wait for the second, which can
+    # only start once the first has finished.
+    qtbot.waitUntil(lambda: scheduler.tick_count >= 2, timeout=5000)
     start_count = scheduler.tick_count
-    qtbot.wait(500)
+    qtbot.wait(1000)
     end_count = scheduler.tick_count
     delta = end_count - start_count
-    assert delta >= 3, \
-        f"expected ≥3 ticks in 500ms at 100ms interval, got {delta}"
+    assert delta >= 5, \
+        f"expected ≥5 ticks in 1000ms at 100ms interval, got {delta}"
+
+
+def test_restart_after_stop_keeps_ticking(qtbot, scheduler):
+    """stop() → start() must give a scheduler that TICKS again.
+
+    Regression (2026-10-16): the engine stayed bound to its finished
+    thread, moveToThread() failed on restart, and it reported
+    is_running() == True with zero ticks. spot_due is emitted from the
+    tick, so after AUTO off → on (or a missing-file 'Stop playback' +
+    Play) ads silently stopped while music kept playing."""
+    scheduler.start()
+    qtbot.waitUntil(lambda: scheduler.tick_count >= 1, timeout=5000)
+    scheduler.stop()
+    assert not scheduler.is_running()
+    # Handed back to the main thread so it can be moved again
+    from PyQt6.QtCore import QCoreApplication
+    from PyQt6 import sip
+    assert (sip.unwrapinstance(scheduler.thread())
+            == sip.unwrapinstance(QCoreApplication.instance().thread()))
+
+    for cycle in range(2):          # survive repeated off/on
+        scheduler.start()
+        assert scheduler.is_running()
+        base = scheduler.tick_count
+        qtbot.waitUntil(lambda: scheduler.tick_count >= base + 3,
+                        timeout=3000)
+        scheduler.stop()
+
+
+def test_restart_emits_spot_due_again(qtbot, scheduler):
+    """The user-facing consequence: spots must still be dispatched
+    after a restart."""
+    scheduler.start()
+    qtbot.waitUntil(lambda: scheduler.tick_count >= 1, timeout=5000)
+    scheduler.stop()
+
+    fired: list[int] = []
+    scheduler.spot_due.connect(fired.append)
+    scheduler._dispatch_due_events = (
+        lambda: scheduler.spot_due.emit(777) if not fired else None)
+    scheduler.start()
+    qtbot.waitUntil(lambda: 777 in fired, timeout=3000)
 
 
 # ── Test 3: cross-thread signal reaches main-thread slot ───────────────

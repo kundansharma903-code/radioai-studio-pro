@@ -27,6 +27,9 @@ class Database:
                 if cls._instance is None:
                     inst = super().__new__(cls)
                     inst._local = threading.local()
+                    # Connections of Qt-created threads, by OS thread id
+                    # — see _conn().
+                    inst._foreign_conns = {}
                     cls._instance = inst
                     log.info(f"Database path: {DB_PATH}")
         return cls._instance
@@ -34,14 +37,35 @@ class Database:
     # ── Connection ────────────────────────────────────────────────────────────
 
     def _conn(self) -> sqlite3.Connection:
-        """Return a thread-local connection, creating it if needed."""
-        if not getattr(self._local, "conn", None):
+        """Return this thread's connection, creating it if needed.
+
+        Threads Qt creates (QThread — the scheduler, Rotation AI) are
+        foreign to Python: PyQt gives every slot call on them a FRESH
+        Python thread state, and threading.local is per thread state.
+        So the scheduler's 1 Hz tick opened a brand-new connection on
+        every tick and the old one's file handles were never released,
+        for as long as the app ran (measured 2026-10-16: 11 ticks → 11
+        connections on one OS thread; ~3 handles/s, ~14 MB/min).
+        Foreign threads now keep one connection per OS thread id."""
+        conn = getattr(self._local, "conn", None)
+        if conn is not None:
+            return conn
+        foreign = isinstance(threading.current_thread(),
+                             threading._DummyThread)
+        ident = threading.get_ident()
+        if foreign:
+            with self._lock:
+                conn = self._foreign_conns.get(ident)
+        if conn is None:
             conn = sqlite3.connect(DB_PATH, check_same_thread=False)
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA foreign_keys = ON")
             conn.execute("PRAGMA journal_mode = WAL")
-            self._local.conn = conn
-        return self._local.conn
+            if foreign:
+                with self._lock:
+                    self._foreign_conns[ident] = conn
+        self._local.conn = conn
+        return conn
 
     def verify(self) -> bool:
         """Check DB is reachable and report song count."""
@@ -278,8 +302,7 @@ class Database:
     ) -> None:
         self._ensure_broadcast_log_columns()
         conn = self._conn()
-        conn.execute(
-            """
+        sql = """
             INSERT INTO broadcast_log
                 (entry_type, song_id, campaign_id, duration_ms,
                  deck, was_manual, operator,
@@ -289,10 +312,24 @@ class Database:
                     ?, ?,
                     datetime('now','localtime'),
                     datetime('now','localtime'))
-            """,
-            [entry_type, song_id, campaign_id, duration_ms, deck, was_manual,
-             clock_id, slot_idx],
-        )
+            """
+        try:
+            conn.execute(sql, [entry_type, song_id, campaign_id, duration_ms,
+                               deck, was_manual, clock_id, slot_idx])
+        except sqlite3.IntegrityError as exc:
+            # The item really aired — never lose that record because a
+            # clock was deleted while one of its items was in flight
+            # (delete_clock NULLs clock_id on rows ALREADY written, but
+            # the scheduler can still hand out an item carrying the old
+            # id). clock_id is context, not the fact of the play: retry
+            # without it. song/campaign links are kept — if those are
+            # dangling too the original error stands.
+            if clock_id is None or "FOREIGN KEY" not in str(exc).upper():
+                raise
+            log.warning(f"log_play: clock_id={clock_id} no longer exists "
+                        f"— logging {entry_type} without it ({exc})")
+            conn.execute(sql, [entry_type, song_id, campaign_id, duration_ms,
+                               deck, was_manual, None, slot_idx])
         conn.commit()
 
     def get_history(self, limit: int = 20,
@@ -4841,6 +4878,23 @@ class Database:
         )
         conn.commit()
         return int(cur.lastrowid or 0)
+
+    def get_or_create_artist_id(self, name: str) -> Optional[int]:
+        """Id of the artists row for `name` (case-insensitive), creating
+        it when missing. Songs carry the artist as plain text and most
+        have no artists row, but clock_slots.specific_artist_id needs an
+        id — the Clock Editor's Artists picker calls this on ADD.
+        Insert-only; never modifies an existing row."""
+        name = (name or "").strip()
+        if not name:
+            return None
+        self._ensure_artists_table()
+        row = self._conn().execute(
+            "SELECT id FROM artists WHERE LOWER(name) = LOWER(?) "
+            "ORDER BY id LIMIT 1", [name]).fetchone()
+        if row is not None:
+            return int(row[0])
+        return self.add_artist({"name": name}) or None
 
     def get_all_artists(self) -> list:
         """Return every artist with a song-count (joined from the songs table)."""

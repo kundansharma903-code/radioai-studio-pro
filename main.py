@@ -281,26 +281,14 @@ def main():
     except Exception as exc:
         log.warning(f"crash catcher setup failed: {exc}")
 
-    # 1.8. Uptime heartbeat — both overnight crashes hit at ~8h uptime.
-    # A 30-min marker in the log lets us see how close the fault lands
-    # to an hourly rotation / a specific event, and confirms the app
-    # was alive right up to the crash.
-    try:
-        from PyQt6.QtCore import QTimer as _HbTimer
-        import time as _hb_time
-        _boot_ts = _hb_time.monotonic()
-
-        def _heartbeat():
-            up = int(_hb_time.monotonic() - _boot_ts)
-            log.info(f"[heartbeat] uptime {up // 3600}h{(up % 3600) // 60}m "
-                     f"— alive")
-        _hb = _HbTimer()
-        _hb.setInterval(30 * 60 * 1000)
-        _hb.timeout.connect(_heartbeat)
-        _hb.start()
-        globals()["_heartbeat_timer"] = _hb          # keep alive
-    except Exception as exc:
-        log.warning(f"heartbeat setup failed: {exc}")
+    # 1.8. Uptime heartbeat — armed right after the QApplication exists
+    # (see _start_uptime_heartbeat below). It used to be created HERE,
+    # before any QApplication: Qt logged "QObject::startTimer: current
+    # thread's event dispatcher has already been destroyed" on every
+    # boot and the timer never fired — the log holds zero [heartbeat]
+    # lines since the feature shipped.
+    import time as _hb_time
+    _boot_ts = _hb_time.monotonic()
 
     # 2. Sleep prevention
     prevent_sleep()
@@ -327,6 +315,27 @@ def main():
     app.setApplicationName("RadioAI Studio Pro")
     app.setApplicationVersion("2.0.0")
     app.setOrganizationName("RadioAI")
+
+    # 3a. Uptime heartbeat — both overnight crashes hit at ~8h uptime.
+    # A 30-min marker in the log shows how close a fault lands to an
+    # hourly rotation / a specific event, and confirms the app was alive
+    # right up to the crash. Needs the QApplication's event dispatcher,
+    # so it is armed here and not earlier.
+    try:
+        from PyQt6.QtCore import QTimer as _HbTimer
+
+        def _heartbeat():
+            up = int(_hb_time.monotonic() - _boot_ts)
+            log.info(f"[heartbeat] uptime {up // 3600}h{(up % 3600) // 60}m "
+                     f"— alive")
+        _hb = _HbTimer()
+        _hb.setInterval(30 * 60 * 1000)
+        _hb.timeout.connect(_heartbeat)
+        _hb.start()
+        globals()["_heartbeat_timer"] = _hb          # keep alive
+        log.info("Uptime heartbeat armed (every 30 min)")
+    except Exception as exc:
+        log.warning(f"heartbeat setup failed: {exc}")
     # High-DPI: PyQt6 enables it by default — no extra flags needed.
 
     # 3a. App icon — shown in the Windows taskbar, in the title bar

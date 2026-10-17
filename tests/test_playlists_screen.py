@@ -246,20 +246,25 @@ def test_add_to_schedule_calls_scheduler(qtbot):
 # ── Preview no-engine fallthrough ─────────────────────────────────────
 
 
-def test_preview_without_engine_does_not_crash(qtbot, screen):
-    """When _engine is None, preview should pop a toast (or no-op) but
-    never raise. Direct method invocation, no GUI click."""
-    # screen fixture builds Playlists() without engine — preview should
-    # be a graceful no-op (QMessageBox is non-blocking in this test env
-    # because qtbot doesn't interact; either way, no raise).
+def test_preview_without_engine_does_not_crash(qtbot, screen, monkeypatch):
+    """When _engine is None, preview must tell the operator and return —
+    never raise, never fail silently.
+
+    The premium dialogs are REAL modals: the old assumption that the
+    message box "is non-blocking in this test env" left this test
+    waiting on an invisible dialog until the 240 s sweep timeout. Stub
+    it and assert what the operator would see instead."""
     if not screen._playlists:
         pytest.skip("no playlists")
+    from core import dialogs as _dialogs
+    shown: list[tuple] = []
+    monkeypatch.setattr(_dialogs, "info",
+                        lambda *a, **k: shown.append(a[1:3]))
+    monkeypatch.setattr(_dialogs, "confirm", lambda *a, **k: True)
     pid = int(screen._playlists[0]["id"])
-    # Studio is None too — preview confirms then returns.
-    # We can't easily click through QMessageBox; verify the engine None
-    # path returns without exception.
     screen._engine = None
     screen._on_preview_card(pid)
+    assert shown and shown[0][0] == "Preview unavailable"
 
 
 # ── _kind_norm ─────────────────────────────────────────────────────────

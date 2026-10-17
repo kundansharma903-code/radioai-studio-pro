@@ -57,12 +57,27 @@ import threading
 from datetime import date as _date, datetime, timedelta
 from typing import Optional
 
-from PyQt6.QtCore import QObject, QThread, QTimer, Qt, pyqtSignal, QMetaObject
+from PyQt6.QtCore import (
+    QObject, QThread, QTimer, Qt, pyqtSignal, QMetaObject, QCoreApplication,
+)
+from PyQt6 import sip
 
 from core.database import Database
 from core.settings import Settings
 
 log = logging.getLogger("RotationAI")
+
+# See core/scheduler/engine.py — a QThread that will not stop is kept
+# alive here, because dropping a running QThread is qFatal() (Qt6Core
+# 0xC0000409, the on-air crash signature).
+_PARKED_THREADS: list = []
+
+
+def _same_thread(a, b) -> bool:
+    try:
+        return sip.unwrapinstance(a) == sip.unwrapinstance(b)
+    except Exception:
+        return a is b
 
 
 # ── Settings keys (single source of truth — UI + engine read/write here) ──
@@ -129,6 +144,8 @@ class RotationAIEngine(QObject):
         self._timer: Optional[QTimer] = None
         self._running: bool = False
         self._lock = threading.Lock()
+        # Set by shutdown(); start() is refused afterwards (app exit).
+        self._shut_down: bool = False
         self._state: str = STATE_OFF
         # Deterministic RNG seeded per process — pickle-safe + lets
         # tests fix randomness via random.seed() if needed
@@ -157,10 +174,22 @@ class RotationAIEngine(QObject):
         """Spin up the QThread + tick timer. Idempotent. No-op when
         operator has disabled the engine via Settings."""
         with self._lock:
+            if self._shut_down:
+                log.info("rotation engine start() ignored — shut down")
+                return
             if self._running:
                 log.debug("rotation engine — already running")
                 return
             self._running = True
+
+        # Same restart contract as SchedulerEngine.start(): only an
+        # object living on THIS thread can be moved onto a new QThread.
+        if not _same_thread(self.thread(), QThread.currentThread()):
+            with self._lock:
+                self._running = False
+            log.error("RotationAIEngine.start() refused — engine is still "
+                      "bound to a previous thread that did not shut down")
+            return
 
         # Detach parent before moveToThread (Qt requirement)
         self.setParent(None)
@@ -184,30 +213,34 @@ class RotationAIEngine(QObject):
                 return
             self._running = False
 
-        if self._timer is not None:
-            try:
-                QMetaObject.invokeMethod(
-                    self._timer, "stop",
-                    Qt.ConnectionType.QueuedConnection)
-            except Exception as exc:
-                log.debug(f"timer.stop invokeMethod failed: {exc}")
-            self._timer = None
-        if self._thread is not None:
-            self._thread.quit()
-            ok = self._thread.wait(2000)
+        # The tick timer is torn down on its own thread in
+        # _on_thread_finished — never dropped from here.
+        thread = self._thread
+        if thread is not None:
+            thread.quit()
+            ok = thread.wait(2000)
             if not ok:
                 log.warning(
                     "rotation engine: thread did not exit in 2s; "
                     "terminating")
-                self._thread.terminate()
-                self._thread.wait(500)
+                thread.terminate()
+                ok = thread.wait(2000)
+            if not ok or thread.isRunning():
+                _PARKED_THREADS.append(thread)
+                log.error("rotation engine: thread still running after "
+                          "terminate — parked to avoid a hard crash")
             self._thread = None
         self._set_state(STATE_OFF)
         log.info("RotationAIEngine stopped")
 
     def shutdown(self) -> None:
-        """Alias for stop — matches the SOTGTranscriptionEngine
-        surface so MainWindow can call .shutdown() symmetrically."""
+        """Final stop for app exit — matches the SOTGTranscriptionEngine
+        surface so MainWindow can call .shutdown() symmetrically.
+        Unlike stop(), it also refuses any later start(): a deferred
+        caller restarting the thread after cleanup leaves a running
+        QThread to be destroyed at exit (qFatal → 0xC0000409)."""
+        with self._lock:
+            self._shut_down = True
         self.stop()
 
     # ── Thread plumbing (runs on rotation engine thread) ──────────────
@@ -248,6 +281,22 @@ class RotationAIEngine(QObject):
         log.debug(f"rotation engine thread {QThread.currentThread()!r} ready")
 
     def _on_thread_finished(self) -> None:
+        """Runs on the engine thread right before it exits: stop the
+        timer on its own thread, then hand the engine back to the main
+        thread so a later start() can move it again."""
+        t, self._timer = self._timer, None
+        if t is not None:
+            try:
+                t.stop()
+            except Exception as exc:
+                log.debug(f"rotation timer stop on finish: {exc}")
+            del t
+        try:
+            app = QCoreApplication.instance()
+            if app is not None:
+                self.moveToThread(app.thread())
+        except Exception as exc:
+            log.warning(f"RotationAIEngine: hand-back to main failed: {exc}")
         self.stopped.emit()
 
     def _on_tick(self) -> None:

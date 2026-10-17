@@ -130,12 +130,22 @@ def test_spot_row_double_click_invokes_spot_due_dispatch(qtbot, db_with_campaign
     # Patch out the dispatcher so the test doesn't actually try to
     # hit BASS / file I/O.
     fired: list[int] = []
-    s._do_scheduler_spot_due = lambda c: fired.append(int(c))
+    exempt: list[bool] = []
+
+    def _capture(c, _policy_exempt=False):
+        fired.append(int(c))
+        exempt.append(bool(_policy_exempt))
+
+    s._do_scheduler_spot_due = _capture
     idx = next((i for i, c in enumerate(s._library_spots)
                 if int(c["id"]) == cid), -1)
     assert idx >= 0
     s._on_library_song_double_clicked(idx)
     assert fired == [cid]
+    # A spot the operator fires by hand must bypass the Break Policy
+    # pool (added with Break Policy, 855bb22) — otherwise a manual
+    # double-click could be held until the next window minute.
+    assert exempt == [True]
 
 
 def test_spot_double_click_with_zero_id_is_noop(qtbot, db_with_campaign, engine):

@@ -457,10 +457,11 @@ def test_cancel_dirty_prompts_confirm(screen, monkeypatch):
     s._table_card.table().setCurrentIndex(s._model.index(0, 0))
     s._on_delete()
     assert s._dirty is True
-    # Sim user clicks Cancel on the confirm dialog
-    monkeypatch.setattr(
-        QMessageBox, "exec",
-        lambda self_box: False)
+    # Sim user clicks Cancel on the confirm dialog. The screen uses
+    # core.dialogs.confirm (premium dialog), not QMessageBox — patching
+    # QMessageBox.exec here let the REAL modal open and hang the whole
+    # file until a human closed it (240 s timeout in the full sweep).
+    monkeypatch.setattr(_dialogs, "confirm", lambda *a, **k: False)
     routes: list[str] = []
     s.screen_requested.connect(routes.append)
     s._cancel_then_route("playlists")

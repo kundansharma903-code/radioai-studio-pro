@@ -150,3 +150,14 @@ def test_qt_messages_are_routed_to_the_log(caplog, qapp):
         assert any("QT-CANARY" in r.message for r in caplog.records)
     finally:
         qInstallMessageHandler(prev)
+
+
+def test_heartbeat_timer_is_armed_after_the_qapplication_exists():
+    """The 30-min uptime heartbeat was created before QApplication, so
+    Qt logged 'event dispatcher has already been destroyed' on every
+    boot and the timer never fired (zero [heartbeat] lines in the live
+    log). It must be started only once the application object exists."""
+    src = _main_source()
+    app_at = src.index("app = QApplication(sys.argv)")
+    hb_at = src.index("_hb.start()")
+    assert hb_at > app_at, "heartbeat timer started before QApplication"
