@@ -70,9 +70,11 @@ class SweeperEngine:
         self._cancel.clear()
 
         def _fire():
+            from core.audio._bass import bass_file_arg
+            fname, uflag = bass_file_arg(sw_path)
             try:
                 handle = BassStream.CreateFile(
-                    False, sw_path.encode("utf-8"), 0, 0, BASS_STREAM_PRESCAN
+                    False, fname, 0, 0, BASS_STREAM_PRESCAN | uflag
                 )
             except Exception as e:
                 err = _bm.BASS_ErrorGetCode()

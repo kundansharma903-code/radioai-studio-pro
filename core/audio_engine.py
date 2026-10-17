@@ -193,12 +193,14 @@ class AudioEngine(QObject):
 
         self._stop_current()
 
+        from core.audio._bass import bass_file_arg
+        fname, uflag = bass_file_arg(path)
         try:
             handle = BassStream.CreateFile(
                 False,                      # mem=False → load from file
-                path.encode("utf-8"),
+                fname,                      # UTF-16 (non-ASCII safe)
                 0, 0,
-                BASS_STREAM_PRESCAN,
+                BASS_STREAM_PRESCAN | uflag,
             )
         except Exception as exc:
             err = _bm.BASS_ErrorGetCode()

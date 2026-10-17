@@ -23,6 +23,7 @@ import pybass3.bass_module as _bm
 # ── BASS constants ──────────────────────────────────────────────────────────
 
 BASS_STREAM_PRESCAN   = 0x20000        # accurate duration: scan the file once
+BASS_UNICODE          = 0x80000000     # file name is UTF-16 (wchar_t*)
 BASS_STREAM_DECODE    = 0x200000       # decoder-only stream — no direct output;
                                        # required when the stream feeds a BASSmix
                                        # mixer stream instead of the audio device
@@ -50,6 +51,20 @@ BASS_DEVICE_LOOPBACK  = 8              # recording device that captures an
                                        # loopback) — the aircheck recorder
                                        # matches these by name against the
                                        # active playback device
+
+
+def bass_file_arg(path) -> tuple:
+    """(file_arg, extra_flags) for BASS_StreamCreateFile.
+
+    BASS on Windows reads a char* file name as the ANSI code page, so
+    passing path.encode("utf-8") made every path with a non-ASCII
+    character — Devanagari titles, an en dash "–" — fail with
+    BASS_ERROR_FILEOPEN (2) even though the file exists. When the
+    scheduler picked one of those songs the deck went silent (dead air
+    found 2026-10-16: 6 library songs affected). The file name is now
+    handed over as UTF-16 with BASS_UNICODE, which opens every path.
+    Keep the returned buffer referenced until the call returns."""
+    return ctypes.create_unicode_buffer(str(path)), BASS_UNICODE
 
 
 # ── ctypes typedefs ─────────────────────────────────────────────────────────

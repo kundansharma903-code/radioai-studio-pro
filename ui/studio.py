@@ -3850,6 +3850,8 @@ class Studio(QWidget):
         # both this flag AND scheduler.start/stop together so the two
         # stay in lockstep.
         self._auto_advance_enabled: bool = True
+        # Consecutive unplayable tracks skipped (_handle_missing_file).
+        self._skip_streak: int = 0
         # Auto-start scheduler on Studio showEvent when a clock is
         # assigned to the current (weekday, hour) cell. Once the operator
         # explicitly stops via the AUTO pill, this flag latches True and
@@ -4033,6 +4035,21 @@ class Studio(QWidget):
         # after the break these pinned songs air in order — the tease
         # promises only what will actually play.
         self._teased_songs: list[dict] = []
+        # True from the moment a tease pins songs until the break they
+        # were promised for actually starts. While True, ordinary song →
+        # song transitions must not consume the pins (found 2026-10-16:
+        # with Break Policy holding the spot for the next window, the
+        # promised "after the break" songs aired BEFORE the break).
+        self._tease_waiting_for_break: bool = False
+        # Operator's manual queue (Libraries ADD / INSERT / REPLACE).
+        # Consumed by _compute_next_song BEFORE the scheduler, right
+        # after the break-tease pins — see _pop_next_manual.
+        self._manual_queue: list[dict] = []
+        self._manual_uid_seq: int = 0
+        # Scheduler songs the operator removed/replaced in Up Coming:
+        # (item_type, id) -> monotonic expiry. One-shot: the next time
+        # the scheduler hands that item out it is skipped.
+        self._scheduler_skips: dict[tuple, float] = {}
         self._stitcher_tease_playing: bool = False
         self._stitcher_tease_done.connect(self._on_stitcher_tease_done)
         # Sweeper ducking — cross-thread (SweeperEngine watcher) →
@@ -4844,28 +4861,57 @@ class Studio(QWidget):
         except Exception as exc:
             log.debug(f"[studio] quick-duck failed: {exc}")
 
+    def _run_later(self, fn) -> None:
+        """Run `fn` on the next event-loop turn — unless this Studio has
+        been destroyed by then (a deferred skip must never touch a
+        deleted widget)."""
+        from PyQt6 import sip
+
+        def _run() -> None:
+            if sip.isdeleted(self):
+                return
+            try:
+                fn()
+            except RuntimeError as exc:      # child widget already gone
+                log.debug(f"[studio] deferred call dropped: {exc}")
+        QTimer.singleShot(0, _run)
+
+    #: Consecutive unplayable items skipped in AUTO before giving up —
+    #: stops a library of broken paths from spinning forever.
+    _MAX_SKIP_STREAK = 5
+
     def _handle_missing_file(self, song: dict,
-                              path: Optional[str]) -> None:
-        """Routes a missing-file event through the operator-configured
-        fallback action. Always logs; toast visibility is gated by
+                              path: Optional[str],
+                              reason: Optional[str] = None) -> None:
+        """Routes an unplayable-track event (file missing, or present but
+        BASS could not open it) through the operator-configured fallback
+        action. Always logs; toast visibility is gated by
         Settings.missing_file_alert (Stop-and-Alert always toasts)."""
         title = (song or {}).get("title") or "Unknown"
         log.warning(
-            f"[studio] file missing: title={title!r} path={path!r}")
+            f"[studio] unplayable track: title={title!r} path={path!r}"
+            + (f" — {reason}" if reason else " — file missing"))
 
         action = (self._cfg_fallback_action
                   or "Skip and play next available song").lower()
         alert = bool(self._cfg_missing_file_alert)
         must_alert = action.startswith("stop")
-        if alert or must_alert:
+
+        def _alert() -> None:
+            if not (alert or must_alert):
+                return
             try:
-                from PyQt6.QtWidgets import QMessageBox
                 dialogs.warning(
-                    self, "Track file missing",
-                    f"'{title}' — file not found:\n"
+                    self, "Track could not be played",
+                    f"'{title}' — "
+                    + ("the file could not be opened" if reason
+                       else "file not found") + f":\n"
                     f"{path or '(blank path)'}")
             except Exception:
                 pass
+
+        if not action.startswith("skip"):
+            _alert()
 
         if action.startswith("stop"):
             # Stop scheduler + idle
@@ -4914,10 +4960,38 @@ class Studio(QWidget):
                         f"[studio] fallback track load failed: {exc}")
             # No fallback path configured / file missing → fall through
 
-        # Default: "Skip and play next available song"
+        # Default: "Skip and play next available song". This used to go
+        # idle without playing anything — dead air until the operator
+        # noticed (found 2026-10-16 in a sandbox run: a song BASS could
+        # not open left the deck silent for minutes). In AUTO the next
+        # item now airs straight away; the alert (if enabled) shows
+        # AFTER the next track has started, never before it.
         self._current_track = None
+        nxt = None
+        if self._auto_advance_enabled:
+            self._skip_streak += 1
+            if self._skip_streak <= self._MAX_SKIP_STREAK:
+                try:
+                    nxt = self._pop_next_teased_song()
+                    if nxt is None:
+                        nxt = self._compute_next_song(
+                            after_id=(song or {}).get("id"))
+                except Exception as exc:
+                    log.warning(f"[studio] skip → next pick failed: {exc}")
+                    nxt = None
+            else:
+                log.error(
+                    f"[studio] {self._MAX_SKIP_STREAK} unplayable tracks "
+                    f"in a row — stopping auto-skip; check the library")
+        if nxt is not None:
+            log.info(f"[studio] skipped unplayable {title!r} → "
+                     f"{nxt.get('title')!r}")
+            self._run_later(lambda n=nxt: self._on_queue_song_play(n))
+            self._run_later(_alert)
+            return
         self._apply_idle_state()
         self._update_status_pills()
+        _alert()
 
     # ────────────────────────────────────────────────────────────────────
     # PRESERVED: queue → deck (verbatim from legacy)
@@ -4957,10 +5031,16 @@ class Studio(QWidget):
             cid = self._engine.load_file(path)
         except Exception as exc:
             log.warning(f"[studio] load_file failed: {exc}")
+            # The file exists but could not be opened (codec, corrupt
+            # file, permissions). Same handling as a missing file —
+            # returning here used to leave the deck silent.
+            self._current_track = None
+            self._handle_missing_file(song, path, reason=str(exc))
             return
 
         self._engine.set_volume(cid, self._master_volume)
         self._engine.play(cid)
+        self._skip_streak = 0
 
         self._playback_cid = cid
         self._playback_kind = "deck"
@@ -5367,6 +5447,12 @@ class Studio(QWidget):
         # _SKIP_BUDGET extra items per dispatch. After that, fall back
         # to the static queue and log loudly so the operator can find
         # the broken row.
+        # Operator's manual queue (Libraries ADD/INSERT/REPLACE) airs
+        # before the scheduler. Callers pop break-tease pins first, so
+        # the order is: promised post-break songs → manual → scheduler.
+        manual = self._pop_next_manual()
+        if manual is not None:
+            return manual
         _SKIP_BUDGET = 6
         if self._scheduler is not None and self._scheduler.is_running():
             from datetime import datetime as _dt
@@ -5378,6 +5464,10 @@ class Studio(QWidget):
                     item = None
                 if item is None:
                     break
+                # Operator removed / replaced this scheduled item in
+                # Up Coming → one-shot skip, take the next pick.
+                if self._consume_scheduler_skip(item):
+                    continue
                 item_type = (item.get("item_type") or "song").strip().lower()
                 if item_type == "sweeper":
                     position = (item.get("position") or "").strip()
@@ -5713,6 +5803,10 @@ class Studio(QWidget):
         sweeper-skip logic of _compute_next_song so the previewed item
         is what would actually land on the deck (overlay-style sweepers
         get skipped past since they wouldn't take the deck slot)."""
+        # Manual queue airs first (see _compute_next_song) — preview it
+        # without consuming it.
+        if self._manual_queue:
+            return dict(self._manual_queue[0])
         # Scheduler-idle path: same static-queue lookup as
         # _compute_next_song's fallback branch — shared helper so the
         # preview can never diverge from what dispatch would pick.
@@ -5737,6 +5831,8 @@ class Studio(QWidget):
 
         for item in items:
             item_type = (item.get("item_type") or "song").strip().lower()
+            if self._is_scheduler_skipped(item_type, item.get("item_id")):
+                continue          # operator removed it — won't air
             if item_type == "sweeper":
                 position = (item.get("position") or "").strip()
                 if deck_has_song and position in overlay_positions:
@@ -6076,6 +6172,7 @@ class Studio(QWidget):
             spot_files = self._db.get_spot_files(campaign_id)
         except Exception as exc:
             log.warning(f"[studio] get_spot_files({campaign_id}): {exc}")
+            self._continue_chain_if_idle()
             return
         chosen = None
         for sf in spot_files:
@@ -6087,6 +6184,7 @@ class Studio(QWidget):
         if chosen is None:
             log.warning(
                 f"[studio] campaign {campaign_id} has no playable spot file")
+            self._continue_chain_if_idle()
             return
         if self._playback_cid is not None:
             if (self._playback_kind == "deck" and self._current_track):
@@ -6105,12 +6203,16 @@ class Studio(QWidget):
         try:
             cid = self._engine.load_file(path)
         except Exception as exc:
-            log.warning(f"[studio] spot load_file failed: {exc}")
+            log.warning(f"[studio] spot load_file failed: {exc} — "
+                        f"continuing the break chain")
+            anchor = self._pre_spot_song_id
+            self._run_later(lambda a=anchor: self._continue_break_chain(a))
             return
         self._engine.set_volume(cid, self._master_volume)
         self._engine.play(cid)
         self._playback_cid = cid
         self._playback_kind = "spot"
+        self._tease_waiting_for_break = False      # the break is on air
         self._playback_campaign_id = int(campaign_id)
         # Competitive-separation seam: remember this client's ad
         # category so the NEXT break's interleave doesn't open with
@@ -6361,11 +6463,14 @@ class Studio(QWidget):
         try:
             cid = self._engine.load_file(file_path)
         except Exception as exc:
-            log.warning(f"[studio] sotg load_file failed: {exc}")
+            log.warning(f"[studio] sotg load_file failed: {exc} — "
+                        f"continuing the break chain")
             try:
                 self._db.mark_sotg_assignment_missed(aid)
             except Exception:
                 pass
+            anchor = self._pre_sotg_song_id
+            self._run_later(lambda a=anchor: self._continue_break_chain(a))
             return
         try:
             self._engine.set_volume(cid, int(self._master_volume))
@@ -6384,6 +6489,7 @@ class Studio(QWidget):
 
         self._playback_cid = cid
         self._playback_kind = "sotg"
+        self._tease_waiting_for_break = False      # the break is on air
         self._sotg_active_aid = aid
         title = assignment.get("link_name") or "SOTG Link"
         show_name = assignment.get("show_name") or ""
@@ -6450,6 +6556,10 @@ class Studio(QWidget):
     # below stitcher_config.min_hooks_required the montage can't be
     # assembled at all (see _arm_stitcher_tease).
     _TEASE_TARGET_PINS = 3
+    # How long an operator "skip this scheduled song" stays armed if the
+    # scheduler never hands that song out (predictions re-roll, so it
+    # may not come). Expiring keeps an old skip from biting hours later.
+    _SCHEDULER_SKIP_TTL_S = 2 * 3600
 
     def _on_scheduler_break_warn(self, seconds_until: int) -> None:
         log.info(f"[studio] scheduler: break_approaching in {seconds_until}s")
@@ -6640,6 +6750,7 @@ class Studio(QWidget):
         except Exception as exc:
             log.debug(f"[stitcher] tease hydrate failed: {exc}")
         self._teased_songs = picked
+        self._tease_waiting_for_break = bool(picked)
         log.info(
             f"[stitcher] tease armed — post-break songs pinned: "
             f"{[s.get('title') for s in picked]}"
@@ -6704,8 +6815,26 @@ class Studio(QWidget):
         """Main-thread continuation after the tease block ends —
         fire the pending chain (SOTG > Spot), else resume the queue."""
         self._stitcher_tease_playing = False
-        anchor = self._pre_spot_song_id
+        # The montage itself is the start of the break.
+        self._tease_waiting_for_break = False
         log.info("[stitcher] tease done → firing break chain")
+        self._continue_break_chain(self._pre_spot_song_id)
+
+    def _continue_chain_if_idle(self) -> None:
+        """A break item was dropped before reaching the deck. When the
+        deck is idle — the item was called from an EOS / chain — keep
+        the break moving instead of leaving dead air."""
+        if (self._playback_cid is None and self._auto_advance_enabled
+                and not getattr(self, "_stitcher_tease_playing", False)):
+            anchor = self._pre_spot_song_id
+            self._run_later(lambda a=anchor: self._continue_break_chain(a))
+
+    def _continue_break_chain(self, anchor) -> None:
+        """Deck is free mid-break: fire the next pending item (SOTG >
+        Spot), else resume the queue (promised post-break songs first).
+        Shared by the tease-done path and by a spot / SOTG file that
+        could not be opened — that used to return with the deck already
+        cleared, leaving dead air until the next scheduler event."""
         if self._pending_sotgs:
             pending = self._pending_sotgs.pop(0)
             self._pre_sotg_song_id = anchor
@@ -6730,7 +6859,10 @@ class Studio(QWidget):
     def _pop_next_teased_song(self) -> Optional[dict]:
         """Next pinned post-break song (skips unplayable files).
         Returns None when the tease list is exhausted — callers fall
-        through to the normal queue."""
+        through to the normal queue — and while the break the songs were
+        promised for has not started yet (they are "after the break")."""
+        if self._tease_waiting_for_break:
+            return None
         while self._teased_songs:
             s = self._teased_songs.pop(0)
             fp = s.get("file_path")
@@ -7279,7 +7411,9 @@ class Studio(QWidget):
         self.breadcrumb_clicked.emit("control_panel")
 
     def _on_settings(self) -> None:
-        dialogs.info(self, "Settings", "Settings — coming soon.")
+        # Opens the Settings Hub (it existed, but this header button
+        # still showed a "coming soon" note — found 2026-10-16).
+        self.breadcrumb_clicked.emit("settings")
 
     def _on_view_full_history(self) -> None:
         # History panel "View Full History →" → Final Log Creator, the
@@ -7599,6 +7733,17 @@ class Studio(QWidget):
             except Exception as exc:
                 log.warning(f"[studio] teased card render failed: {exc}")
 
+        # 4.6 Operator's manual queue (Libraries ADD/INSERT/REPLACE) —
+        # airs right after the promised post-break songs, before the
+        # scheduler, exactly as _compute_next_song dispatches it.
+        for m in list(self._manual_queue):
+            try:
+                card = dict(m)
+                card["_manual"] = True
+                translated.append(card)
+            except Exception as exc:
+                log.warning(f"[studio] manual card render failed: {exc}")
+
         # 5. Songs / sweepers / jingles from the scheduler. CRITICAL:
         # this section MUST run even when sections 1-4 fail — the
         # operator-reported "songs disappear during SOTG playback"
@@ -7623,6 +7768,9 @@ class Studio(QWidget):
                     iid = int(it.get("item_id") or 0)
                     if iid and iid in teased_ids:
                         continue      # already shown as a pinned card
+                    if self._is_scheduler_skipped(
+                            it.get("item_type") or "song", iid):
+                        continue      # operator removed it — won't air
                     translated.append({
                         "_item_type":  it.get("item_type") or "song",
                         "id":          it.get("item_id"),
@@ -7642,8 +7790,11 @@ class Studio(QWidget):
         # which suppressed _refresh_upcoming_panel's static fallback
         # and the whole songs tray "emptied". Guarantee song cards are
         # always present by appending the consumed-aware static queue.
+        # Manual cards don't count: once the manual queue is used up,
+        # dispatch falls back to the static queue, so it must still show.
         has_song = any(
-            (c.get("_item_type") or "song") == "song" for c in translated)
+            (c.get("_item_type") or "song") == "song"
+            and not c.get("_manual") for c in translated)
         if not has_song and self._queue_songs:
             for s in self._queue_songs:
                 sid = int(s.get("id") or 0)
@@ -8435,13 +8586,16 @@ class Studio(QWidget):
             return
         self._load_library_songs(chosen.data())
 
-    def showEvent(self, e) -> None:
+    def _refresh_library_on_show(self) -> None:
         """When Studio comes back into view, re-fetch the Libraries
         panel from the DB so any songs added/removed elsewhere (Songs
         Library) surface without an app restart. Only refresh when the
         Songs tile is the active library type — switching back from
-        Sweepers etc. shouldn't side-effect their cached state."""
-        super().showEvent(e)
+        Sweepers etc. shouldn't side-effect their cached state.
+
+        Was a second ``showEvent`` method until 2026-10-16 — the later
+        showEvent in the Lifecycle section silently replaced it, so
+        this refresh never ran. That showEvent now calls it."""
         try:
             if (hasattr(self, "_libraries")
                     and self._libraries.active_library_type() == "Songs"):
@@ -8586,152 +8740,281 @@ class Studio(QWidget):
             f"type={song.get('_item_type', 'song')} "
             f"title={song.get('title')!r}")
 
-    def _target_queue_list(self) -> list:
-        """The list currently driving the Up Coming panel — ADD /
-        INSERT / REPLACE / DELETE mutate THIS so the operator sees
-        their action take effect immediately. When the scheduler is
-        running, `_upcoming_preview` is the visible source; otherwise
-        the legacy `_queue_songs` fallback renders. Mutations to
-        `_upcoming_preview` survive until the next scheduler peek
-        refresh — broadcast-software convention (the operator's
-        manual override lives in the air until the scheduler
-        re-asserts on the next tick)."""
-        if self._upcoming_preview:
-            return self._upcoming_preview
-        return self._queue_songs
+    # ── Manual queue + scheduler skips (2026-10-16) ─────────────────────
+    #
+    # Libraries ADD / INSERT / REPLACE / DELETE used to edit only the
+    # DISPLAY list (_upcoming_preview). _compute_next_song never read it,
+    # so in AUTO mode an inserted song showed at the top of Up Coming
+    # while the scheduler's pick aired instead — and the next
+    # queue_changed rebuild wiped the edit from the panel too.
+    #
+    # Now (operator decision 2026-10-16):
+    #   • ADD / INSERT put the library item in _manual_queue, which
+    #     _compute_next_song consumes BEFORE the scheduler (after the
+    #     break-tease pins). It really airs next.
+    #   • DELETE / REPLACE on a manual card edit _manual_queue.
+    #   • DELETE / REPLACE on a scheduler card cannot pin that exact
+    #     song (predictions re-roll), so it arms a one-shot skip: the
+    #     next time the scheduler hands that item out it is skipped.
+    #     REPLACE also queues the library item manually.
 
-    def _find_queue_position(self, song: dict) -> int:
-        """Return the index of `song` in the visible queue (whichever
-        list is driving the Up Coming panel right now). -1 when not
-        found. id + _item_type match."""
-        if not song:
+    _MANUAL_TYPES = ("song", "jingle", "sweeper")
+
+    @staticmethod
+    def _card_key(card: Optional[dict]) -> Optional[tuple]:
+        if not card:
+            return None
+        try:
+            return ((card.get("_item_type") or "song").strip().lower(),
+                    int(card.get("id") or 0))
+        except (TypeError, ValueError):
+            return None
+
+    def _prune_scheduler_skips(self) -> None:
+        import time as _t
+        now = _t.monotonic()
+        for k in [k for k, exp in self._scheduler_skips.items()
+                  if exp <= now]:
+            self._scheduler_skips.pop(k, None)
+
+    def _arm_scheduler_skip(self, card: dict) -> None:
+        import time as _t
+        key = self._card_key(card)
+        if key is None or key[1] <= 0:
+            return
+        self._scheduler_skips[key] = (_t.monotonic()
+                                      + self._SCHEDULER_SKIP_TTL_S)
+        log.info(f"[studio] SKIP armed for scheduled {key[0]} id={key[1]} "
+                 f"({card.get('title')!r}) — next time the scheduler "
+                 f"hands it out it will not air")
+
+    def _is_scheduler_skipped(self, item_type: str, item_id) -> bool:
+        self._prune_scheduler_skips()
+        try:
+            key = ((item_type or "song").strip().lower(), int(item_id or 0))
+        except (TypeError, ValueError):
+            return False
+        return key in self._scheduler_skips
+
+    def _consume_scheduler_skip(self, item: dict) -> bool:
+        """True (and the skip is used up) when this scheduler item was
+        removed by the operator. Called from _compute_next_song."""
+        if not item:
+            return False
+        t = item.get("item_type") or "song"
+        if not self._is_scheduler_skipped(t, item.get("item_id")):
+            return False
+        key = ((t or "song").strip().lower(), int(item.get("item_id") or 0))
+        self._scheduler_skips.pop(key, None)
+        log.info(f"[studio] operator skip — scheduled {key[0]} id={key[1]} "
+                 f"{item.get('title')!r} not aired")
+        return True
+
+    def _make_manual_item(self, row: Optional[dict]) -> Optional[dict]:
+        """Library row → a deck-ready manual-queue item, with a file the
+        deck can actually open. None (operator told why) otherwise."""
+        if not row:
+            return None
+        t = (row.get("_item_type") or "song").strip().lower()
+        if t not in self._MANUAL_TYPES:
+            dialogs.info(
+                self, "Not added to the queue",
+                "Spots air from their own schedule (Break Policy and "
+                "reports depend on it).\n\nDouble-click a spot in the "
+                "library to fire it now.")
+            return None
+        try:
+            iid = int(row.get("id") or 0)
+        except (TypeError, ValueError):
+            iid = 0
+        fp = row.get("file_path") or ""
+        dur = int(row.get("duration_ms") or 0)
+        if (not fp or not os.path.exists(fp)) and iid > 0:
+            table = {"song": "songs", "jingle": "jingles",
+                     "sweeper": "sweepers"}[t]
+            try:
+                r = self._db._conn().execute(
+                    f"SELECT file_path, duration_ms FROM {table} "
+                    f"WHERE id = ?", [iid]).fetchone()
+                if r is not None:
+                    fp = r["file_path"] or ""
+                    dur = dur or int(r["duration_ms"] or 0)
+            except Exception as exc:
+                log.warning(f"[studio] manual item file lookup: {exc}")
+        if not fp or not os.path.exists(fp):
+            dialogs.warning(
+                self, "Audio file not found",
+                f"“{row.get('title') or '—'}” can't be queued — its audio "
+                f"file is missing:\n{fp or '(no file set)'}")
+            return None
+        self._manual_uid_seq += 1
+        return {
+            "id":          iid,
+            "title":       row.get("title") or "—",
+            "artist":      row.get("artist") or "",
+            "file_path":   fp,
+            "duration_ms": dur,
+            "tags":        self._tags_for_item_type(t),
+            "_clock_id":   None,
+            "_slot_idx":   None,
+            "_item_type":  t,
+            "_manual":     True,
+            "_manual_uid": self._manual_uid_seq,
+        }
+
+    def _manual_index(self, card: Optional[dict]) -> int:
+        if not card or not card.get("_manual"):
             return -1
-        target = self._target_queue_list()
-        sid = int(song.get("id") or 0)
-        stype = song.get("_item_type") or "song"
-        for i, s in enumerate(target):
-            if (int(s.get("id") or 0) == sid
-                    and (s.get("_item_type") or "song") == stype):
+        uid = card.get("_manual_uid")
+        for i, m in enumerate(self._manual_queue):
+            if m.get("_manual_uid") == uid:
                 return i
         return -1
 
+    @staticmethod
+    def _is_scheduler_card(card: Optional[dict]) -> bool:
+        """A card that came from the scheduler's prediction (not manual,
+        not a pinned break-tease song, not a spot / SOTG)."""
+        if not card or card.get("_manual") or card.get("_teased"):
+            return False
+        return (card.get("_item_type") or "song") not in ("spot", "sotg")
+
+    def _first_scheduler_card(self) -> Optional[dict]:
+        for c in self._upcoming_preview or []:
+            if self._is_scheduler_card(c):
+                return c
+        return None
+
+    def _pop_next_manual(self) -> Optional[dict]:
+        """Next manual item to air, or None. Refreshes Up Coming on the
+        next event-loop turn so the played card disappears."""
+        if not self._manual_queue:
+            return None
+        item = dict(self._manual_queue.pop(0))
+        log.info(f"[studio] manual queue → {item.get('_item_type')} "
+                 f"{item.get('title')!r} ({len(self._manual_queue)} more)")
+        try:
+            QTimer.singleShot(0, self._load_upcoming_queue)
+        except Exception:
+            pass
+        return item
+
+    def _after_queue_edit(self) -> None:
+        self._load_upcoming_queue()
+
     def _on_lib_add(self) -> None:
-        """ADD — insert the selected library row AFTER the currently-
-        selected Up Coming row, or append to the tail when no queue
-        row is selected. Operates on whichever list drives the
-        visible panel (scheduler preview OR legacy queue) so the
-        action is immediately visible."""
-        row = self._selected_library_row_as_queue_dict()
-        if row is None:
-            log.debug("[studio] ADD — no row selected (library)")
+        """ADD — queue the selected library item to air: after the
+        selected manual card, else at the end of the manual queue."""
+        item = self._make_manual_item(
+            self._selected_library_row_as_queue_dict())
+        if item is None:
             return
-        target = self._target_queue_list()
-        if self._queue_selected_song is not None:
-            pos = self._find_queue_position(self._queue_selected_song)
-            if pos >= 0:
-                target.insert(pos + 1, row)
-                self._refresh_upcoming_panel()
-                log.info(
-                    f"[studio] ADD → after visible idx {pos}: "
-                    f"{row.get('_item_type', 'song')} "
-                    f"{row.get('title')!r}")
-                return
-        target.append(row)
-        self._refresh_upcoming_panel()
-        log.info(
-            f"[studio] ADD → tail (now {len(target)} items): "
-            f"{row.get('_item_type', 'song')} {row.get('title')!r}")
+        pos = self._manual_index(self._queue_selected_song)
+        if pos >= 0:
+            self._manual_queue.insert(pos + 1, item)
+        else:
+            self._manual_queue.append(item)
+        log.info(f"[studio] ADD → manual queue #"
+                 f"{self._manual_queue.index(item) + 1}: "
+                 f"{item['_item_type']} {item['title']!r}")
+        self._after_queue_edit()
 
     def _on_lib_insert(self) -> None:
-        """INSERT — drop the selected library row BEFORE the
-        currently-selected Up Coming row, or at the head when no
-        queue row is selected."""
-        row = self._selected_library_row_as_queue_dict()
-        if row is None:
-            log.debug("[studio] INSERT — no row selected (library)")
+        """INSERT — queue the selected library item BEFORE the selected
+        manual card, else at the head (airs next)."""
+        item = self._make_manual_item(
+            self._selected_library_row_as_queue_dict())
+        if item is None:
             return
-        target = self._target_queue_list()
-        pos = 0
-        if self._queue_selected_song is not None:
-            found = self._find_queue_position(self._queue_selected_song)
-            if found >= 0:
-                pos = found
-        target.insert(pos, row)
-        self._refresh_upcoming_panel()
-        log.info(
-            f"[studio] INSERT → visible idx {pos}: "
-            f"{row.get('_item_type', 'song')} {row.get('title')!r}")
+        pos = self._manual_index(self._queue_selected_song)
+        self._manual_queue.insert(max(0, pos), item)
+        log.info(f"[studio] INSERT → manual queue #"
+                 f"{self._manual_queue.index(item) + 1}: "
+                 f"{item['_item_type']} {item['title']!r}")
+        self._after_queue_edit()
 
     def _on_lib_replace(self) -> None:
-        """REPLACE — swap the selected Up Coming row with the library
-        row; falls back to overwriting the head when no queue row is
-        selected; falls back further to ADD when the queue is empty."""
-        row = self._selected_library_row_as_queue_dict()
-        if row is None:
-            log.debug("[studio] REPLACE — no row selected (library)")
+        """REPLACE — the selected card (or the first upcoming item) is
+        swapped for the selected library item. A manual card is replaced
+        in place; a scheduled card is skipped and the library item is
+        queued manually."""
+        item = self._make_manual_item(
+            self._selected_library_row_as_queue_dict())
+        if item is None:
             return
-        target = self._target_queue_list()
-        pos = 0
-        if self._queue_selected_song is not None:
-            found = self._find_queue_position(self._queue_selected_song)
-            if found >= 0:
-                pos = found
-        if target and 0 <= pos < len(target):
-            old = target[pos]
-            target[pos] = row
-            # Selection moves to the new song so subsequent actions
-            # naturally chain ("replace again with X").
-            self._queue_selected_song = dict(row)
-            log.info(
-                f"[studio] REPLACE → visible idx {pos}: "
-                f"{old.get('title')!r} → {row.get('title')!r}")
+        sel = self._queue_selected_song
+        pos = self._manual_index(sel)
+        if pos < 0 and not sel and self._manual_queue:
+            pos = 0                              # no selection → head
+        if pos >= 0:
+            old = self._manual_queue[pos]
+            self._manual_queue[pos] = item
+            log.info(f"[studio] REPLACE manual #{pos + 1}: "
+                     f"{old.get('title')!r} → {item['title']!r}")
         else:
-            target.append(row)
-            log.info(
-                f"[studio] REPLACE (empty queue, treated as ADD) "
-                f"→ {row.get('title')!r}")
-        self._refresh_upcoming_panel()
+            target = sel if self._is_scheduler_card(sel) else (
+                None if sel else self._first_scheduler_card())
+            if target is not None:
+                self._arm_scheduler_skip(target)
+            self._manual_queue.append(item)
+            log.info(f"[studio] REPLACE scheduled "
+                     f"{(target or {}).get('title')!r} → manual "
+                     f"{item['title']!r}")
+        self._queue_selected_song = dict(item)
+        self._after_queue_edit()
 
     def _on_lib_delete(self) -> None:
-        """DELETE — remove the currently-selected Up Coming row from
-        the visible queue. Falls back to library-row-match when no
-        queue row is selected (legacy behaviour). Does NOT touch the
-        DB — only the broadcast queue is mutated."""
-        target = self._target_queue_list()
-        if self._queue_selected_song is not None:
-            pos = self._find_queue_position(self._queue_selected_song)
+        """DELETE — remove the selected Up Coming card. Manual cards
+        leave the manual queue; scheduled cards get a one-shot skip.
+        With no card selected, acts on the selected library item."""
+        sel = self._queue_selected_song
+        if sel:
+            pos = self._manual_index(sel)
             if pos >= 0:
-                old = target.pop(pos)
+                old = self._manual_queue.pop(pos)
+                log.info(f"[studio] DELETE manual #{pos + 1}: "
+                         f"{old.get('title')!r}")
                 self._queue_selected_song = None
-                self._refresh_upcoming_panel()
-                log.info(
-                    f"[studio] DELETE → removed visible idx {pos} "
-                    f"({old.get('title')!r})")
+                self._after_queue_edit()
                 return
-            # Selection went stale — fall through.
+            if sel.get("_teased"):
+                key = self._card_key(sel)
+                before = len(self._teased_songs)
+                self._teased_songs = [
+                    s for s in self._teased_songs
+                    if int(s.get("id") or 0) != (key[1] if key else -1)]
+                if len(self._teased_songs) != before:
+                    log.info(f"[studio] DELETE promised post-break song "
+                             f"{sel.get('title')!r}")
+                self._queue_selected_song = None
+                self._after_queue_edit()
+                return
+            if (sel.get("_item_type") or "") in ("spot", "sotg"):
+                dialogs.info(
+                    self, "Not removed",
+                    "Spots and Spot-on-the-Go drops can't be removed "
+                    "from Up Coming — they are contracted airtime.\n\n"
+                    "Use AUTO off (Live Assist) to drop pending items.")
+                return
+            self._arm_scheduler_skip(sel)
+            self._queue_selected_song = None
+            self._after_queue_edit()
+            return
+        # No Up Coming card selected → act on the library selection.
         row = self._selected_library_row_as_queue_dict()
         if row is None:
-            log.debug("[studio] DELETE — no row selected")
+            log.debug("[studio] DELETE — nothing selected")
             return
-        target_id   = int(row.get("id") or 0)
-        target_type = row.get("_item_type")
-        before = len(target)
-        # Filter in-place so the same list instance stays the panel
-        # source (avoids a brief flash where the panel rebinds).
-        target[:] = [
-            s for s in target
-            if not (int(s.get("id") or 0) == target_id
-                    and (s.get("_item_type") or "song") == target_type)
-        ]
-        removed = before - len(target)
-        if removed:
-            self._refresh_upcoming_panel()
-            log.info(
-                f"[studio] DELETE → removed {removed} matching "
-                f"({row.get('title')!r})")
+        key = self._card_key(row)
+        before = len(self._manual_queue)
+        self._manual_queue = [m for m in self._manual_queue
+                              if self._card_key(m) != key]
+        if len(self._manual_queue) != before:
+            log.info(f"[studio] DELETE → removed {row.get('title')!r} "
+                     f"from the manual queue")
         else:
-            log.info(
-                f"[studio] DELETE — {row.get('title')!r} not in queue")
+            self._arm_scheduler_skip(row)
+        self._after_queue_edit()
 
     def _on_lib_prepair(self) -> None:
         """PREPAIR — load the selected library row's audio to the
@@ -9007,6 +9290,7 @@ class Studio(QWidget):
         if hasattr(self, "_db"):
             self._force_studio_refresh()
             self._maybe_auto_start_scheduler()
+            self._refresh_library_on_show()
 
     def _maybe_auto_start_scheduler(self) -> None:
         """If a clock is assigned to the current (weekday, hour) cell

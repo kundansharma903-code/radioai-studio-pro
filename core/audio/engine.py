@@ -53,6 +53,7 @@ from PyQt6.QtCore import QObject, QTimer, Qt, pyqtSignal
 from pybass3 import BassStream, BassChannel
 
 from core.audio._bass import (
+    bass_file_arg,
     BASS_ATTRIB_VOL, BASS_POS_BYTE, BASS_STREAM_PRESCAN, BASS_STREAM_DECODE,
     BASS_SAMPLE_LOOP,
     BASS_SYNC_POS, BASS_SYNC_END, BASS_SYNC_SLIDE, BASS_SYNC_ONETIME,
@@ -264,11 +265,12 @@ class AudioEngine(QObject):
             # play directly to the device, double-output.
             if self._route_via_mixer:
                 flags |= BASS_STREAM_DECODE
+            fname, uflag = bass_file_arg(path)
             try:
                 handle = BassStream.CreateFile(
-                    False, path.encode("utf-8"),
+                    False, fname,
                     0, 0,
-                    flags,
+                    flags | uflag,
                 )
             except Exception as exc:
                 err = error_code()
@@ -855,11 +857,12 @@ class AudioEngine(QObject):
         flow) cache duration without consuming a channel slot."""
         if not path or not os.path.exists(path):
             return None
+        fname, uflag = bass_file_arg(path)
         try:
             handle = BassStream.CreateFile(
-                False, path.encode("utf-8"),
+                False, fname,
                 0, 0,
-                BASS_STREAM_PRESCAN,
+                BASS_STREAM_PRESCAN | uflag,
             )
         except Exception as exc:
             log.debug(f"probe_duration_ms({path!r}) load failed: {exc}")

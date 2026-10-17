@@ -213,9 +213,11 @@ class StitcherEngine:
             return
 
         # Load and play via BASS
+        from core.audio._bass import bass_file_arg
+        fname, uflag = bass_file_arg(tmp_path)
         try:
             handle = BassStream.CreateFile(
-                False, tmp_path.encode("utf-8"), 0, 0, BASS_STREAM_PRESCAN
+                False, fname, 0, 0, BASS_STREAM_PRESCAN | uflag
             )
         except Exception as e:
             err = _bm.BASS_ErrorGetCode()

@@ -282,6 +282,12 @@ def test_missing_file_alert_toggle_shows_toast(
                          staticmethod(
                              lambda *a, **k: calls.append(a) or 0))
     s._handle_missing_file({"title": "T", "id": 1}, "/missing")
+    # Skip first, alert second (2026-10-16): when a next item exists the
+    # alert is deferred until it has started, so the modal dialog never
+    # holds the station silent. Let the event loop run it.
+    from PyQt6.QtCore import QCoreApplication
+    for _ in range(3):
+        QCoreApplication.processEvents()
     assert len(calls) == 1
 
 
