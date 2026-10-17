@@ -61,7 +61,7 @@ from PyQt6.QtGui import (
 from PyQt6.QtWidgets import (
     QDialog, QWidget, QFrame, QLabel, QPushButton,
     QVBoxLayout, QHBoxLayout, QLineEdit, QGraphicsDropShadowEffect,
-    QSizePolicy,
+    QSizePolicy, QApplication,
 )
 
 

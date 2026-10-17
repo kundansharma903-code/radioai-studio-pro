@@ -260,6 +260,9 @@ class _PriorityToggle(QWidget):
         super().__init__(parent)
         self.setFixedSize(128, 22)
         self._value = (initial or "").title()
+        # Amber outline on both pills when the row is waiting for a
+        # priority pick (see _LinkRow._refresh_save_button).
+        self._attention = False
         self._high_btn = QPushButton("⚡ HIGH", self)
         self._high_btn.setGeometry(0, 0, 60, 22)
         self._high_btn.setFont(
@@ -293,7 +296,16 @@ class _PriorityToggle(QWidget):
         self._low_btn.setEnabled(enabled)
         self._render()
 
+    def set_attention(self, on: bool) -> None:
+        on = bool(on)
+        if on != self._attention:
+            self._attention = on
+            self._render()
+
     def _render(self) -> None:
+        idle_border = (rgba(AMBER, 0.85) if self._attention
+                       else rgba('#454d6d', 0.6))
+
         def style(on: bool, accent: str, accent_light: str) -> str:
             if on:
                 return (f"QPushButton {{ background: "
@@ -306,7 +318,7 @@ class _PriorityToggle(QWidget):
                         f"{TEXT_MUTED}; }}")
             return (f"QPushButton {{ background: "
                     f"{rgba('#ffffff', 0.04)}; color: {TEXT_SEC}; "
-                    f"border: 1px solid {rgba('#454d6d', 0.6)}; "
+                    f"border: 1px solid {idle_border}; "
                     f"border-radius: 11px; }}"
                     f"QPushButton:hover {{ background: "
                     f"{rgba('#ffffff', 0.08)}; color: {TEXT_PRI}; }}"
@@ -337,8 +349,16 @@ class _SharpTimeInput(QLineEdit):
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._validate_today = False
         self._is_invalid = False
+        # Amber outline when the row is waiting for a usable time.
+        self._attention = False
         self.textChanged.connect(lambda _t: self._revalidate())
         self._apply_style()
+
+    def set_attention(self, on: bool) -> None:
+        on = bool(on)
+        if on != self._attention:
+            self._attention = on
+            self._apply_style()
 
     def hhmm(self) -> str:
         return (self.text() or "").strip()
@@ -365,8 +385,12 @@ class _SharpTimeInput(QLineEdit):
             self.invalid_changed.emit(self._is_invalid)
 
     def _apply_style(self) -> None:
-        border = (rgba(RED, 0.6) if self._is_invalid
-                  else rgba('#ffffff', 0.12))
+        if self._is_invalid:
+            border = rgba(RED, 0.6)
+        elif self._attention:
+            border = rgba(AMBER, 0.85)
+        else:
+            border = rgba('#ffffff', 0.12)
         focus_border = (rgba(RED, 0.8) if self._is_invalid
                          else rgba(CYAN, 0.5))
         self.setStyleSheet(
@@ -644,6 +668,14 @@ class _LinkRow(QFrame):
             self._time_in.setText(self._assignment["sharp_time"])
         self._time_in.invalid_changed.connect(
             lambda _b: self._refresh_save_button())
+        # EVERY edit must re-evaluate Save, not just a past/not-past
+        # flip (2026-10-13). invalid_changed only fires when that flag
+        # changes, so typing a valid time into an empty field — or
+        # clearing a valid one — left the button stale: stuck grey after
+        # file → priority → time (no assignment had been saved since
+        # 2026-05-16), or stuck enabled on a half-typed '19:3'.
+        self._time_in.textChanged.connect(
+            lambda _t: self._refresh_save_button())
 
         # Priority toggle
         self._prio = _PriorityToggle(
@@ -684,8 +716,10 @@ class _LinkRow(QFrame):
         dur_ms = 0
         try:
             from pybass3 import BassStream, BassChannel
+            from core.audio._bass import bass_file_arg
+            fname, uflag = bass_file_arg(path)
             handle = BassStream.CreateFile(
-                False, path.encode("utf-8"), 0, 0, 0x20000)
+                False, fname, 0, 0, 0x20000 | uflag)
             if handle:
                 dur_s = BassChannel.GetLengthSeconds(handle)
                 dur_ms = int((dur_s or 0) * 1000)
@@ -725,16 +759,43 @@ class _LinkRow(QFrame):
                 f"border-radius: 8px; }}"
             )
 
+    def missing_reason(self) -> Optional[str]:
+        """What still stops this row from saving, in operator language,
+        or None when it is ready. Single source of truth for the Save
+        button state, its tooltip, and the host's pre-save guard."""
+        if not self._file_btn.file_path():
+            return "Choose an audio file for this link."
+        hhmm = self._time_in.hhmm()
+        if _hhmm_to_minutes(hhmm) is None:
+            return "Enter the full sharp time as HH:MM (for example 18:30)."
+        if self._time_in.is_invalid_past():
+            return (f"{hhmm} has already passed today — pick a later "
+                    f"time, or switch the date to Tomorrow.")
+        if self._prio.value() not in ("High", "Low"):
+            return "Pick a priority: HIGH or LOW."
+        return None
+
     def _refresh_save_button(self) -> None:
+        # Signals can fire while __init__ is still building the row.
+        if getattr(self, "_save_btn", None) is None:
+            return
+        if getattr(self, "_prio", None) is None:
+            return
         if self._status in ("FIRED", "MISSED"):
             return  # locked — handled in _apply_lock_state
-        # Eligible to save if all required fields are present + sharp
-        # time isn't invalid past.
+        reason = self.missing_reason()
+        eligible = reason is None
+        # Once the operator has started the row (a file is chosen),
+        # outline whatever is still missing so a grey Save is never a
+        # dead end. Before that, keep the row calm.
         has_file = bool(self._file_btn.file_path())
-        has_time = (_hhmm_to_minutes(self._time_in.hhmm()) is not None
-                    and not self._time_in.is_invalid_past())
-        has_prio = self._prio.value() in ("High", "Low")
-        eligible = has_file and has_time and has_prio
+        time_ok = (_hhmm_to_minutes(self._time_in.hhmm()) is not None
+                   and not self._time_in.is_invalid_past())
+        self._time_in.set_attention(has_file and not time_ok)
+        self._prio.set_attention(
+            has_file and self._prio.value() not in ("High", "Low"))
+        self._save_btn.setToolTip(
+            "Ready to save." if eligible else reason)
         # Label: Save when fresh, Update when an assignment id exists.
         already = bool(self._assignment.get("assignment_id"))
         self._save_btn.setText("Update" if already else "Save")
@@ -1524,6 +1585,15 @@ class SOTGAssign(QWidget):
             (r for r in self._row_widgets if r.link_id() == link_id),
             None)
         if row is None:
+            log.warning(f"[sotg-assign] save: no row for link {link_id}")
+            return
+        # Belt-and-braces: the button should already be disabled, but a
+        # half-typed time used to slip through and surface the DB's raw
+        # "sharp_time must be HH:MM 24h ('19:3')" to the operator.
+        reason = row.missing_reason()
+        if reason:
+            log.info(f"[sotg-assign] save blocked link={link_id}: {reason}")
+            dialogs.warning(self, "Not ready to save", reason)
             return
         data = row.current_form()
         status = ("CONFLICT"
@@ -1531,7 +1601,7 @@ class SOTGAssign(QWidget):
                       self._scheduled_date, data.get("sharp_time") or "")
                   else "READY")
         try:
-            self._db.upsert_sotg_assignment(
+            aid = self._db.upsert_sotg_assignment(
                 show_id=self._selected_show_id,
                 link_id=link_id,
                 scheduled_date=self._scheduled_date,
@@ -1543,13 +1613,25 @@ class SOTGAssign(QWidget):
                 status=status,
             )
         except ValueError as exc:
+            # Server-side guard (e.g. the time passed while the screen
+            # sat open). Its messages are already operator-readable.
+            log.warning(f"[sotg-assign] save rejected link={link_id} "
+                        f"date={self._scheduled_date}: {exc}")
             dialogs.warning(
                 self, "Save blocked", str(exc))
             return
         except Exception as exc:
+            log.error(f"[sotg-assign] save failed link={link_id} "
+                      f"date={self._scheduled_date}: {exc}", exc_info=True)
             dialogs.error(
                 self, "Save failed", f"{exc}")
             return
+        log.info(
+            f"[sotg-assign] saved assignment id={aid} show="
+            f"{self._selected_show_id} link={link_id} "
+            f"date={self._scheduled_date} time={data.get('sharp_time')} "
+            f"priority={data.get('priority')} status={status} "
+            f"file={data.get('file_name')!r}")
         # Re-render — picks up the new assignment_id, ready status,
         # updated label, etc.
         self._refresh_right_panel()

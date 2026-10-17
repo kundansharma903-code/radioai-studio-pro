@@ -454,18 +454,8 @@ class SOTGCreateSchedule(QWidget):
         self._pill_links_label = self._capture_pill_label(
             self._pill_links)
 
-    @staticmethod
-    def _capture_pill_label(pill) -> QLabel:
-        """Return the pill's text QLabel (the one that isn't the
-        leading bullet). Used to live-update the pill on refresh
-        without touching the widget tree."""
-        for lbl in pill.findChildren(QLabel):
-            if lbl.text() != "●":
-                return lbl
-        # Defensive fallback — shouldn't hit in practice.
-        labels = pill.findChildren(QLabel)
-        return labels[-1] if labels else QLabel(pill)
-
+        # Top-right hint (Figma 469:3). This block sat after the return
+        # in _capture_pill_label, so it never ran (found 2026-10-16).
         self._hero_right = QLabel("Inline edit", self)
         self._hero_right.setGeometry(1240, 156, 180, 14)
         self._hero_right.setFont(inter(10, QFont.Weight.Medium))
@@ -478,6 +468,18 @@ class SOTGCreateSchedule(QWidget):
         h2.setStyleSheet(
             f"color: {TEXT_MUTED}; background: transparent; border: none;")
         h2.setAlignment(Qt.AlignmentFlag.AlignRight)
+
+    @staticmethod
+    def _capture_pill_label(pill) -> QLabel:
+        """Return the pill's text QLabel (the one that isn't the
+        leading bullet). Used to live-update the pill on refresh
+        without touching the widget tree."""
+        for lbl in pill.findChildren(QLabel):
+            if lbl.text() != "●":
+                return lbl
+        # Defensive fallback — shouldn't hit in practice.
+        labels = pill.findChildren(QLabel)
+        return labels[-1] if labels else QLabel(pill)
 
     # ── Form card ─────────────────────────────────────────────────────
 

@@ -95,7 +95,13 @@ def _checkpoint(db_file: Path) -> None:
 def backup_now(dest_dir) -> Optional[str]:
     """Copy the live DB to `dest_dir` as
     ``RadioAI_backup_YYYY-MM-DD_HH-MM.db``. Returns the written path, or
-    None on failure. Read-only w.r.t. the live DB (checkpoint + copy2)."""
+    None on failure. Read-only w.r.t. the live DB.
+
+    Uses SQLite's online backup API — a consistent snapshot that
+    includes changes still sitting in the WAL. The previous checkpoint
+    + file copy ignored the checkpoint's "busy" result: with the app's
+    other connections open, the latest changes could silently miss the
+    backup (2026-10-16). The daily auto-backup already used this API."""
     src = _db_path()
     if not src.exists():
         log.warning("[backup] no live DB to back up")
@@ -103,10 +109,21 @@ def backup_now(dest_dir) -> Optional[str]:
     try:
         dest = Path(dest_dir)
         dest.mkdir(parents=True, exist_ok=True)
-        _checkpoint(src)
         stamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
         out = dest / f"RadioAI_backup_{stamp}.db"
-        shutil.copy2(str(src), str(out))
+        tmp = out.with_suffix(".db.partial")
+        s_con = sqlite3.connect(f"file:{src}?mode=ro", uri=True)
+        d_con = sqlite3.connect(str(tmp))
+        try:
+            s_con.backup(d_con)
+        finally:
+            d_con.close()
+            s_con.close()
+        if not is_valid_radioai_db(tmp):
+            tmp.unlink(missing_ok=True)
+            log.error("[backup] snapshot failed validation — not saved")
+            return None
+        os.replace(str(tmp), str(out))
         log.info(f"[backup] station backed up -> {out}")
         return str(out)
     except Exception as exc:

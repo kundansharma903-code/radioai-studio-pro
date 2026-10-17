@@ -781,7 +781,8 @@ class MainWindow(QMainWindow):
             return
         # Studio's "View Full History →" link emits final_log_creator on the
         # breadcrumb channel; delegate to the hub router that owns that route.
-        if where == "final_log_creator":
+        # Studio's header Settings button emits "settings".
+        if where in ("final_log_creator", "settings"):
             self._on_hub_screen_requested(where)
 
     def _on_hub_screen_requested(self, screen: str) -> None:
@@ -1127,6 +1128,13 @@ class MainWindow(QMainWindow):
         for music to actually fire.
 
         Failures are non-fatal."""
+        # This runs from a deferred single-shot timer. If the window is
+        # already being torn down, starting playout now would resurrect
+        # the scheduler thread and open a new audio channel after
+        # cleanup_all — both outlive shutdown (see _cleanup_engine).
+        if getattr(self, "_shutting_down", False):
+            log.info("Startup auto-mode skipped — app is shutting down")
+            return
         try:
             from core.settings import Settings
             on = Settings().get_bool("start_in_auto_mode", True)
@@ -1250,7 +1258,7 @@ class MainWindow(QMainWindow):
         """Toggle the engine OFF — Settings sentinel flipped, engine
         thread keeps running (cheap heartbeat) but _on_tick exits
         early on is_enabled()=False."""
-        if not confirm(
+        if not dialogs.confirm(
                 self, "Stop AI Engine",
                 "Stopping the engine reverts Studio to random + "
                 "separation rotation for any song picks not yet "
@@ -1301,7 +1309,7 @@ class MainWindow(QMainWindow):
     def _on_sched_ai_ungroup(self, group_id: int) -> None:
         """Delete a sister group. Confirmation gate — destructive op
         per CLAUDE.md."""
-        if not confirm(
+        if not dialogs.confirm(
                 self, "Delete Sister Group",
                 f"Delete Sister Group {group_id}? Member categories "
                 f"revert to standalone rotation (no sister pooling). "
@@ -1355,7 +1363,7 @@ class MainWindow(QMainWindow):
         """Discard today's plan — wipes decisions + flips status to
         'discarded'. Engine will compute again on next tick."""
         from datetime import date as _date
-        if not confirm(
+        if not dialogs.confirm(
                 self, "Discard Plan",
                 "Discard today's AI plan? Decisions will be wiped. "
                 "The engine will compute a fresh plan on its next "
@@ -1561,6 +1569,8 @@ class MainWindow(QMainWindow):
         ORDER MATTERS: scheduler stops FIRST so it can't fire any more
         spot_due / song_auto_advance signals into a tearing-down audio
         engine. Then audio cleanup."""
+        # Deferred startup work checks this and stands down.
+        self._shutting_down = True
         # 0-pre. Stop the aircheck recorder FIRST — it finalizes the
         # open WAV (header rewrite) and kicks the last MP3 encode.
         # Independent of the playback engine, so order vs scheduler
@@ -1596,10 +1606,18 @@ class MainWindow(QMainWindow):
                 log.warning(
                     f"transcription engine shutdown failed: {exc}")
 
-        # 1. Stop scheduler (silence the event source)
+        # 1. Stop scheduler (silence the event source). shutdown(), not
+        # stop(): it also latches the engine so a deferred caller — the
+        # 150 ms startup auto-mode timer, a Studio showEvent auto-arm —
+        # can't start a fresh thread after this cleanup. That late
+        # thread was destroyed while running at exit → qFatal →
+        # Qt6Core 0xC0000409 (found 2026-10-16).
         if hasattr(self, "_scheduler") and self._scheduler is not None:
             try:
-                self._scheduler.stop()
+                if hasattr(self._scheduler, "shutdown"):
+                    self._scheduler.shutdown()
+                else:
+                    self._scheduler.stop()
                 log.info("SchedulerEngine stopped")
             except Exception as exc:
                 log.warning(f"scheduler stop failed: {exc}")
