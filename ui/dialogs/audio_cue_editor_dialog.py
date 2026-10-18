@@ -1623,6 +1623,19 @@ class AudioCueEditorDialog(BaseDialog):
                 self._playback_cid = None
         except Exception as exc:
             log.debug(f"[cue-editor] dialog cleanup error: {exc}")
+        # Drop the shared-engine subscriptions made in __init__ — the
+        # engine outlives the dialog, so without this every opened
+        # editor kept receiving position ticks until app exit.
+        if self._engine is not None:
+            for sig, slot in (
+                    (self._engine.position_changed, self._on_engine_position),
+                    (self._engine.playback_ended,
+                     self._on_engine_playback_ended),
+                    (self._engine.error_occurred, self._on_engine_error)):
+                try:
+                    sig.disconnect(slot)
+                except (TypeError, RuntimeError):
+                    pass
         super().done(result)
 
     # ── Validation ────────────────────────────────────────────────────────

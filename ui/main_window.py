@@ -69,11 +69,10 @@ class MainWindow(QMainWindow):
         from core.scheduler import SchedulerEngine
         self._scheduler = SchedulerEngine(self._db, parent=self)
 
-        # Studio's InstantJingleEngine (Phase A — Option 2 topology).
-        # Independent from ui/instant_jingles.py's own IJE instance —
-        # both share the underlying AudioEngine; the only divergence is
-        # the per-instance 8-pad polyphony cap. Future cleanup will
-        # consolidate to a single shared instance.
+        # The single shared InstantJingleEngine. Injected into both
+        # Studio and the Instant Jingles screen (instant_jingle_engine=
+        # kwarg), so they drive the same playing-state and 8-pad
+        # polyphony cap on top of the shared AudioEngine.
         from core.instant_jingle_engine import InstantJingleEngine
         self._instant_jingle_engine = InstantJingleEngine(
             engine=self._engine, parent=self)

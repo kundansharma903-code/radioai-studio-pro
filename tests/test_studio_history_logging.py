@@ -274,7 +274,8 @@ def test_different_songs_log_independently(qtbot, studio):
 # ── 6. History panel render collapses consecutive same-song duplicates ─
 
 
-def test_history_render_collapses_consecutive_same_song_dupes(qtbot, studio):
+def test_history_render_collapses_consecutive_same_song_dupes(
+        qtbot, studio, monkeypatch):
     """Render-side dedupe — when broadcast_log already contains
     consecutive duplicate rows for the same song (e.g. from a
     pre-fix EOS-loop session), the History panel must collapse them
@@ -329,26 +330,25 @@ def test_history_render_collapses_consecutive_same_song_dupes(qtbot, studio):
                  campaign_name=None),
     ]
 
-    original_get_history = studio._db.get_history
-    studio._db.get_history = lambda limit=24: fake_rows
-    try:
-        studio._refresh_history()
+    # monkeypatch (not assign + finally-restore): the restore left a
+    # shadowing instance attribute on the Database singleton.
+    monkeypatch.setattr(studio._db, "get_history",
+                        lambda limit=24: fake_rows)
+    studio._refresh_history()
 
-        entries = studio._history_panel._entries
-        # Top 4 rendered entries should be: Song B, Song A, Test Spot,
-        # Song A. The 5 consecutive Song A duplicates collapsed to 1;
-        # the post-spot Song A re-renders because the spot reset the
-        # consecutive-streak.
-        assert entries[0].title == "Song B"
-        assert entries[1].title == "Song A"
-        assert entries[2].title == "Test Spot"
-        assert entries[3].title == "Song A"
-        # The 5 consecutive Song A duplicates would have spanned
-        # entries[1..5] without dedupe. Post-fix: only entries[1] +
-        # entries[3] carry "Song A" — exactly 2, NOT 6.
-        song_a_count = sum(1 for e in entries if e.title == "Song A")
-        assert song_a_count == 2, (
-            f"5 consecutive Song A dupes should collapse to 1, plus "
-            f"the post-spot legit replay → 2 total (got {song_a_count})")
-    finally:
-        studio._db.get_history = original_get_history
+    entries = studio._history_panel._entries
+    # Top 4 rendered entries should be: Song B, Song A, Test Spot,
+    # Song A. The 5 consecutive Song A duplicates collapsed to 1;
+    # the post-spot Song A re-renders because the spot reset the
+    # consecutive-streak.
+    assert entries[0].title == "Song B"
+    assert entries[1].title == "Song A"
+    assert entries[2].title == "Test Spot"
+    assert entries[3].title == "Song A"
+    # The 5 consecutive Song A duplicates would have spanned
+    # entries[1..5] without dedupe. Post-fix: only entries[1] +
+    # entries[3] carry "Song A" — exactly 2, NOT 6.
+    song_a_count = sum(1 for e in entries if e.title == "Song A")
+    assert song_a_count == 2, (
+        f"5 consecutive Song A dupes should collapse to 1, plus "
+        f"the post-spot legit replay → 2 total (got {song_a_count})")

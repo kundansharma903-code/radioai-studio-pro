@@ -1248,6 +1248,9 @@ class SongsLibrary(QWidget):
             parent=self.window(), engine=self._engine)
         dlg.cues_saved.connect(self._on_cues_saved)
         dlg.exec()
+        # Parented to the main window, so it would otherwise live (hidden)
+        # until app exit — one leaked dialog per open.
+        dlg.deleteLater()
 
     # ── Detail-panel tab interactions ────────────────────────────────────
 

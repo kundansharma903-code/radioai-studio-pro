@@ -244,13 +244,20 @@ def test_filter_debounce_fires_once(qtbot, screen):
     s._refresh_filter_results = counting
     s._filter_timer.timeout.disconnect()
     s._filter_timer.timeout.connect(counting)
-    # 5 rapid changes — only 1 final fire after debounce
+    # 5 rapid changes — only 1 final fire after debounce. No wall-clock
+    # asserts (QA ⚠10): a 60 ms sleep vs the 200 ms timer flaked when
+    # the event loop stalled. Check the timer state directly instead.
     for _ in range(5):
         s._on_filter_changed()
-    qtbot.wait(60)
-    assert counter["n"] == 0       # nothing yet (debounce 200ms)
-    qtbot.wait(260)
+    assert s._filter_timer.isSingleShot()
+    assert s._filter_timer.interval() == s.FILTER_DEBOUNCE_MS
+    assert s._filter_timer.isActive()   # pending, not fired synchronously
+    assert counter["n"] == 0
+    qtbot.waitUntil(lambda: counter["n"] >= 1, timeout=3000)
+    # Single-shot: nothing else may follow the one coalesced fire.
+    qtbot.wait(s.FILTER_DEBOUNCE_MS * 2)
     assert counter["n"] == 1
+    assert not s._filter_timer.isActive()
 
 
 # ── Validation ──────────────────────────────────────────────────────────

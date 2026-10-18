@@ -270,7 +270,9 @@ def test_preview_full_routes_sequence_to_stitcher_engine(qapp, db, monkeypatch):
             class _R:
                 def fetchone(_): return ("/fake/song.mp3",)
             return _R()
-    s._db._conn = lambda: _StubConn()
+    # monkeypatch, not plain assignment: s._db is the Database
+    # singleton — a bare rebind leaked the stub into every later test.
+    monkeypatch.setattr(s._db, "_conn", lambda: _StubConn())
     s._on_preview_full()
     assert len(fake_engine.calls) == 1
     seq = fake_engine.calls[0]["sequence"]

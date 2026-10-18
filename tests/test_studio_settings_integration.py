@@ -355,7 +355,7 @@ def test_mix_point_ms_overrides_fade_out_setting(
 
 
 def test_crossfade_overlap_starts_next_song(
-        studio, db, settings_snapshot, tmp_path):
+        studio, db, settings_snapshot, tmp_path, monkeypatch):
     """When fade fires + a next song is available, a NEW channel is
     started so the two tracks overlap audibly."""
     s, eng, sch = studio
@@ -373,7 +373,9 @@ def test_crossfade_overlap_starts_next_song(
     s._current_track = {"id": 1, "mix_point_ms": 0}
 
     logged: list = []
-    s._db.log_play = lambda **kw: logged.append(kw)
+    # monkeypatch: s._db is the Database singleton — a bare rebind
+    # silenced log_play for every later test in the process.
+    monkeypatch.setattr(s._db, "log_play", lambda **kw: logged.append(kw))
 
     s._maybe_trigger_fade_out(11, 55_000)
     # Fade started on the old channel

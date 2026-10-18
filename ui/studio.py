@@ -4096,8 +4096,6 @@ class Studio(QWidget):
         # Scheduler signal connections (PRESERVED)
         if self._scheduler is not None:
             self._scheduler.spot_due.connect(self._on_scheduler_spot_due)
-            self._scheduler.song_auto_advance.connect(
-                self._on_scheduler_song_advance)
             self._scheduler.break_approaching.connect(
                 self._on_scheduler_break_warn)
             self._scheduler.next_break_in.connect(
@@ -6268,9 +6266,6 @@ class Studio(QWidget):
                  f"dur={self._current_duration_ms}ms")
         self._update_status_pills()
 
-    def _on_scheduler_song_advance(self) -> None:
-        log.info("[studio] scheduler: song_auto_advance")
-
     # ────────────────────────────────────────────────────────────────────
     # Spot on the Go dispatch — polls sotg_assignments + fires drops
     # ────────────────────────────────────────────────────────────────────
@@ -6950,19 +6945,11 @@ class Studio(QWidget):
                 self._rds.set_on_air("—", "")
 
     def _apply_playing_state(self, song: dict) -> None:
-        # Phase 2 — emit scheduler.song_auto_advance so subscribers
-        # (Up Coming panel, NEXT chip via _load_upcoming_queue) re-render
-        # at the actual play moment. The signal was declared but never
-        # wired in the scheduler itself; Studio is the natural emitter
-        # because it owns the actual transition. Defensive: scheduler
-        # may be None or signal may not exist on older mocks.
-        if self._scheduler is not None:
-            try:
-                if hasattr(self._scheduler, "song_auto_advance"):
-                    self._scheduler.song_auto_advance.emit()
-            except Exception as exc:
-                log.debug(
-                    f"[studio] song_auto_advance emit failed: {exc}")
+        # Studio no longer emits the scheduler's song_auto_advance here
+        # (QA 2026-10-17): a screen must not fire another object's
+        # signal, and the Up Coming refresh it triggered already runs
+        # below via _load_upcoming_queue() — the emit only doubled the
+        # peek_next work on every song start.
         if hasattr(self, "_now_player"):
             artist = str(song.get("artist") or "")
             year = song.get("year")

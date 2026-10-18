@@ -39,6 +39,21 @@ from core.database import Database
 from ui.studio import Studio
 
 
+@pytest.fixture(autouse=True)
+def _no_live_spot_schedule(monkeypatch):
+    """Cut the Up Coming panel off from the real spot/SOTG schedule.
+    _check_upcoming_dispatches previews any campaign or SOTG due within
+    60s of the WALL CLOCK, and _sotg_check_tick fires due drops — so a
+    real spot at e.g. 14:40 put an extra card at slot 0 for any run at
+    14:39 (QA ⚠9, 2026-10-17). These tests cover the peek_next queue."""
+    def _no_preview(self, *, now=None):
+        self._upcoming_preview_spots = []
+        self._upcoming_preview_sotgs = []
+        return False
+    monkeypatch.setattr(Studio, "_check_upcoming_dispatches", _no_preview)
+    monkeypatch.setattr(Studio, "_sotg_check_tick", lambda self: None)
+
+
 # ── Test doubles ────────────────────────────────────────────────────────
 
 

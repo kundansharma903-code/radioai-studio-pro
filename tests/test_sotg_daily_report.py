@@ -212,7 +212,8 @@ def test_status_display_maps_known_enums():
     assert disp == "ZOMBIE"
 
 
-def test_row_with_ai_summary_does_not_crash(qapp, db, tmp_path, seeded_day):
+def test_row_with_ai_summary_does_not_crash(qapp, db, tmp_path, seeded_day,
+                                            monkeypatch):
     """v2 future-proofing — when ai_summary is populated, the row paint
     adds an italicized sub-block. Today no real data ever sets this,
     but the code path must not crash if a test/db row carries one."""
@@ -236,14 +237,13 @@ def test_row_with_ai_summary_does_not_crash(qapp, db, tmp_path, seeded_day):
             r["ai_summary"] = "Auto-generated AI summary for testing only."
         return rows
 
-    db.get_sotg_assignments_for_date = patched   # type: ignore[method-assign]
-    try:
-        out = generate_sotg_daily_report(
-            target, output_path=tmp_path / "ai_summary.pdf", db=db)
-        assert out.exists()
-        assert out.stat().st_size > 2_000
-    finally:
-        db.get_sotg_assignments_for_date = original   # type: ignore[method-assign]
+    # monkeypatch (not assign + finally-restore): db is the Database
+    # singleton and the restore left a shadowing instance attribute.
+    monkeypatch.setattr(db, "get_sotg_assignments_for_date", patched)
+    out = generate_sotg_daily_report(
+        target, output_path=tmp_path / "ai_summary.pdf", db=db)
+    assert out.exists()
+    assert out.stat().st_size > 2_000
 
 
 def test_invalid_date_raises():
