@@ -202,7 +202,7 @@ def test_auto_dispatch_uses_row_sweeper_volume(qapp, db):
 # ── Ducking engages only when asked ─────────────────────────────────────
 
 
-def test_no_duck_when_song_pct_is_100(qapp, db):
+def test_no_duck_when_song_pct_is_100(qapp, db, monkeypatch):
     """No ducking: no on_end restore, and on_start (which now always
     exists — it logs the play when the overlay REALLY starts, fix
     2026-10-17) must not slide the deck volume."""
@@ -213,7 +213,9 @@ def test_no_duck_when_song_pct_is_100(qapp, db):
     s._dispatch_overlay_sweeper(_sweeper_item(song_pct=100))
     call = swe.scheduled[-1]
     assert call["on_end"] is None
-    s._db.log_play = lambda **k: None      # keep the DB copy clean
+    # Keep the DB copy clean. monkeypatch, because s._db is the
+    # Database singleton and a bare rebind leaked into later tests.
+    monkeypatch.setattr(s._db, "log_play", lambda **k: None)
     call["on_start"]()
     assert eng.fades == []
     s.deleteLater()

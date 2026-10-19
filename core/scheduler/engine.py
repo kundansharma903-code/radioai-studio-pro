@@ -53,7 +53,7 @@ import logging
 import os
 import threading
 import time
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import Optional
 
 from PyQt6.QtCore import (
@@ -159,6 +159,11 @@ class SchedulerEngine(QObject):
         # Dedupe keys: (campaign_id, break_time) for spots already fired today;
         # ('warn', campaign_id, break_time) for 30s-warning that already fired.
         self._fired_breaks: set = set()
+        # Day whose already-aired breaks were last rebuilt from
+        # broadcast_log into _fired_breaks (QA ⚠23). None = never: the
+        # set is in-memory only, so without this a restart re-aired
+        # every break earlier in the hour that had already gone out.
+        self._fired_seeded_date: Optional[date] = None
         # Guards every add/clear/copy of _fired_breaks — the scheduler
         # thread adds keys while peek_next (main thread) snapshots it.
         self._fired_lock = threading.Lock()
@@ -519,12 +524,17 @@ class SchedulerEngine(QObject):
                 self._loaded_breaks = []
                 with self._fired_lock:
                     self._fired_breaks.clear()
+                self._seed_fired_from_log(now, force=True)
                 self._note_break_load_failure(exc)
             else:
                 self._breaks_retry_at = None
                 self._breaks_dirty = False
                 with self._fired_lock:
                     self._fired_breaks.clear()
+                # The clear is for a NEW day; on the first tick after a
+                # restart it would forget breaks that already aired today
+                # — rebuild them from broadcast_log (QA ⚠23).
+                self._seed_fired_from_log(now, force=True)
                 # New day → yesterday's rotation-plan decisions are
                 # stale; force a refetch on the next pick.
                 self._rot_dec_cache_key = None
@@ -563,6 +573,8 @@ class SchedulerEngine(QObject):
                 self._note_break_load_failure(exc)
             else:
                 self._breaks_retry_at = None
+                # A campaign edited/added today may already have aired.
+                self._seed_fired_from_log(now, force=True)
                 log.info(
                     f"scheduler live-reloaded {len(self._loaded_breaks)} "
                     f"breaks (fired set kept)")
@@ -650,6 +662,78 @@ class SchedulerEngine(QObject):
     def _fired_snapshot(self) -> set:
         with self._fired_lock:
             return set(self._fired_breaks)
+
+    def _seed_fired_from_log(self, now: datetime,
+                             force: bool = False) -> None:
+        """Rebuild today's "already aired" breaks from broadcast_log
+        into _fired_breaks (QA ⚠23, 2026-10-18).
+
+        _fired_breaks lives only in memory. After a restart, neither
+        _pick_break (any break earlier this hour is "due") nor the
+        spot_due tick knew what had aired, so a paid spot that went out
+        at 09:15 could air again at 09:40.
+
+        Each logged spot airing is matched to ONE break of its campaign:
+        the earliest unmatched break with break_time - SPOT_TOLERANCE_S
+        <= played_at, scanning breaks in time order. So a spot held by
+        Break Policy and aired late still counts for its own break and
+        not for the campaign's next one, and a held spot that has NOT
+        aired yet has no log row and stays unfired. Future breaks are
+        never marked. Idempotent per day unless ``force``. Times are
+        LOCAL 'YYYY-MM-DD HH:MM:SS', the format played_at is stored in."""
+        today = now.date()
+        if not force and self._fired_seeded_date == today:
+            return
+        self._fired_seeded_date = today
+        tol = timedelta(seconds=self.SPOT_TOLERANCE_S)
+        midnight = datetime.combine(today, datetime.min.time())
+        try:
+            breaks = list(self._db.get_active_breaks_for_day(
+                int(now.weekday())) or [])
+            plays = self._db.get_spot_plays_between(
+                (midnight - tol).strftime("%Y-%m-%d %H:%M:%S"),
+                (midnight + timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S"))
+        except Exception as exc:
+            # Fake / older DBs without the helper, or a transient error:
+            # leave the set as it is (the previous behaviour).
+            log.debug(f"seed fired breaks from log skipped: {exc}")
+            return
+        airings: dict = {}
+        try:
+            for cid, played_at in plays:
+                airings.setdefault(int(cid), []).append(str(played_at))
+        except (TypeError, ValueError) as exc:
+            log.debug(f"seed fired breaks: unusable play rows: {exc}")
+            return
+        timed = []
+        for br in breaks:
+            try:
+                raw = str(br["break_time"] or "")
+                cid = int(br["campaign_id"])
+            except (KeyError, IndexError, TypeError, ValueError):
+                continue
+            bdt = self._break_time_to_dt(raw.strip(), now)
+            if bdt is None or bdt > now + tol:
+                continue                     # not due yet → can't have aired
+            timed.append((bdt, cid, raw))
+        keys: set = set()
+        matched = 0
+        for bdt, cid, raw in sorted(timed):
+            pending = airings.get(cid) or []
+            lo = (bdt - tol).strftime("%Y-%m-%d %H:%M:%S")
+            for i, played_at in enumerate(pending):
+                if played_at >= lo:
+                    del pending[i]           # one airing → one break
+                    matched += 1
+                    for bt in {raw, raw.strip()}:
+                        keys.add((cid, bt))
+                        keys.add(("warn", cid, bt))
+                    break
+        if keys:
+            with self._fired_lock:
+                self._fired_breaks |= keys
+            log.info(f"scheduler: {matched} break(s) already aired today "
+                     f"restored from broadcast_log")
 
     def next_break_info(self, now: Optional[datetime] = None) -> Optional[dict]:
         """The next not-yet-fired break (all campaigns sharing its
@@ -764,6 +848,10 @@ class SchedulerEngine(QObject):
         dow = int(now.weekday())
         hour = int(now.hour)
         hour_key = (dow, hour)
+        # _active_hour_key is None only before the first pick after this
+        # engine was created, i.e. after a restart or crash recovery.
+        # A normal hour rollover still resets to slot 0 (QA ⚠19).
+        cold_start = getattr(self, "_active_hour_key", None) is None
         if getattr(self, "_active_hour_key", None) != hour_key:
             self._clock_slot_cursor = 0
             self._active_hour_key = hour_key
@@ -809,6 +897,26 @@ class SchedulerEngine(QObject):
         self._current_pick_now      = now
 
         n = len(slots)
+        if cold_start:
+            # Resume where the Final Log says this clock left off this
+            # hour, instead of replaying its top-of-hour elements mid-hour
+            # (QA ⚠20, 2026-10-18). Only scheduler-dispatched rows of the
+            # SAME clock in the CURRENT local hour count, so another clock,
+            # an earlier hour or day, manual plays and legacy rows without
+            # clock_id all leave the cursor at slot 0.
+            since = now.strftime("%Y-%m-%d %H:00:00")
+            try:
+                last = self._db.get_last_clock_slot_play(clock_id, since)
+                last = None if last is None else int(last)
+            except Exception as exc:
+                log.debug(f"pick_next_item: resume lookup skipped: {exc}")
+                last = None
+            if last is not None:
+                self._clock_slot_cursor = (last + 1) % n
+                if getattr(self._peek_local, "fired", None) is None:
+                    log.info(f"scheduler: resumed clock {clock_id} at slot "
+                             f"{self._clock_slot_cursor} (last aired slot "
+                             f"{last} since {since})")
         cursor = int(getattr(self, "_clock_slot_cursor", 0)) % n
         for offset in range(n):
             idx = (cursor + offset) % n
@@ -992,6 +1100,9 @@ class SchedulerEngine(QObject):
         saved_hour_key = self._active_hour_key
         saved_cursor_clock = getattr(self, "_cursor_clock_id", None)
         saved_sim_fired = getattr(self._peek_local, "fired", None)
+        # Restore already-aired breaks first so the preview can't show a
+        # spot that went out before a restart (QA ⚠23).
+        self._seed_fired_from_log(now or datetime.now())
         self._peek_local.fired = self._fired_snapshot()
         # Phase 2 — block queue_changed emission while we simulate
         # dispatches. Without this gate every peek_next would emit
@@ -1740,6 +1851,11 @@ class SchedulerEngine(QObject):
         # While peek_next simulates, use its per-thread copy instead of
         # the real set (race fix 2026-10-17).
         sim_fired = getattr(self._peek_local, "fired", None)
+        if sim_fired is None:
+            # Breaks that aired before a restart must not air again
+            # (QA ⚠23). Idempotent per day; a peek simulation was already
+            # seeded in peek_next before its snapshot.
+            self._seed_fired_from_log(now)
         fired = sim_fired if sim_fired is not None else self._fired_breaks
         cur_hour = int(now.hour)
         for br in day_breaks:

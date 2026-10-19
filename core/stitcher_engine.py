@@ -155,6 +155,22 @@ class StitcherEngine:
             except Exception:
                 pass
 
+    def shutdown(self, timeout: float = 1.0) -> None:
+        """App exit: stop playback, wait for the play thread to free its
+        stream (before bass_free()), and drop any pre-built WAV. An
+        in-flight prebuild sees its key cleared and deletes its result."""
+        self.stop()
+        t = self._thread
+        if (t is not None and t.is_alive()
+                and t is not threading.current_thread()):
+            t.join(timeout)
+        with self._pre_lock:
+            old = self._pre_path
+            self._pre_key = None
+            self._pre_path = None
+            self._pre_total_s = 0.0
+        self._remove_file(old)
+
     @property
     def is_running(self):
         return self._running

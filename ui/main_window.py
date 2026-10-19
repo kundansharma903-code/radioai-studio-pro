@@ -21,6 +21,42 @@ from core import dialogs
 log = logging.getLogger("MainWindow")
 
 
+# Scrollbars of the canvas QScrollArea (#mwScroll). They show only when
+# the window is smaller than the 1920×1080 design canvas, e.g. a
+# 1366×768 laptop, where the transport bar and right-hand panels are
+# reached by scrolling. They used to be 10 px with a handle at 10 %
+# white on #06080f, which is effectively invisible, so operators read
+# the screen as clipped (QA ⚠13, 2026-10-18). Now: 14 px, with the idle
+# handle in TEXT_SEC (#8891b8) and cyan on hover / press. No arrow
+# buttons; the track stays transparent.
+MW_SCROLL_QSS = (
+    "QScrollArea#mwScroll { background: #06080f; border: none; }"
+    "QScrollArea#mwScroll > QWidget > QWidget { background: #06080f; }"
+    "QScrollBar:vertical { background: transparent; "
+    "width: 14px; margin: 8px 0 8px 0; }"
+    "QScrollBar::handle:vertical { background: "
+    "#8891b8; border-radius: 4px; "
+    "min-height: 60px; margin: 0 3px; }"
+    "QScrollBar::handle:vertical:hover { "
+    "background: rgba(34,211,238,0.85); }"
+    "QScrollBar::handle:vertical:pressed { "
+    "background: rgba(6,182,212,1.0); }"
+    "QScrollBar:horizontal { background: transparent; "
+    "height: 14px; margin: 0 8px 0 8px; }"
+    "QScrollBar::handle:horizontal { background: "
+    "#8891b8; border-radius: 4px; "
+    "min-width: 60px; margin: 3px 0; }"
+    "QScrollBar::handle:horizontal:hover { "
+    "background: rgba(34,211,238,0.85); }"
+    "QScrollBar::handle:horizontal:pressed { "
+    "background: rgba(6,182,212,1.0); }"
+    "QScrollBar::add-line, QScrollBar::sub-line { "
+    "width: 0; height: 0; background: transparent; border: none; }"
+    "QScrollBar::add-page, QScrollBar::sub-page { "
+    "background: transparent; }"
+)
+
+
 class MainWindow(QMainWindow):
     """Frame around a 1440×900 screen widget. Sized to fit client + chrome."""
 
@@ -180,43 +216,9 @@ class MainWindow(QMainWindow):
         scroll.viewport().setPalette(pal)
         scroll.viewport().setAutoFillBackground(True)
 
-        # Style the scrollbars (#mwScroll selector to scope precisely).
-        # Polished pattern matching modern broadcast apps:
-        #   - Track barely visible (transparent), top/bottom inset so
-        #     the handle never kisses the window edges.
-        #   - Handle subtle gray idle, cyan on hover, brighter on
-        #     press. 60px minimum so it's always easy to grab even
-        #     when the content overflow is huge.
-        #   - 10px outer width with 3px horizontal handle margin →
-        #     effective 4px visible handle, which reads as "thin"
-        #     while remaining easy to click.
-        #   - No add-line / sub-line arrow buttons (modern convention).
-        scroll.setStyleSheet(
-            "QScrollArea#mwScroll { background: #06080f; border: none; }"
-            "QScrollArea#mwScroll > QWidget > QWidget { background: #06080f; }"
-            "QScrollBar:vertical { background: transparent; "
-            "width: 10px; margin: 8px 0 8px 0; }"
-            "QScrollBar::handle:vertical { background: "
-            "rgba(255,255,255,0.10); border-radius: 3px; "
-            "min-height: 60px; margin: 0 3px; }"
-            "QScrollBar::handle:vertical:hover { "
-            "background: rgba(34,211,238,0.55); }"
-            "QScrollBar::handle:vertical:pressed { "
-            "background: rgba(6,182,212,0.85); }"
-            "QScrollBar:horizontal { background: transparent; "
-            "height: 10px; margin: 0 8px 0 8px; }"
-            "QScrollBar::handle:horizontal { background: "
-            "rgba(255,255,255,0.10); border-radius: 3px; "
-            "min-width: 60px; margin: 3px 0; }"
-            "QScrollBar::handle:horizontal:hover { "
-            "background: rgba(34,211,238,0.55); }"
-            "QScrollBar::handle:horizontal:pressed { "
-            "background: rgba(6,182,212,0.85); }"
-            "QScrollBar::add-line, QScrollBar::sub-line { "
-            "width: 0; height: 0; background: transparent; border: none; }"
-            "QScrollBar::add-page, QScrollBar::sub-page { "
-            "background: transparent; }"
-        )
+        # Style the scrollbars — see MW_SCROLL_QSS. They only appear when
+        # the window is smaller than the design canvas (AsNeeded).
+        scroll.setStyleSheet(MW_SCROLL_QSS)
         scroll.setWidget(self._stack)
         self.setCentralWidget(scroll)
         # Dark-ify the QMainWindow palette as well so any uncovered area
@@ -1694,6 +1696,19 @@ class MainWindow(QMainWindow):
                 log.info("SchedulerEngine stopped")
             except Exception as exc:
                 log.warning(f"scheduler stop failed: {exc}")
+
+        # 1b. Stop the overlay engines. Sweeper and Stitcher play their
+        # own BassStreams on worker threads outside AudioEngine, so they
+        # must be halted and freed before bass_free() in main.py.
+        for attr in ("_sweeper_engine", "_stitcher_engine"):
+            eng = getattr(self, attr, None)
+            if eng is None:
+                continue
+            try:
+                eng.shutdown()
+                log.info(f"{type(eng).__name__} shutdown done")
+            except Exception as exc:
+                log.warning(f"{attr} shutdown failed: {exc}")
 
         # 2. Cleanup audio channels
         if not hasattr(self, "_engine") or self._engine is None:

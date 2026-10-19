@@ -121,7 +121,7 @@ class SweeperEngine:
             try:
                 if trigger_ms > 0:
                     # Wait for deck to reach trigger position
-                    time.sleep(0.5)  # give BASS time to latch
+                    cancel_ev.wait(0.5)  # give BASS time to latch
                     while not cancel_ev.is_set():
                         if not deck_handle:
                             return          # nothing to time against
@@ -180,6 +180,15 @@ class SweeperEngine:
         if state is not None:
             state["cancel"].set()
             self._free_state(state)
+
+    def shutdown(self, timeout: float = 1.0) -> None:
+        """App exit: cancel the overlay and wait for the watcher thread
+        so it can't touch BASS after bass_free()."""
+        self.cancel()
+        t = self._thread
+        if (t is not None and t.is_alive()
+                and t is not threading.current_thread()):
+            t.join(timeout)
 
     @property
     def is_playing(self):

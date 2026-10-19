@@ -202,10 +202,27 @@ def test_skip_budget_caps_broken_run(qapp, db):
 
 # ── _on_queue_song_play idles on bad file ──────────────────────────────────
 
-def test_on_queue_song_play_applies_idle_state_on_missing_file(qapp, db):
+@pytest.mark.parametrize("action, expect_alert", [
+    ("Skip and play next available song", False),
+    ("Stop playback + alert operator", True),
+])
+def test_on_queue_song_play_applies_idle_state_on_missing_file(
+        qapp, db, monkeypatch, action, expect_alert):
     """Defensive UX: a bad path slipping through to _on_queue_song_play
-    must idle the panels rather than leave a phantom now-playing tile."""
+    must idle the panels rather than leave a phantom now-playing tile.
+
+    The fallback mode is PINNED (QA ⚠12, 2026-10-18): unpinned, this test
+    inherited the operator's live 'Stop playback + alert operator' setting
+    whenever an earlier test had loaded the Settings cache, opened a real
+    modal dialogs.warning under -platform minimal, and blocked the
+    single-process suite for minutes to hours."""
+    alerts: list = []
+    from core import dialogs as _dialogs
+    monkeypatch.setattr(_dialogs, "warning",
+                        lambda _p, title, *a, **k: alerts.append(title))
     studio = _make_studio(db)
+    studio._cfg_fallback_action = action
+    studio._cfg_missing_file_alert = False
     # Fake an engine that would otherwise be real
     class _FakeEngine:
         def cleanup(self, *_): pass
@@ -218,4 +235,44 @@ def test_on_queue_song_play_applies_idle_state_on_missing_file(qapp, db):
                                  "file_path": "no_such_file.mp3"})
 
     assert studio._current_track is None
+    assert alerts == (["Track could not be played"] if expect_alert else [])
+    studio.deleteLater()
+
+
+def test_stop_mode_idles_before_the_modal_alert(qapp, db, monkeypatch):
+    """Stop + alert: the scheduler is stopped and the deck idle BEFORE the
+    modal opens. The dialog runs a nested event loop — alerting first
+    left the scheduler ticking (spot_due could fire) until the operator
+    clicked OK (2026-10-18)."""
+    seen: dict = {}
+
+    class _Sched:
+        def __init__(self):
+            self.running = True
+        def stop(self):
+            self.running = False
+        def __getattr__(self, _name):          # signals / misc no-ops
+            return _NoopSignal()
+
+    class _NoopSignal:
+        def connect(self, *_a, **_k): pass
+        def emit(self, *_a, **_k): pass
+        def __call__(self, *_a, **_k): return None
+
+    studio = _make_studio(db)
+    sched = _Sched()
+    studio._scheduler = sched
+    studio._cfg_fallback_action = "Stop playback + alert operator"
+    studio._current_track = {"id": 99, "title": "Prev"}
+
+    from core import dialogs as _dialogs
+
+    def _warning(*_a, **_k):
+        seen["scheduler_running"] = sched.running
+        seen["current_track"] = studio._current_track
+    monkeypatch.setattr(_dialogs, "warning", _warning)
+
+    studio._handle_missing_file({"id": 100, "title": "Bad"},
+                                "no_such_file.mp3")
+    assert seen == {"scheduler_running": False, "current_track": None}
     studio.deleteLater()

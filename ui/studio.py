@@ -1484,15 +1484,17 @@ class _UpComingCard(QWidget):
         tile_color, badge_color, badge_label = _TYPE_VISUAL.get(
             item_type, _TYPE_VISUAL["song"])
 
-        # AT timestamp (top-left)
-        p.setPen(QColor(TEXT_DIM)); p.setFont(self._font_at)
+        # AT timestamp (top-left). TEXT_SEC, not TEXT_DIM: #252840 on the
+        # #0e1020 card was ~1.2:1 contrast — unreadable at a glance, and
+        # operators read these times on air (QA ⚠15, 2026-10-18).
+        p.setPen(QColor(TEXT_SEC)); p.setFont(self._font_at)
         p.drawText(QRectF(12, 8, 100, 12),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                    f"AT  {self._at_text}")
 
         # DUR (top, right-of-center)
         dur_ms = int(self._song.get("duration_ms") or 0)
-        p.setPen(QColor(TEXT_DIM)); p.setFont(self._font_dur)
+        p.setPen(QColor(TEXT_SEC)); p.setFont(self._font_dur)
         p.drawText(QRectF(140, 8, 90, 12),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                    f"DUR  {_fmt_dur_short(dur_ms)}")
@@ -4712,6 +4714,14 @@ class Studio(QWidget):
             trigger_source = f"fade_out_start={fade_start_s}s"
         if position_ms < threshold_ms:
             return
+        # Next up is an ad from a clock Break slot → no overlap: the song
+        # plays to its natural end and the EOS path airs the spot. Checked
+        # here, once, as the fade is about to fire (not every poll tick).
+        if self._next_is_break_spot():
+            log.info(f"[studio] poll-fade DEFERRED cid={cid} — next is a "
+                     f"Break-slot spot, song plays to natural EOS")
+            self._fade_triggered_for_cid = cid  # latch — don't re-eval
+            return
         crossfade_ms = max(
             100, int(self._cfg_crossfade_dur_s) * 1000)
         try:
@@ -4832,11 +4842,15 @@ class Studio(QWidget):
                 return False
         if not nxt:
             return False
-        item_type = (nxt.get("item_type") or "song").strip().lower()
-        if item_type != "song":
-            # Sweepers / spots have their own dispatch semantics —
-            # don't crossfade them. EOS path handles them sequentially.
-            return False
+        # No item-type filter here, on purpose (QA ⚠24, operator
+        # 2026-10-18). The old `item_type != "song"` guard read a key the
+        # real items never carry (they use `_item_type`), so it never
+        # fired: jingles / station IDs / deck sweepers have always
+        # crossfaded IN over the song's tail, and the operator wants to
+        # keep that sound. Spots must NOT start over music; they are held
+        # BEFORE the fade by _next_is_break_spot() in both fade triggers,
+        # so they never reach this point. `nxt` is already consumed from
+        # the scheduler, so returning False here would LOSE the item.
         path = nxt.get("file_path")
         if not path or not os.path.exists(path):
             return False
@@ -4984,10 +4998,11 @@ class Studio(QWidget):
                 pass
 
         if action.startswith("stop"):
-            _alert()
-
-        if action.startswith("stop"):
-            # Stop scheduler + idle
+            # Stop scheduler + idle FIRST, alert last. dialogs.warning is
+            # modal (nested event loop): alerting first left the scheduler
+            # running — ticks and spot_due still fired — for as long as
+            # the dialog stayed open, before the Stop was applied
+            # (2026-10-18).
             if self._scheduler is not None:
                 try:
                     self._scheduler.stop()
@@ -4996,6 +5011,7 @@ class Studio(QWidget):
             self._current_track = None
             self._apply_idle_state()
             self._update_status_pills()
+            _alert()
             return
 
         if action.startswith("re-queue"):
@@ -5842,6 +5858,23 @@ class Studio(QWidget):
         """
         return bool(self._pending_sotgs or self._pending_spots)
 
+    def _next_is_break_spot(self) -> bool:
+        """True when the item that will air next is a spot from a clock
+        Break slot (non-consuming: same order as the EOS chain, via
+        _next_on_air_item). Pending grid spots / SOTGs are already held by
+        _has_pending_dispatch(); this covers ads the scheduler will hand
+        out from a Break slot, which used to crossfade in over the song
+        (QA ⚠24, operator 2026-10-18: ads never start over music).
+        Called only when a fade is about to fire — it runs a peek."""
+        try:
+            cur_id = (self._current_track or {}).get("id")
+            nxt = self._next_on_air_item(after_id=cur_id)
+        except Exception as exc:
+            log.debug(f"[studio] next-is-break-spot check failed: {exc}")
+            return False
+        return bool(nxt) and str(
+            nxt.get("_item_type") or "").strip().lower() == "spot"
+
     #: Deck item types that are NOT music. These play to their natural
     #: end — never faded early, never crossfaded out of.
     _NON_MUSIC_DECK_TYPES = frozenset({
@@ -5922,6 +5955,14 @@ class Studio(QWidget):
                 self._fade_triggered_for_cid = channel_id
                 return
             if self._automix_mode() in ("eos", "manual"):
+                self._fade_triggered_for_cid = channel_id
+                return
+            # Next up is a Break-slot ad → no overlap (operator
+            # 2026-10-18): song plays to natural EOS, then the spot.
+            if self._next_is_break_spot():
+                log.info(
+                    f"[studio] mix-point sync DEFERRED cid={channel_id} — "
+                    f"next is a Break-slot spot, song plays to natural EOS")
                 self._fade_triggered_for_cid = channel_id
                 return
             crossfade_ms = max(
@@ -6030,6 +6071,42 @@ class Studio(QWidget):
     # operator (Kavish) saw the NEXT chip show a stale title while the
     # Up Coming queue (peek_next-driven, already non-destructive) showed
     # the correct order.
+
+    def _next_on_air_item(self, after_id: Optional[int]) -> Optional[dict]:
+        """What the song-EOS chain (_on_engine_playback_ended, deck
+        branch) will REALLY air next, in the same order and without
+        consuming anything: pending SOTG → pending spot → pinned
+        post-break song (only once the break is on air — see
+        _pop_next_teased_song) → manual queue / scheduler / static
+        queue. Drives the NEXT chip; _load_upcoming_queue renders its
+        cards in the same order, so card 0 and the chip always agree
+        (QA ⚠14, 2026-10-18 — the chip and card 0 both said NEXT but
+        named different items while a tease waited for its break)."""
+        for assignment in list(self._pending_sotgs):
+            if not assignment:
+                continue
+            try:
+                card = self._pending_sotg_to_card(dict(assignment))
+            except Exception as exc:
+                log.debug(f"[studio] next-on-air sotg card: {exc}")
+                card = None
+            if card:
+                return card
+        for cid in list(self._pending_spots):
+            if not cid:
+                continue
+            try:
+                card = self._pending_spot_to_card(int(cid))
+            except Exception as exc:
+                log.debug(f"[studio] next-on-air spot card: {exc}")
+                card = None
+            if card:
+                return card
+        if not self._tease_waiting_for_break:
+            for s in list(self._teased_songs):
+                if self._teased_song_will_air(s):
+                    return dict(s)
+        return self._peek_next_for_display(after_id)
 
     def _peek_next_for_display(self,
                                after_id: Optional[int]
@@ -7320,19 +7397,29 @@ class Studio(QWidget):
             return None
         while self._teased_songs:
             s = self._teased_songs.pop(0)
-            fp = s.get("file_path")
-            if not self._song_is_airable(s):
-                continue  # deleted / disabled since it was pinned
-            if fp and os.path.exists(fp):
+            if self._teased_song_will_air(s, log_skip=True):
                 log.info(
                     f"[stitcher] playing promised post-break song "
                     f"{s.get('title')!r} ({len(self._teased_songs)} "
                     f"more pinned)")
                 return dict(s)
-            log.warning(
-                f"[stitcher] pinned song {s.get('title')!r} missing "
-                f"file — skipped")
         return None
+
+    def _teased_song_will_air(self, s: Optional[dict],
+                              log_skip: bool = False) -> bool:
+        """The one rule for whether a pinned post-break song airs:
+        still in the library, enabled, and its file on disk. Shared by
+        the EOS pop above, the NEXT chip and the Up Coming cards so the
+        display can never promise a pin that dispatch will skip."""
+        if not s or not self._song_is_airable(s):
+            return False          # deleted / disabled since it was pinned
+        fp = s.get("file_path")
+        if fp and os.path.exists(fp):
+            return True
+        if log_skip:
+            log.warning(f"[stitcher] pinned song {s.get('title')!r} "
+                        f"missing file — skipped")
+        return False
 
     def _on_scheduler_next_break_in(self, seconds: int) -> None:
         if hasattr(self, "_next_break") and self._next_break is not None:
@@ -7453,7 +7540,7 @@ class Studio(QWidget):
         # display refresh advanced the scheduler cursor, eating slots
         # before they could be dispatched. See _peek_next_for_display.
         if hasattr(self, "_next_chip"):
-            head = self._peek_next_for_display(after_id=None)
+            head = self._next_on_air_item(after_id=None)
             if head is not None:
                 self._next_chip.set_next(
                     str(head.get("title") or "—"),
@@ -7504,7 +7591,7 @@ class Studio(QWidget):
         # a scheduler slot per song-start (audit 2026-05-07), so the
         # NEXT chip drifted out of sync with the Up Coming queue.
         if hasattr(self, "_next_chip"):
-            nxt = self._peek_next_for_display(after_id=song.get("id"))
+            nxt = self._next_on_air_item(after_id=song.get("id"))
             if nxt is not None:
                 self._next_chip.set_next(
                     str(nxt.get("title") or "—"),
@@ -8298,14 +8385,22 @@ class Studio(QWidget):
 
         # 4.5 Pinned post-break songs (break tease). Shown right after
         # the break block so the operator sees EXACTLY what the tease
-        # promised, in order.
+        # promised, in order. While the break they were promised for has
+        # NOT started (_tease_waiting_for_break), they don't air next —
+        # _pop_next_teased_song returns None and the queue keeps playing
+        # — so they go to the END of the list instead of taking card 0's
+        # NEXT glow (QA ⚠14, 2026-10-18). Same order as _next_on_air_item.
         teased_ids: set = set()
+        teased_cards: list[dict] = []
         for s in list(self._teased_songs):
             try:
                 teased_ids.add(int(s.get("id") or 0))
-                translated.append({
+                if not self._teased_song_will_air(s):
+                    continue      # dispatch will skip it — don't promise it
+                teased_cards.append({
                     "_item_type":  "song",
                     "_teased":     True,
+                    "_after_break": bool(self._tease_waiting_for_break),
                     "id":          s.get("id"),
                     "title":       s.get("title") or "—",
                     "artist":      s.get("artist") or "",
@@ -8314,6 +8409,9 @@ class Studio(QWidget):
                 })
             except Exception as exc:
                 log.warning(f"[studio] teased card render failed: {exc}")
+        if not self._tease_waiting_for_break:
+            translated.extend(teased_cards)
+            teased_cards = []
 
         # 4.6 Operator's manual queue (Libraries ADD/INSERT/REPLACE) —
         # airs right after the promised post-break songs, before the
@@ -8392,6 +8490,9 @@ class Studio(QWidget):
                 })
                 if len(translated) >= 8:
                     break
+
+        # Pinned songs still waiting for their break air after it.
+        translated.extend(teased_cards)
 
         # Final None-guard (2026-07-05): no malformed/None card ever
         # reaches the panel render — a bad dict here is the kind of
@@ -8811,8 +8912,16 @@ class Studio(QWidget):
         if self._upcoming_preview:
             # Scheduler-driven path — peek_next already excludes
             # everything before the cursor, so the list is naturally
-            # "next 5 to dispatch." Index 0 → NEXT rose glow.
-            self._upcoming.set_queue(self._upcoming_preview, next_index=0)
+            # "next 5 to dispatch." The NEXT rose glow goes to the first
+            # card that WILL air next — not a T-60s preview (not due
+            # yet) and not a post-break pin still waiting for its break
+            # — so the glowing card is the NEXT chip's item (QA ⚠14).
+            next_idx = next(
+                (i for i, c in enumerate(self._upcoming_preview)
+                 if not c.get("_preview") and not c.get("_after_break")),
+                -1)
+            self._upcoming.set_queue(self._upcoming_preview,
+                                     next_index=next_idx)
         else:
             # Legacy fallback: filter _queue_songs to exclude already-
             # played songs (which includes the currently-playing one,

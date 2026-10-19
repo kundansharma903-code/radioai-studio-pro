@@ -361,8 +361,10 @@ def test_crossfade_overlap_starts_next_song(
     s, eng, sch = studio
     # Real file on disk so os.path.exists passes
     fake = tmp_path / "next.mp3"; fake.write_bytes(b"x")
+    # Real _compute_next_song shape: the type travels as `_item_type`
+    # (the old hand-built "item_type" key hid QA ⚠24).
     next_song = {"id": 99, "title": "Next", "file_path": str(fake),
-                 "duration_ms": 30_000, "item_type": "song"}
+                 "duration_ms": 30_000, "_item_type": "song"}
     s._compute_next_song = lambda after_id=None: next_song
     s._playback_cid = 11
     s._playback_kind = "deck"

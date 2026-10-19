@@ -4311,6 +4311,37 @@ class Database:
             [str(since_iso)]).fetchone()
         return float(row["ms"] or 0) / 1000.0
 
+    def get_spot_plays_between(self, start_iso: str,
+                               end_iso: str) -> List[tuple]:
+        """(campaign_id, played_at) of every spot that aired in
+        [start_iso, end_iso), oldest first. Both bounds are LOCAL
+        'YYYY-MM-DD HH:MM:SS' strings, the format played_at is stored in
+        (datetime('now','localtime')), so plain string comparison is
+        chronological. After a restart the scheduler rebuilds its
+        "already aired today" break set from these (QA ⚠23)."""
+        rows = self._conn().execute(
+            "SELECT campaign_id, played_at FROM broadcast_log "
+            "WHERE entry_type = 'spot' AND campaign_id IS NOT NULL "
+            "AND played_at >= ? AND played_at < ? "
+            "ORDER BY played_at, id",
+            [str(start_iso), str(end_iso)]).fetchall()
+        return [(int(r["campaign_id"]), str(r["played_at"])) for r in rows]
+
+    def get_last_clock_slot_play(self, clock_id: int,
+                                 since_iso: str) -> Optional[int]:
+        """slot_idx of the newest scheduler-dispatched play
+        (was_manual = 0) from ``clock_id`` at/after ``since_iso``, a LOCAL
+        'YYYY-MM-DD HH:MM:SS' string, or None. Used to resume the clock
+        where it left off after a restart instead of at slot 0
+        (QA ⚠20: Final Log is king)."""
+        row = self._conn().execute(
+            "SELECT slot_idx FROM broadcast_log "
+            "WHERE clock_id = ? AND slot_idx IS NOT NULL "
+            "AND was_manual = 0 AND played_at >= ? "
+            "ORDER BY played_at DESC, id DESC LIMIT 1",
+            [int(clock_id), str(since_iso)]).fetchone()
+        return int(row["slot_idx"]) if row else None
+
     def get_campaign_spot_duration_ms(self, campaign_id: int) -> int:
         """Duration of the campaign's first playable spot file — what
         the dispatcher will actually air (budget estimation)."""

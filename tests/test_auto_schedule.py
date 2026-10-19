@@ -318,13 +318,35 @@ def test_clear_button_wipes_db(screen):
     """Clear button → db.clear_all_auto_schedule. Asserts *our* row is
     removed; we don't care if other rows are gone too (live DB)."""
     s, env = screen
-    cid = env.make_clock("clear")
-    env.db.set_auto_schedule_cell(0, 5, cid)
-    assert (0, 5) in env.db.get_auto_schedule_grid()
-    # Bypass the QMessageBox confirm by calling the underlying db method —
-    # the dialog is exercised manually; this test verifies wiring only.
-    env.db.clear_all_auto_schedule()
-    assert (0, 5) not in env.db.get_auto_schedule_grid()
+    # clear_all_auto_schedule wipes BOTH auto_schedule and
+    # auto_grid_cells for the whole session DB copy. Snapshot full rows
+    # first and restore in finally — without this every later test in
+    # the same process saw an empty weekly grid (QA ⚠11, 2026-10-17).
+    conn = env.db._conn()
+    env.db._ensure_auto_grid_tables()
+    saved = {}
+    for table in ("auto_schedule", "auto_grid_cells"):
+        cur = conn.execute(f"SELECT * FROM {table}")
+        saved[table] = ([d[0] for d in cur.description],
+                        [tuple(r) for r in cur.fetchall()])
+    try:
+        cid = env.make_clock("clear")
+        env.db.set_auto_schedule_cell(0, 5, cid)
+        assert (0, 5) in env.db.get_auto_schedule_grid()
+        # Bypass the QMessageBox confirm by calling the underlying db
+        # method — the dialog is exercised manually; this test verifies
+        # wiring only.
+        env.db.clear_all_auto_schedule()
+        assert (0, 5) not in env.db.get_auto_schedule_grid()
+    finally:
+        conn.execute("BEGIN")
+        for table, (cols, rows) in saved.items():
+            conn.execute(f"DELETE FROM {table}")
+            if rows:
+                conn.executemany(
+                    f"INSERT INTO {table} ({', '.join(cols)}) VALUES "
+                    f"({', '.join('?' * len(cols))})", rows)
+        conn.commit()
 
 
 def test_duplicate_clock_creates_clone(screen):
