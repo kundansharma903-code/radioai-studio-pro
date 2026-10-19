@@ -166,6 +166,11 @@ class MainWindow(QMainWindow):
         _app = QCoreApplication.instance()
         if _app is not None:
             _app.aboutToQuit.connect(self._on_about_to_quit)
+            # Windows shutdown / logoff: Qt asks the session to commit
+            # before closing windows — the on-air close prompt must not
+            # block that (QA ⚠28).
+            if hasattr(_app, "commitDataRequest"):
+                _app.commitDataRequest.connect(self._on_session_ending)
 
         # Adaptive sizing: never exceed 95% × 92% of available screen.
         # On a 1920×1080 we get the full 1440×900 design. On a 1366×768
@@ -1622,9 +1627,45 @@ class MainWindow(QMainWindow):
                 pass
         log.info(f"Station branding refreshed → {new_text!r}")
 
+    def _station_is_on_air(self) -> bool:
+        """A deck is playing, or AUTO (the scheduler) is running: closing
+        would take the station silent. (Studio's _auto_advance_enabled is
+        True by default even when idle, so it is not used here.)"""
+        st = getattr(self, "studio", None)
+        if st is not None and getattr(st, "_playback_cid", None) is not None:
+            return True
+        sch = getattr(self, "_scheduler", None)
+        try:
+            return bool(sch is not None and sch.is_running())
+        except Exception:
+            return False
+
+    def _on_session_ending(self, *_a) -> None:
+        """Windows is shutting down / logging off: close without asking
+        (a blocking prompt would hold up the OS shutdown)."""
+        self._session_ending = True
+
     def closeEvent(self, event):
         """Primary cleanup path — fires when the user closes the window
-        via the title-bar X or via app.quit() during normal operation."""
+        via the title-bar X or via app.quit() during normal operation.
+
+        While the station is on air the operator must confirm first
+        (QA ⚠28, operator 2026-10-19): a stray X or WM_CLOSE used to take
+        the station silent instantly. Enter / Esc keep it on air. Skipped
+        during Windows shutdown/logoff and once cleanup has started."""
+        if (self._station_is_on_air()
+                and not getattr(self, "_session_ending", False)
+                and not getattr(self, "_shutting_down", False)):
+            if not dialogs.confirm(
+                    self, "Station is on air",
+                    "A track is playing or AUTO is on. Closing RadioAI "
+                    "stops the broadcast.\n\nStop the broadcast and exit?",
+                    danger=True, yes_label="Stop Broadcast && Exit",
+                    no_label="Keep On Air", default_no=True):
+                log.info("Close cancelled by operator — station stays on air")
+                event.ignore()
+                return
+            log.info("Close confirmed by operator while on air")
         log.info("MainWindow closing")
         self._cleanup_engine()
         super().closeEvent(event)

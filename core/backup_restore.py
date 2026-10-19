@@ -28,15 +28,30 @@ crash the broadcast app.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
 import shutil
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
 log = logging.getLogger("BackupRestore")
+
+# A staged restore is applied at boot only if it was staged this recently
+# AND the staged file still matches the size + SHA256 recorded when it
+# was staged (QA ⚠29, operator 2026-10-19). A months-old leftover marker
+# once silently replaced the live DB on boot. The operator restarts within
+# minutes of staging; anything older is refused and offered on screen.
+RESTORE_MAX_AGE_H = 24
+_TS = "%Y-%m-%d %H:%M:%S"
+
+# What the boot step did, for the post-launch notice (main.py):
+# {"status": "none" | "applied" | "refused", "reason", "staged_at",
+#  "source", "safety_copy"}.
+LAST_RESTORE: dict = {"status": "none"}
 
 # Tables whose presence proves a file is a genuine RadioAI database
 # (guards Restore against the operator picking a random .db).
@@ -255,8 +270,7 @@ def stage_restore(src_file) -> bool:
     try:
         staging = _staging_path()
         shutil.copy2(str(src_file), str(staging))
-        with open(_marker_path(), "w", encoding="utf-8") as f:
-            f.write(f"{datetime.now():%Y-%m-%d %H:%M:%S}\n{src_file}\n")
+        _write_marker(staging, str(src_file))
         log.info(f"[restore] staged {src_file} — applies on next launch")
         return True
     except Exception as exc:
@@ -265,8 +279,107 @@ def stage_restore(src_file) -> bool:
         return False
 
 
+def _sha256(path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _write_marker(staging: Path, source: str,
+                  when: Optional[datetime] = None) -> None:
+    """Marker v2: what was staged, when, and the staged file's identity."""
+    marker = {
+        "v": 2,
+        "staged_at": (when or datetime.now()).strftime(_TS),
+        "source": source,
+        "size": staging.stat().st_size,
+        "sha256": _sha256(staging),
+    }
+    with open(_marker_path(), "w", encoding="utf-8") as f:
+        json.dump(marker, f)
+
+
+def _read_marker() -> Optional[dict]:
+    """The v2 marker, or None for a missing / unreadable / legacy one
+    (legacy markers were plain 'time\\nsource' text, written before the
+    QA ⚠29 check existed — they are treated as stale)."""
+    try:
+        with open(_marker_path(), encoding="utf-8") as f:
+            m = json.load(f)
+        return m if isinstance(m, dict) and m.get("v") == 2 else None
+    except Exception:
+        return None
+
+
+def _refuse_reason(staging: Path, marker: Optional[dict],
+                   now: datetime, max_age_h: float) -> Optional[str]:
+    """Why this staged restore must NOT be applied silently, or None."""
+    if marker is None:
+        return "its marker is from an older version or unreadable"
+    try:
+        staged_at = datetime.strptime(str(marker.get("staged_at")), _TS)
+    except (TypeError, ValueError):
+        return "its marker has no valid staging time"
+    age = now - staged_at
+    if age > timedelta(hours=max_age_h):
+        return (f"it was staged {staged_at:%Y-%m-%d %H:%M}, more than "
+                f"{max_age_h:g} h ago")
+    if age < timedelta(minutes=-5):
+        return f"its staging time {staged_at:%Y-%m-%d %H:%M} is in the future"
+    try:
+        if (staging.stat().st_size != int(marker.get("size") or -1)
+                or _sha256(staging) != marker.get("sha256")):
+            return "the staged file does not match what was staged"
+    except Exception as exc:
+        return f"the staged file could not be checked ({exc})"
+    return None
+
+
 def has_pending_restore() -> bool:
     return _marker_path().exists() and _staging_path().exists()
+
+
+def pending_restore_info() -> dict:
+    """{staged_at, source} of the pending restore (best effort)."""
+    m = _read_marker() or {}
+    if not m:
+        try:
+            lines = _marker_path().read_text(encoding="utf-8").splitlines()
+            m = {"staged_at": lines[0] if lines else "",
+                 "source": lines[1] if len(lines) > 1 else ""}
+        except Exception:
+            m = {}
+    return {"staged_at": str(m.get("staged_at") or "unknown time"),
+            "source": str(m.get("source") or "unknown source")}
+
+
+def approve_pending_restore() -> bool:
+    """Operator chose "Apply on Next Restart" for a refused restore:
+    re-stamp the marker for NOW with the staged file's current identity,
+    so the next boot applies it."""
+    staging = _staging_path()
+    if not staging.exists() or not is_valid_radioai_db(staging):
+        return False
+    _write_marker(staging, pending_restore_info()["source"])
+    log.warning("[restore] operator approved the pending restore — "
+                "applies on next launch")
+    return True
+
+
+def discard_pending_restore() -> None:
+    """Operator chose "Don't Apply": set the staged file and marker aside
+    (renamed, never deleted — nothing is lost) so it stops coming back."""
+    stamp = f"{datetime.now():%Y%m%d_%H%M%S}"
+    for p in (_staging_path(), _marker_path()):
+        try:
+            if p.exists():
+                p.rename(p.with_name(p.name + f".discarded_{stamp}"))
+        except Exception as exc:
+            log.warning(f"[restore] could not set aside {p.name}: {exc}")
+    log.warning("[restore] operator declined the pending restore — "
+                "set aside, live database unchanged")
 
 
 def _clear_staging() -> None:
@@ -278,19 +391,37 @@ def _clear_staging() -> None:
             pass
 
 
-def apply_staged_restore() -> bool:
+def apply_staged_restore(now: Optional[datetime] = None,
+                         max_age_h: float = RESTORE_MAX_AGE_H) -> bool:
     """BOOT hook — call BEFORE opening any DB connection. If a valid
     staged restore is pending, replace radioai.db with it, remove the
     stale WAL/SHM, and clear the staging slot. Returns True when a
-    restore was applied. Safe: operates only on closed files."""
+    restore was applied. Safe: operates only on closed files.
+
+    Applied ONLY when the marker is current-format, at most ``max_age_h``
+    old, and the staged file still matches its recorded size + SHA256
+    (QA ⚠29). Otherwise nothing is replaced, the staged files are KEPT,
+    and LAST_RESTORE tells the post-launch notice to ask the operator."""
+    LAST_RESTORE.clear()
+    LAST_RESTORE["status"] = "none"
     if not has_pending_restore():
         return False
     staging = _staging_path()
+    info = pending_restore_info()
     if not is_valid_radioai_db(staging):
         log.warning("[restore] staged file invalid — discarding")
         _clear_staging()
         return False
+    reason = _refuse_reason(staging, _read_marker(), now or datetime.now(),
+                            max_age_h)
+    if reason:
+        LAST_RESTORE.update(status="refused", reason=reason, **info)
+        log.warning(f"[restore] NOT applied — {reason} "
+                    f"(staged {info['staged_at']} from {info['source']}); "
+                    f"live database unchanged, staged file kept")
+        return False
     db = _db_path()
+    pre = None
     try:
         db.parent.mkdir(parents=True, exist_ok=True)
         # Keep the pre-restore DB as a safety copy (never silently lose
@@ -338,8 +469,12 @@ def apply_staged_restore() -> bool:
                 except Exception:
                     pass
         shutil.copy2(str(staging), str(db))
-        log.info("[restore] staged backup applied — station data "
-                 "restored")
+        LAST_RESTORE.update(status="applied", reason="", **info,
+                            safety_copy=str(pre) if pre else "")
+        log.warning(f"[restore] APPLIED — database replaced with the "
+                    f"backup from {info['source']} (staged "
+                    f"{info['staged_at']}); previous database kept as "
+                    f"{pre}")
         _clear_staging()
         return True
     except Exception as exc:

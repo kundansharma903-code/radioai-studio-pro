@@ -613,6 +613,18 @@ def main():
     # Fade out the splash + transfer focus to the main window
     splash.finish_animated(window)
 
+    # Station Restore outcome (QA ⚠29): never silent. Shown once the
+    # window is up (after the splash), never blocking boot itself.
+    try:
+        from core.backup_restore import LAST_RESTORE
+        if LAST_RESTORE.get("status") in ("applied", "refused"):
+            from PyQt6.QtCore import QTimer as _QTimer
+            from ui.restore_notice import show_restore_notice
+            _QTimer.singleShot(
+                2500, lambda: show_restore_notice(window, dict(LAST_RESTORE)))
+    except Exception as exc:
+        log.warning(f"[boot] restore notice skipped: {exc}")
+
     # Single-instance: when a second copy is launched, it connects to
     # our QLocalServer and we bring THIS window to the front.
     def _on_second_instance_ping():

@@ -184,6 +184,18 @@ class SchedulerEngine(QObject):
         # Clock the cursor indexes into — reset the cursor when the
         # resolved clock changes (force override / grid edit).
         self._cursor_clock_id: Optional[int] = None
+        # One random choice per cursor position (QA ⚠26, 2026-10-19).
+        # Pickers use random.choice, so the NEXT chip's peek, the Up
+        # Coming peek and the real EOS pick each rolled their own item:
+        # the chip said Jingle _Retro02, the card _Retro01, and either
+        # could air. Each successful real pick advances _pick_serial
+        # (peek_next simulates more picks, then restores it), and the
+        # item a slot resolved to at a given serial is reused for that
+        # same position. Key: (hour_key, clock_id, slot_idx, serial).
+        # Break / spot slots are never memoised (time-based, fired-set).
+        self._pick_serial: int = 0
+        self._pick_memo: dict = {}
+        self._pick_memo_lock = threading.Lock()
 
         # Active-clock tracking (Studio header indicator).
         # `_active_clock_id is None` means "no tick has resolved yet" —
@@ -937,17 +949,38 @@ class SchedulerEngine(QObject):
             if picker is None:
                 continue
 
-            try:
-                # _pick_break also takes `now`; others ignore it.
-                if stype in ("break", "spot"):
-                    item = picker(slot, now)
-                else:
-                    item = picker(slot)
-            except Exception as exc:
-                log.warning(f"pick_next_item: picker {stype} failed: {exc}")
-                item = None
+            memo_key = (hour_key, clock_id, idx, self._pick_serial)
+            with self._pick_memo_lock:
+                memo = self._pick_memo.get(memo_key)
+            simulating = getattr(self._peek_local, "fired", None) is not None
+            if (memo is not None and not simulating
+                    and not self._memo_still_airable(memo[0], memo[1])):
+                # Real pick: the remembered choice no longer passes the
+                # air-time rules → drop it and pick live (QA ⚠26 gap).
+                with self._pick_memo_lock:
+                    self._pick_memo.pop(memo_key, None)
+                memo = None
+            if memo is not None:
+                item = dict(memo[0])     # same choice the preview showed
+            else:
+                try:
+                    # _pick_break also takes `now`; others ignore it.
+                    if stype in ("break", "spot"):
+                        item = picker(slot, now)
+                    else:
+                        item = picker(slot)
+                except Exception as exc:
+                    log.warning(
+                        f"pick_next_item: picker {stype} failed: {exc}")
+                    item = None
+                if item is not None and stype not in ("break", "spot"):
+                    with self._pick_memo_lock:
+                        self._pick_memo[memo_key] = (
+                            dict(item),
+                            datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
             if item is None:
                 continue
+            self._advance_pick_serial()
             self._clock_slot_cursor = (idx + 1) % n
             item["clock_id"] = clock_id
             item["slot_idx"] = idx
@@ -967,6 +1000,53 @@ class SchedulerEngine(QObject):
                         f"queue_changed emit (advance) failed: {exc}")
             return item
         return None
+
+    def _memo_still_airable(self, item: dict, memo_at: str) -> bool:
+        """Re-check a remembered choice at REAL pick time (QA ⚠26 gap):
+        the preview chose it earlier, but air-time rules are evaluated
+        now. Any element: its file must still exist. Songs also: still in
+        the library and enabled, and neither the song nor its artist has
+        aired since it was remembered (a manual play, or another path
+        airing that artist, would otherwise break the separation rules).
+        ``memo_at`` is LOCAL 'YYYY-MM-DD HH:MM:SS' like played_at. Any
+        lookup error → not airable (pick live instead)."""
+        try:
+            fp = item.get("file_path")
+            if not fp or not os.path.exists(fp):
+                return False
+            if (item.get("item_type") or "song").strip().lower() != "song":
+                return True
+            sid = int(item.get("item_id") or 0)
+            row = self._db.get_song(sid) if sid > 0 else None
+            if row is None:
+                return False
+            keys = row.keys()
+            if "is_enabled" in keys and not int(row["is_enabled"] or 0):
+                return False
+            last = self._db.get_song_last_played_at(sid)
+            if last and str(last) >= memo_at:
+                return False
+            artist = row["artist"] if "artist" in keys else None
+            last_a = self._db.get_artist_last_played_at(artist)
+            if last_a and str(last_a) >= memo_at:
+                return False
+            return True
+        except Exception as exc:
+            log.debug(f"memo re-validation failed, picking live: {exc}")
+            return False
+
+    def _advance_pick_serial(self) -> None:
+        """One position consumed. In a real pick (not a peek_next
+        simulation) memo entries for positions now in the past are
+        dropped, so the memo stays small and an old choice can never
+        come back."""
+        self._pick_serial += 1
+        if getattr(self._peek_local, "fired", None) is not None:
+            return                           # simulation: restored later
+        with self._pick_memo_lock:
+            for k in [k for k in self._pick_memo
+                      if k[3] < self._pick_serial]:
+                del self._pick_memo[k]
 
     def _apply_category_air_time(self, slots, clock_id: int,
                                  now: datetime) -> list:
@@ -1099,6 +1179,7 @@ class SchedulerEngine(QObject):
         saved_cursor = self._clock_slot_cursor
         saved_hour_key = self._active_hour_key
         saved_cursor_clock = getattr(self, "_cursor_clock_id", None)
+        saved_serial = self._pick_serial
         saved_sim_fired = getattr(self._peek_local, "fired", None)
         # Restore already-aired breaks first so the preview can't show a
         # spot that went out before a restart (QA ⚠23).
@@ -1141,6 +1222,7 @@ class SchedulerEngine(QObject):
             self._clock_slot_cursor = saved_cursor
             self._active_hour_key = saved_hour_key
             self._cursor_clock_id = saved_cursor_clock
+            self._pick_serial = saved_serial
             self._peek_local.fired = saved_sim_fired
             self._suppress_queue_emit = saved_suppress
         return out
@@ -1229,6 +1311,11 @@ class SchedulerEngine(QObject):
         self._rot_dec_cache_key = None
         self._rot_dec_cache_at = 0.0
         self._air_time_at = -1e9
+        # Remembered per-position choices (QA ⚠26) were made against the
+        # old data — a deleted song / edited clock / moved category must
+        # never air from the memo.
+        with self._pick_memo_lock:
+            self._pick_memo.clear()
         # Up Coming must re-peek even if nothing else ticks it.
         self._queue_dirty = True
 

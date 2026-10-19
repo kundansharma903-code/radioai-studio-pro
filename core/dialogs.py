@@ -431,11 +431,13 @@ def confirm(parent: Optional[QWidget],
             *,
             danger: bool = False,
             yes_label: str = "Yes",
-            no_label: str = "Cancel") -> bool:
+            no_label: str = "Cancel",
+            default_no: bool = False) -> bool:
     """Modal Yes/No confirm. Returns True if user clicked the primary
     button, False on Cancel or Esc. Pass ``danger=True`` for
     destructive actions (Delete, Discard) — primary button switches
-    to red.
+    to red. ``default_no=True`` puts Enter on the Cancel button, so a
+    stray Enter can't trigger the destructive action.
 
     Replaces ``QMessageBox.question(...)``."""
     accent = RED if danger else CYAN
@@ -451,7 +453,7 @@ def confirm(parent: Optional[QWidget],
             (yes_label, role),
             (no_label, "secondary"),
         ],
-        default_btn_idx=0,
+        default_btn_idx=1 if default_no else 0,
         cancel_btn_idx=1)
     dlg.exec()
     return dlg._clicked_idx == 0

@@ -1666,7 +1666,7 @@ class _UpComingQueue(QWidget):
             c.set_selected(False)
 
     def set_queue(self, songs: list[dict], current_id: Optional[int] = None,
-                  next_index: int = 1) -> None:
+                  next_index: int = 1, start_offset_s: int = 0) -> None:
         """Populate cards. AT timestamps cumulative from now. The card
         at ``next_index`` is rendered as NEXT (rose glow + NEXT pill).
 
@@ -1688,7 +1688,9 @@ class _UpComingQueue(QWidget):
                 prev_sel_id = prev.get("id")
                 prev_sel_type = prev.get("_item_type")
 
-        cum_s = 0
+        # AT of the first card = when it really takes the air (the on-air
+        # track's remaining time to its transition), not "now" (QA ⚠27).
+        cum_s = max(0, int(start_offset_s or 0))
         for i, card in enumerate(self._cards):
             if i < len(songs):
                 song = songs[i]
@@ -5430,6 +5432,8 @@ class Studio(QWidget):
     def _on_engine_position(self, channel_id: int, position_ms: int) -> None:
         if channel_id != self._playback_cid:
             return
+        # Up Coming AT times / projected air time read this (QA ⚠27).
+        self._last_position_ms = int(position_ms or 0)
         # Step 2: drive NowPlayer waveform + elapsed/total + REMAINING
         if hasattr(self, "_now_player") and self._now_player is not None:
             self._now_player.set_progress(position_ms,
@@ -5858,6 +5862,49 @@ class Studio(QWidget):
         """
         return bool(self._pending_sotgs or self._pending_spots)
 
+    def _ms_until_next_starts(self) -> int:
+        """Milliseconds until the NEXT item takes the air (QA ⚠27,
+        2026-10-19). Up Coming used "now" as the first card's AT and
+        peeked the clock for "now", so with 3:29 left on the song the
+        NEXT card showed the current wall clock, and at :59 it previewed
+        the old hour's jingle while the new hour's clock aired.
+
+        Song on the deck with an automatic crossfade → the transition is
+        the mix point (or duration - fade_out_start), the same threshold
+        _maybe_trigger_fade_out uses. Anything that plays to its natural
+        end (spot, jingle/sweeper/ID, pending dispatch, End-of-song or
+        Manual automix) → the end of the track. Idle → 0."""
+        if self._playback_cid is None or not self._playback_kind:
+            return 0
+        dur = int(self._current_duration_ms or 0)
+        if dur <= 0:
+            return 0
+        pos = int(getattr(self, "_last_position_ms", 0) or 0)
+        end = dur
+        mode = self._automix_mode()
+        if (self._playback_kind == "deck"
+                and not self._is_non_music_deck_item()
+                and not self._has_pending_dispatch()
+                and mode not in ("eos", "manual")):
+            try:
+                mp = int((self._current_track or {}).get("mix_point_ms")
+                         or 0)
+            except (TypeError, ValueError):
+                mp = 0
+            if mode == "fade_start":
+                mp = 0
+            if 0 < mp < dur:
+                end = mp
+            elif int(self._cfg_fade_out_start_s or 0) > 0:
+                end = dur - int(self._cfg_fade_out_start_s) * 1000
+        return max(0, end - pos)
+
+    def _projected_next_air_time(self) -> datetime:
+        """Wall-clock time the next item will start; previews resolve the
+        clock / hour for this moment so they match what will air."""
+        from datetime import timedelta as _td
+        return datetime.now() + _td(milliseconds=self._ms_until_next_starts())
+
     def _next_is_break_spot(self) -> bool:
         """True when the item that will air next is a spot from a clock
         Break slot (non-consuming: same order as the EOS chain, via
@@ -6130,7 +6177,8 @@ class Studio(QWidget):
         # any overlay-style sweepers (they'd be eaten by the overlay
         # path during real dispatch, not loaded to the deck).
         try:
-            items = self._scheduler.peek_next(5) or []
+            items = self._scheduler.peek_next(
+                5, now=self._projected_next_air_time()) or []
         except Exception as exc:
             log.debug(f"[studio] peek_next for NEXT-chip failed: {exc}")
             items = []
@@ -7568,6 +7616,7 @@ class Studio(QWidget):
                 self._rds.set_on_air("—", "")
 
     def _apply_playing_state(self, song: dict) -> None:
+        self._last_position_ms = 0       # new track: position restarts
         # Studio no longer emits the scheduler's song_auto_advance here
         # (QA 2026-10-17): a screen must not fire another object's
         # signal, and the Up Coming refresh it triggered already runs
@@ -8431,7 +8480,10 @@ class Studio(QWidget):
         # scheduler peek from ever being reached.
         if self._scheduler is not None:
             try:
-                items = self._scheduler.peek_next(5)
+                # Peek at the moment the next item really airs, so a
+                # preview near :59 shows the NEW hour's clock (QA ⚠27).
+                items = self._scheduler.peek_next(
+                    5, now=self._projected_next_air_time())
             except Exception as exc:
                 # Full traceback — the overnight 2026-07-04 01:28
                 # "'NoneType' object does not support item assignment"
@@ -8920,8 +8972,9 @@ class Studio(QWidget):
                 (i for i, c in enumerate(self._upcoming_preview)
                  if not c.get("_preview") and not c.get("_after_break")),
                 -1)
-            self._upcoming.set_queue(self._upcoming_preview,
-                                     next_index=next_idx)
+            self._upcoming.set_queue(
+                self._upcoming_preview, next_index=next_idx,
+                start_offset_s=self._ms_until_next_starts() // 1000)
         else:
             # Legacy fallback: filter _queue_songs to exclude already-
             # played songs (which includes the currently-playing one,
@@ -8932,7 +8985,9 @@ class Studio(QWidget):
                 s for s in self._queue_songs
                 if int(s.get("id") or 0) not in self._played_song_ids
             ]
-            self._upcoming.set_queue(unplayed[:5], next_index=0)
+            self._upcoming.set_queue(
+                unplayed[:5], next_index=0,
+                start_offset_s=self._ms_until_next_starts() // 1000)
 
     def _on_jingle_demo_tick(self) -> None:
         """10Hz countdown — decrement remaining; stop at 0 (we still
