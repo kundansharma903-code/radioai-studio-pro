@@ -1497,7 +1497,8 @@ class _UpComingCard(QWidget):
         p.setPen(QColor(TEXT_SEC)); p.setFont(self._font_dur)
         p.drawText(QRectF(140, 8, 90, 12),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                   f"DUR  {_fmt_dur_short(dur_ms)}")
+                   "OVER NEXT" if self._song.get("_overlay")   # QA ⚠30
+                   else f"DUR  {_fmt_dur_short(dur_ms)}")
 
         # INTRO badge or NEXT pill (top-right)
         if self._is_next:
@@ -1697,7 +1698,10 @@ class _UpComingQueue(QWidget):
                 at_text = _fmt_at_clock(cum_s)
                 card.set_song(song, is_next=(i == next_index),
                               at_text=at_text)
-                cum_s += int(song.get("duration_ms", 0) or 0) // 1000
+                # An overlay sweeper plays OVER the next song — it starts
+                # together with it and takes no air time of its own (⚠30).
+                if not song.get("_overlay"):
+                    cum_s += int(song.get("duration_ms", 0) or 0) // 1000
             else:
                 card.set_song(None)
                 card.set_selected(False)
@@ -5882,10 +5886,7 @@ class Studio(QWidget):
         pos = int(getattr(self, "_last_position_ms", 0) or 0)
         end = dur
         mode = self._automix_mode()
-        if (self._playback_kind == "deck"
-                and not self._is_non_music_deck_item()
-                and not self._has_pending_dispatch()
-                and mode not in ("eos", "manual")):
+        if self._next_transition_is_crossfade():
             try:
                 mp = int((self._current_track or {}).get("mix_point_ms")
                          or 0)
@@ -5898,6 +5899,38 @@ class Studio(QWidget):
             elif int(self._cfg_fade_out_start_s or 0) > 0:
                 end = dur - int(self._cfg_fade_out_start_s) * 1000
         return max(0, end - pos)
+
+    #: Sweeper positions that layer OVER a song instead of taking a turn.
+    _OVERLAY_SWEEPER_POSITIONS = ("Start of Song", "Before Intro",
+                                  "Before End", "Bridge at End",
+                                  "Custom Position", "Custom")
+
+    def _next_transition_is_crossfade(self) -> bool:
+        """True when the on-air track hands over by crossfade, i.e. the
+        next item is picked while a SONG is still on the deck. That is
+        also exactly when a Start-of-Song-type sweeper plays as an overlay
+        (the dispatch in _compute_next_song needs a playing deck). After a
+        jingle / spot / pending dispatch, or with End-of-song / Manual
+        automix, the next pick happens at EOS on an idle deck and a
+        sweeper plays on its own (QA ⚠30)."""
+        return (self._playback_cid is not None
+                and self._playback_kind == "deck"
+                and not self._is_non_music_deck_item()
+                and not self._has_pending_dispatch()
+                and self._automix_mode() not in ("eos", "manual"))
+
+    def _sweeper_plays_as_overlay(self, item: dict,
+                                  after_song: bool) -> bool:
+        """Will this scheduler item play OVER the next song rather than
+        on the deck? ``after_song``: the item before it is a song that
+        hands over by crossfade. One rule for the NEXT chip, the Up
+        Coming cards and their AT times (QA ⚠30)."""
+        t = (item.get("item_type") or item.get("_item_type")
+             or "").strip().lower()
+        return (t == "sweeper" and after_song
+                and self._sweeper_engine is not None
+                and (item.get("position") or "").strip()
+                in self._OVERLAY_SWEEPER_POSITIONS)
 
     def _projected_next_air_time(self) -> datetime:
         """Wall-clock time the next item will start; previews resolve the
@@ -6183,22 +6216,18 @@ class Studio(QWidget):
             log.debug(f"[studio] peek_next for NEXT-chip failed: {exc}")
             items = []
 
-        overlay_positions = ("Start of Song", "Before Intro",
-                              "Before End", "Bridge at End",
-                              "Custom Position", "Custom")
-        deck_has_song = (self._sweeper_engine is not None
-                         and self._playback_cid is not None
-                         and self._current_track)
+        # A Start-of-Song-type sweeper overlays only when the next pick
+        # happens by crossfade from a SONG; after a jingle/spot (EOS on an
+        # idle deck) it plays on its own and IS the next item (QA ⚠30 —
+        # this used to check only that some track was on the deck).
+        after_song = self._next_transition_is_crossfade()
 
         for item in items:
             item_type = (item.get("item_type") or "song").strip().lower()
             if self._is_scheduler_skipped(item_type, item.get("item_id")):
                 continue          # operator removed it — won't air
-            if item_type == "sweeper":
-                position = (item.get("position") or "").strip()
-                if deck_has_song and position in overlay_positions:
-                    # Would overlay during real dispatch → skip in preview
-                    continue
+            if self._sweeper_plays_as_overlay(item, after_song):
+                continue          # layered over the next song, not a turn
             return {
                 "id":          item.get("item_id"),
                 "title":       item.get("title"),
@@ -7587,16 +7616,7 @@ class Studio(QWidget):
         # Uses peek (non-destructive) — historical bug was that the
         # display refresh advanced the scheduler cursor, eating slots
         # before they could be dispatched. See _peek_next_for_display.
-        if hasattr(self, "_next_chip"):
-            head = self._next_on_air_item(after_id=None)
-            if head is not None:
-                self._next_chip.set_next(
-                    str(head.get("title") or "—"),
-                    str(head.get("artist") or ""),
-                    to_air_s=0,
-                    intro_s=0)
-            else:
-                self._next_chip.set_next("—", "")
+        self._refresh_next_chip()
         # Up Coming queue: full 5-card refresh.
         #   Phase B: prefer scheduler.peek_next preview when available;
         #   fall back to legacy in-memory queue when no scheduler is
@@ -7639,14 +7659,7 @@ class Studio(QWidget):
         # (non-destructive) — calling _compute_next_song here was eating
         # a scheduler slot per song-start (audit 2026-05-07), so the
         # NEXT chip drifted out of sync with the Up Coming queue.
-        if hasattr(self, "_next_chip"):
-            nxt = self._next_on_air_item(after_id=song.get("id"))
-            if nxt is not None:
-                self._next_chip.set_next(
-                    str(nxt.get("title") or "—"),
-                    str(nxt.get("artist") or ""))
-            else:
-                self._next_chip.set_next("—", "")
+        self._refresh_next_chip(after_id=song.get("id"))
         # Up Coming: STRICTLY upcoming view — currently-playing song
         # is excluded (it lives in NowPlayer, not in the queue list).
         # _refresh_upcoming_panel filters _played_song_ids, which
@@ -8493,6 +8506,17 @@ class Studio(QWidget):
                 log.warning(f"[studio] peek_next failed: {exc}\n"
                             f"{_tb.format_exc()}")
                 items = []
+            # Does the item before the next card hand over by crossfade
+            # from a SONG? Then a Start-of-Song-type sweeper is layered
+            # over the following song (no turn of its own, no NEXT glow,
+            # no time added) — the same rule the chip and the real
+            # dispatch use (QA ⚠30).
+            crossfades = self._automix_mode() not in ("eos", "manual")
+            if translated:
+                after_song = crossfades and (
+                    (translated[-1].get("_item_type") or "song") == "song")
+            else:
+                after_song = self._next_transition_is_crossfade()
             for it in items[:5]:
                 if not it:
                     continue          # defensive: never render a None item
@@ -8503,14 +8527,19 @@ class Studio(QWidget):
                     if self._is_scheduler_skipped(
                             it.get("item_type") or "song", iid):
                         continue      # operator removed it — won't air
+                    overlay = self._sweeper_plays_as_overlay(it, after_song)
                     translated.append({
                         "_item_type":  it.get("item_type") or "song",
+                        "_overlay":    overlay,
                         "id":          it.get("item_id"),
                         "title":       it.get("title") or "—",
                         "artist":      it.get("artist") or "",
                         "file_path":   it.get("file_path"),
                         "duration_ms": int(it.get("duration_ms") or 0),
                     })
+                    if not overlay:
+                        after_song = crossfades and (
+                            (it.get("item_type") or "song") == "song")
                 except Exception as exc:
                     log.warning(
                         f"[studio] scheduler-peek card translate "
@@ -8551,7 +8580,30 @@ class Studio(QWidget):
         # thing that precedes the Qt fastfail during a crossfade.
         self._upcoming_preview = [c for c in translated
                                   if isinstance(c, dict)]
+        # The chip used to refresh only on track start / idle, so after a
+        # queue change (e.g. remembered picks cleared by a data change)
+        # it named a different song than the cards (QA ⚠32).
+        self._refresh_next_chip()
         self._refresh_upcoming_panel()
+
+    def _refresh_next_chip(self, after_id: Optional[int] = None) -> None:
+        """NEXT chip = what will really air next (_next_on_air_item —
+        same order and memo as the Up Coming cards). ``after_id``
+        defaults to the on-air track."""
+        if not hasattr(self, "_next_chip"):
+            return
+        if after_id is None and self._playback_cid is not None:
+            after_id = (self._current_track or {}).get("id")
+        try:
+            nxt = self._next_on_air_item(after_id=after_id)
+        except Exception as exc:
+            log.debug(f"[studio] NEXT chip refresh failed: {exc}")
+            return
+        if nxt is not None:
+            self._next_chip.set_next(str(nxt.get("title") or "—"),
+                                     str(nxt.get("artist") or ""))
+        else:
+            self._next_chip.set_next("—", "")
 
     # ── T-60s upcoming-dispatch preview (2026-05-17 operator request) ────
 
@@ -8970,7 +9022,8 @@ class Studio(QWidget):
             # — so the glowing card is the NEXT chip's item (QA ⚠14).
             next_idx = next(
                 (i for i, c in enumerate(self._upcoming_preview)
-                 if not c.get("_preview") and not c.get("_after_break")),
+                 if not c.get("_preview") and not c.get("_after_break")
+                 and not c.get("_overlay")),
                 -1)
             self._upcoming.set_queue(
                 self._upcoming_preview, next_index=next_idx,

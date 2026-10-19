@@ -664,6 +664,12 @@ def main():
     # 10. Cleanup
     bass_free()
     allow_sleep()
+    # Every engine has stopped: fold the WAL into radioai.db and close
+    # the DB, so the file on disk is complete on its own (QA ⚠33).
+    try:
+        db.checkpoint_and_close()
+    except Exception as exc:
+        log.warning(f"database close at exit failed: {exc}")
     # Intentional shutdown — stand the watchdog down BEFORE the
     # process ends (fresh marker = no restart).
     try:

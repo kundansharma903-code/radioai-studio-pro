@@ -260,12 +260,14 @@ def test_live_at_tick_refreshes_via_existing_1hz_timer(qtbot,
     studio._load_upcoming_queue()
 
     before_at = studio._upcoming._cards[0]._at_text
-    qtbot.wait(1100)            # > 1 tick interval
-    after_at = studio._upcoming._cards[0]._at_text
-
-    # The first card's AT corresponds to "now". After 1+ second of
-    # wall-clock advance, the rendered seconds differ.
-    assert before_at != after_at
+    # The first card's AT corresponds to "now", so after the next tick in
+    # a NEW wall-clock second it must differ. A fixed qtbot.wait(1100)
+    # raced the 1 Hz timer's phase: a tick landing in the same second as
+    # `before` and the next one after the wait left the text unchanged
+    # (QA ⚠34). Wait for the change instead, with a generous ceiling.
+    qtbot.waitUntil(
+        lambda: studio._upcoming._cards[0]._at_text != before_at,
+        timeout=3000)
 
 
 def test_studio_without_scheduler_does_not_crash(qtbot):

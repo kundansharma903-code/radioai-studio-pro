@@ -213,6 +213,10 @@ def test_peek_skips_overlay_sweeper_when_deck_has_song(qapp, db):
     studio = _make_studio(db, scheduler=sched, sweeper_engine=object())
     sched.queue(_sweeper(1, "Bridge at End"), _song(101, "Bezubaan"))
     studio._playback_cid = 5
+    # A song on the DECK (QA ⚠30: the overlay rule now also checks the
+    # deck kind — a spot on air has a playback cid too, but its handover
+    # happens at EOS on an idle deck, where the sweeper plays on its own).
+    studio._playback_kind = "deck"
     studio._current_track = {"id": 99, "duration_ms": 180000}
 
     head = studio._peek_next_for_display(after_id=None)

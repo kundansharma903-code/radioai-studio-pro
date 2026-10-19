@@ -952,27 +952,48 @@ class SchedulerEngine(QObject):
             memo_key = (hour_key, clock_id, idx, self._pick_serial)
             with self._pick_memo_lock:
                 memo = self._pick_memo.get(memo_key)
-            simulating = getattr(self._peek_local, "fired", None) is not None
-            if (memo is not None and not simulating
-                    and not self._memo_still_airable(memo[0], memo[1])):
-                # Real pick: the remembered choice no longer passes the
-                # air-time rules → drop it and pick live (QA ⚠26 gap).
+            # Songs already chosen earlier in THIS peek_next simulation
+            # (None on a real pick): a 5-position preview must not show
+            # the same song twice — simulated picks can't see each other
+            # in broadcast_log (QA ⚠31).
+            sim_ids = getattr(self._peek_local, "sim_song_ids", None)
+
+            def _sim_dup(it) -> bool:
+                if sim_ids is None or not it:
+                    return False
+                if (it.get("item_type") or "song").strip().lower() != "song":
+                    return False
+                try:
+                    return int(it.get("item_id") or 0) in sim_ids
+                except (TypeError, ValueError):
+                    return False
+
+            # Re-check the remembered choice in previews AND real picks: a
+            # song that aired after it was remembered must neither be
+            # shown (QA ⚠31) nor aired (QA ⚠26 gap) → drop, pick live.
+            if memo is not None and (
+                    not self._memo_still_airable(memo[0], memo[1])
+                    or _sim_dup(memo[0])):
                 with self._pick_memo_lock:
                     self._pick_memo.pop(memo_key, None)
                 memo = None
             if memo is not None:
                 item = dict(memo[0])     # same choice the preview showed
             else:
-                try:
-                    # _pick_break also takes `now`; others ignore it.
-                    if stype in ("break", "spot"):
-                        item = picker(slot, now)
-                    else:
-                        item = picker(slot)
-                except Exception as exc:
-                    log.warning(
-                        f"pick_next_item: picker {stype} failed: {exc}")
-                    item = None
+                item = None
+                for _attempt in range(3):     # retry a same-preview dup
+                    try:
+                        # _pick_break also takes `now`; others ignore it.
+                        if stype in ("break", "spot"):
+                            item = picker(slot, now)
+                        else:
+                            item = picker(slot)
+                    except Exception as exc:
+                        log.warning(
+                            f"pick_next_item: picker {stype} failed: {exc}")
+                        item = None
+                    if not _sim_dup(item):
+                        break
                 if item is not None and stype not in ("break", "spot"):
                     with self._pick_memo_lock:
                         self._pick_memo[memo_key] = (
@@ -980,6 +1001,13 @@ class SchedulerEngine(QObject):
                             datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
             if item is None:
                 continue
+            if sim_ids is not None and (
+                    (item.get("item_type") or "song").strip().lower()
+                    == "song"):
+                try:
+                    sim_ids.add(int(item.get("item_id") or 0))
+                except (TypeError, ValueError):
+                    pass
             self._advance_pick_serial()
             self._clock_slot_cursor = (idx + 1) % n
             item["clock_id"] = clock_id
@@ -1181,6 +1209,8 @@ class SchedulerEngine(QObject):
         saved_cursor_clock = getattr(self, "_cursor_clock_id", None)
         saved_serial = self._pick_serial
         saved_sim_fired = getattr(self._peek_local, "fired", None)
+        saved_sim_ids = getattr(self._peek_local, "sim_song_ids", None)
+        self._peek_local.sim_song_ids = set()
         # Restore already-aired breaks first so the preview can't show a
         # spot that went out before a restart (QA ⚠23).
         self._seed_fired_from_log(now or datetime.now())
@@ -1224,6 +1254,7 @@ class SchedulerEngine(QObject):
             self._cursor_clock_id = saved_cursor_clock
             self._pick_serial = saved_serial
             self._peek_local.fired = saved_sim_fired
+            self._peek_local.sim_song_ids = saved_sim_ids
             self._suppress_queue_emit = saved_suppress
         return out
 

@@ -71,6 +71,38 @@ class Database:
         self._local.conn = conn
         return conn
 
+    def checkpoint_and_close(self) -> bool:
+        """Clean-exit housekeeping (QA ⚠33, 2026-10-19): fold the WAL
+        back into radioai.db (TRUNCATE leaves a 0-byte WAL even if some
+        other connection is still open), then close every connection
+        this singleton can reach. Without it a clean exit left ~400 KB of
+        recent plays only in radioai.db-wal, so a raw copy of radioai.db
+        (a manual backup, a file check) silently missed them. Returns True
+        when the checkpoint completed. A later _conn() simply reconnects."""
+        ok = False
+        try:
+            row = self._conn().execute(
+                "PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+            ok = bool(row) and int(row[0]) == 0        # 0 = not busy
+        except Exception as exc:
+            log.warning(f"WAL checkpoint at exit failed: {exc}")
+        with self._lock:
+            conns = list(self._foreign_conns.values())
+            self._foreign_conns.clear()
+        main = getattr(self._local, "conn", None)
+        if main is not None:
+            conns.append(main)
+        self._local = threading.local()
+        for c in conns:
+            try:
+                c.close()
+            except Exception:
+                pass
+        log.info(f"Database closed at exit (WAL checkpoint "
+                 f"{'complete' if ok else 'INCOMPLETE'}, "
+                 f"{len(conns)} connection(s) closed)")
+        return ok
+
     def verify(self) -> bool:
         """Check DB is reachable and report song count."""
         try:
