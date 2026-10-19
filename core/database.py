@@ -4239,6 +4239,12 @@ class Database:
         ).fetchall()
 
     def add_spot_file(self, campaign_id: int, data: dict) -> int:
+        duration_ms = int(data.get("duration_ms", 0) or 0)
+        if duration_ms <= 0 and data.get("file_path"):
+            # Both add paths (Spots screen, Add Campaign dialog) passed 0,
+            # so Up Coming showed "DUR 0.0s" for the spot (QA ⚠37).
+            from core.audio.tags import file_duration_ms
+            duration_ms = file_duration_ms(data["file_path"])
         conn = self._conn()
         cur = conn.execute(
             """
@@ -4250,7 +4256,7 @@ class Database:
                 int(campaign_id),
                 data.get("filename") or "",
                 data.get("file_path") or "",
-                int(data.get("duration_ms", 0) or 0),
+                duration_ms,
                 int(data.get("is_active", 1)),
                 int(data.get("display_order", 0)),
             ],

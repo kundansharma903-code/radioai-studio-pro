@@ -343,3 +343,14 @@ def read_tags(path: str) -> Tags:
     if _default_reader is None:
         _default_reader = TagReader()
     return _default_reader.read(path)
+
+
+def file_duration_ms(path: str) -> int:
+    """Duration of an audio file in ms, or 0 when it is missing or can't
+    be parsed. Uncached — for import flows that store the length (spot
+    files were stored with 0, QA ⚠37)."""
+    try:
+        return int(TagReader()._read_uncached(path).duration_ms or 0)
+    except Exception as exc:
+        log.debug(f"file_duration_ms({path!r}): {exc}")
+        return 0

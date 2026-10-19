@@ -472,10 +472,11 @@ class _AudioFilesPanel(QFrame):
     def add_file(self, file_path: str):
         if not file_path:
             return
+        from core.audio.tags import file_duration_ms
         self._files.append({
             "filename":    os.path.basename(file_path),
             "file_path":   file_path,
-            "duration_ms": 0,
+            "duration_ms": file_duration_ms(file_path),     # QA ⚠37
             "is_active":   1,
         })
         self.update()

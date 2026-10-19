@@ -1465,7 +1465,12 @@ class SchedulerEngine(QObject):
                 ]
                 if playable:
                     chosen = random.choice(playable)
-                    log.info(
+                    # Previews (peek_next) re-run this for every Up
+                    # Coming refresh — only a real pick is INFO, or the
+                    # log fills with up to 10 copies a second (QA ⚠35).
+                    previewing = getattr(
+                        self._peek_local, "sim_song_ids", None) is not None
+                    (log.debug if previewing else log.info)(
                         f"[rotation] plan pick honored "
                         f"song_id={chosen['song_id']} "
                         f"action={chosen.get('action')} "

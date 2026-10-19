@@ -8430,8 +8430,13 @@ class Studio(QWidget):
                 log.warning(
                     f"[studio] preview-sotg card render failed: {exc}")
 
-        # 4. Upcoming-preview spots.
-        for entry in list(self._upcoming_preview_spots):
+        # 4. Upcoming-preview spots. With Break Policy ON a due spot is
+        # HELD for the next break window (_do_scheduler_spot_due), never
+        # queued — a "Queued" card would flash and vanish (QA ⚠36). It
+        # shows once the window releases it into _pending_spots.
+        preview_spots = ([] if self._break_policy_enabled()
+                         else list(self._upcoming_preview_spots))
+        for entry in preview_spots:
             try:
                 cid = int(entry.get("campaign_id") or 0)
                 if cid in already_queued_spot_ids or cid == 0:

@@ -2222,8 +2222,7 @@ class SpotsCommercials(QWidget):
         try:
             self._db.add_spot_file(self._selected_id, {
                 "filename":  _os.path.basename(path),
-                "file_path": path,
-                "duration_ms": 0,
+                "file_path": path,              # duration read on save (⚠37)
                 "is_active": 1,
             })
             self._refresh_detail_panel()
