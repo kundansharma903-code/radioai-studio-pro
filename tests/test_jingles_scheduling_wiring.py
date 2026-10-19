@@ -113,7 +113,8 @@ def test_pick_jingle_specific_resolves_against_library_first(db, seeded):
 
 def test_pick_jingle_specific_falls_back_to_pad_when_not_in_library(db, seeded):
     """item_id matching a jingle_pad but NOT in the master library
-    must still resolve via the legacy pad path."""
+    must NOT resolve to that pad (updated 2026-10-17 — the old pad
+    fallback aired an unrelated pad; library-only now)."""
     # Use the pad's id and pick a value that's NOT a jingles.id. The
     # seeded jingle id is jingle_id; we pass pad_id which (in this
     # fixture's setup) hasn't been issued to a jingles row.
@@ -126,9 +127,8 @@ def test_pick_jingle_specific_falls_back_to_pad_when_not_in_library(db, seeded):
     # collides with pad_id. The contract is: if library has it, library
     # wins; else pad. Assert the behavior is consistent with that.
     if item is not None:
-        # Pad title comes from `label`; library title comes from `name`.
-        assert (item["title"] == seeded["prefix"] + "Pad"
-                or item["title"] == seeded["prefix"] + "Library Bridge")
+        assert item.get("_source") != "pad"
+        assert item["title"] != seeded["prefix"] + "Pad"
 
 
 def test_pick_jingle_random_any_pulls_from_library(db, seeded):

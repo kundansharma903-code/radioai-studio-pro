@@ -113,6 +113,14 @@ def _days_in_month(year: int, month: int) -> int:
 # ════════════════════════════════════════════════════════════════════════════
 
 
+
+def _row_get(r, key):
+    """``r[key]`` for a sqlite3.Row / dict that may predate the column."""
+    try:
+        return r[key]
+    except (IndexError, KeyError):
+        return None
+
 class _HeaderLogo(QWidget):
     """Cyan-purple gradient circle with white sound-wave bars."""
 
@@ -765,7 +773,9 @@ class FinalLog(QWidget):
         # Settings — station name flows here; default to the operator's
         # branding from the settings table.
         try:
-            station = Settings().get("station_display") or "AIRMIND FM"
+            # station_display is a computed property (name + frequency),
+            # not a settings key — .get("station_display") was always None.
+            station = Settings().station_display or "AIRMIND FM"
         except Exception:
             station = "AIRMIND FM"
 
@@ -990,11 +1000,17 @@ class FinalLog(QWidget):
             title  = r["song_title"]  or "—"
             artist = r["song_artist"] or "—"
         elif etype == "spot":
-            title  = r["campaign_name"] or "—"
+            # item_name keeps the client's name after a campaign delete
+            # NULLs the FK (proof of play survives).
+            title  = (r["campaign_name"] or _row_get(r, "item_name")
+                      or "—")
             artist = "Commercial"
         elif etype == "jingle":
-            title  = r["jingle_name"] or "—"
+            title  = r["jingle_name"] or _row_get(r, "item_name") or "—"
             artist = "Station ID"
+        elif etype == "sweeper":
+            title  = _row_get(r, "item_name") or "Sweeper"
+            artist = "Sweeper"
         else:
             title  = etype.title() or "—"
             artist = "—"
@@ -1056,7 +1072,7 @@ class FinalLog(QWidget):
         rendered = [self._row_to_dict(r) for r in rows]
         text = self._format_log_text(hour, rendered)
 
-        # Default path: %LOCALAPPDATA%\RadioAI\logs\<Year>\<Month>\<DD>\<HH>-<HH+1>.log
+        # Default path: <LOGS_DIR>\<Year>\<Month>\<DD>\<HH>-<HH+1>.log
         default_path = self._default_download_path(hour)
         default_path.parent.mkdir(parents=True, exist_ok=True)
         path, _ = QFileDialog.getSaveFileName(
@@ -1073,11 +1089,13 @@ class FinalLog(QWidget):
         self._status.set_status(
             f"Saved {len(rendered)} entries — {_hour_label(hour)}",
             color=GREEN_LIGHT)
-        self._status.set_path(f"Auto-saved to: {path}")
+        self._status.set_path(f"Saved to: {path}")
 
     def _default_download_path(self, hour: int) -> Path:
-        appdata = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
-        base = Path(appdata) / "RadioAI" / "logs"
+        # Current app-data Logs folder (%LOCALAPPDATA%\RadioAI Studio
+        # Pro\Logs) — was the legacy %LOCALAPPDATA%\RadioAI\logs.
+        from core.paths import LOGS_DIR
+        base = Path(LOGS_DIR)
         month_nm = calendar.month_name[self._sel_month]
         nxt = (hour + 1) % 24
         return (base

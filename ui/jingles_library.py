@@ -748,6 +748,9 @@ class JinglesLibrary(QWidget):
     studio_clicked     = pyqtSignal()
     jingle_selected    = pyqtSignal(int)
     add_jingle_clicked = pyqtSignal()      # for future 106:2 dialog hook
+    # Emitted after any save / delete so Studio's Libraries panel
+    # (Jingles tile) can reload. Wired in MainWindow.
+    library_changed    = pyqtSignal()
 
     # 15s preview cap matches the Songs Library convention. Long
     # enough that the operator hears the hook of any reasonable jingle,
@@ -1383,6 +1386,7 @@ class JinglesLibrary(QWidget):
         self._selected_id = int(jingle_id)
         self._load_jingles()
         self._on_row_clicked(int(jingle_id))
+        self.library_changed.emit()
 
     def _on_mass_import(self):
         log.info("[jingles] Mass Import — TODO")
@@ -1458,6 +1462,7 @@ class JinglesLibrary(QWidget):
         self._selected_id = None
         self._load_jingles()       # re-selects the first row if any remain
         self._refresh_details()
+        self.library_changed.emit()
 
     def _on_export_playlister(self):
         log.info("[jingles] Export to Playlister — TODO")

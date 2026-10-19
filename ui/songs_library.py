@@ -1324,9 +1324,10 @@ class SongsLibrary(QWidget):
 
     def _on_cues_saved(self, song_id: int):
         log.info(f"cues_saved received for song id={song_id}")
-        # Refresh the detail panel — cue values may affect what the
-        # waveform/labels show. For 5-A this is a no-op since the
-        # detail panel doesn't yet display per-cue numbers.
+        # Re-read the song so its row + detail panel show the saved
+        # values (the cue editor can change duration etc.). Selection,
+        # filters and search survive the reload.
+        self._load_songs()
 
     # ── Phase B2: row preview wiring ──────────────────────────────────────
 
@@ -1524,8 +1525,16 @@ class SongsLibrary(QWidget):
     # ── Data load / refresh ──────────────────────────────────────────────
 
     def _load_songs(self):
+        # Remember the selection so a reload (show, cue save, enable…)
+        # doesn't throw the operator back to row 1.
+        prev_focus = getattr(self, "_selected_id", None)
+        prev_ids = set(getattr(self, "_selected_ids", set()) or set())
         try:
-            rows = self._db.get_songs(limit=400)  # show all
+            # Whole library, disabled songs included — the "Enabled"
+            # filter decides what is visible (default: Only Enabled).
+            # Was get_songs(limit=400): enabled-only, so the Disabled
+            # filter was always empty and songs past #400 never showed.
+            rows = self._db.get_songs(include_disabled=True)
             try:
                 last_played_map = self._db.get_last_played_map()
             except Exception as exc:
@@ -1545,8 +1554,23 @@ class SongsLibrary(QWidget):
             self._all_songs = []
             self._total_count = 0
         self._populate_table()
-        if self._all_songs:
-            self._select_song(self._all_songs[0]["id"])
+        # Re-apply every active filter + the search text to the fresh rows.
+        self._apply_filters()
+        if not self._all_songs:
+            return
+        known = {s["id"] for s in self._all_songs}
+        if prev_focus in known:
+            self._select_song(prev_focus)
+            kept = prev_ids & known
+            if len(kept) > 1:
+                self._selected_ids = kept
+                self._apply_selection_visuals()
+            self._drag_active = False
+        else:
+            visible = [r._song["id"] for r in self._row_widgets
+                       if not r.isHidden()]
+            self._select_song(visible[0] if visible
+                              else self._all_songs[0]["id"])
 
     def _row_to_dict(self, r, last_played_map: dict = None) -> dict:
         return {
@@ -1734,11 +1758,37 @@ class SongsLibrary(QWidget):
         label = ("Change Category…" if n == 1
                  else f"Change Category ({n} songs)…")
         act_change = menu.addAction(label)
+        # Enable / Disable — the only way back for a disabled song.
+        # Offer whichever action changes at least one selected song.
+        states = {bool(s.get("is_enabled", 1)) for s in self._all_songs
+                  if s["id"] in ids}
+        act_enable = act_disable = None
+        sfx = "" if n == 1 else f" ({n} songs)"
+        if False in states:
+            act_enable = menu.addAction(f"Enable{sfx}")
+        if True in states:
+            act_disable = menu.addAction(f"Disable{sfx}")
         chosen = menu.exec(global_pos)
         if chosen is act_change:
             log.info(f"[songs] context menu → change category "
                      f"({n} songs, source cat={src_cat})")
             self.change_category_requested.emit(ids, src_cat)
+        elif chosen is not None and chosen in (act_enable, act_disable):
+            self._set_enabled(ids, chosen is act_enable)
+
+    def _set_enabled(self, ids: list, enabled: bool) -> None:
+        """Persist enable/disable for `ids`, then reload (filters and
+        selection are re-applied by _load_songs)."""
+        try:
+            changed = self._db.set_songs_enabled(ids, enabled)
+            log.info(f"[songs] {'enabled' if enabled else 'disabled'} "
+                     f"{changed} song(s): {ids}")
+        except Exception as exc:
+            log.error(f"[songs] set_songs_enabled failed: {exc}")
+            dialogs.warning(self, "Not saved",
+                            f"Could not update the song(s): {exc}")
+            return
+        self._load_songs()
 
     def _update_detail_panel(self, song: dict):
         if self._song_header:
@@ -1767,12 +1817,8 @@ class SongsLibrary(QWidget):
             self._wave_right_lbl.setText(_fmt_duration(song.get("duration_ms", 0)))
 
     def _on_search_changed(self, text: str):
-        # Simple in-memory filter (no DB hit). For DB-driven, add a debounced QTimer.
-        text = text.lower().strip()
-        for row in self._row_widgets:
-            s = row._song
-            match = (text in (s.get("title", "") + " " + s.get("artist", "")).lower())
-            row.setVisible(not text or match)
+        # In-memory filter (no DB hit), combined with the dropdowns.
+        self._apply_filters()
 
     def _open_add_song_dialog(self):
         """Open the Add New Song modal dialog. On save, reload table."""
@@ -1939,29 +1985,59 @@ class SongsLibrary(QWidget):
             self._select_song(song["id"])
 
     def _on_filter_changed(self, key: str):
-        cb = self._dropdowns.get(key)
-        if not cb:
-            return
-        sel = cb.currentText()
+        # Filters COMBINE (category AND energy AND … AND search) — the
+        # old per-key handler overwrote the previous filter's result.
+        self._apply_filters()
+
+    def _song_passes_filters(self, s: dict) -> bool:
+        """True when song dict `s` matches every active dropdown and
+        the search text."""
+        dd = getattr(self, "_dropdowns", {}) or {}
+
+        def sel(key):
+            cb = dd.get(key)
+            return cb.currentText() if cb is not None else ""
+
+        v = sel("category")
+        if v and not v.endswith("(All)") and s.get("category", "") != v:
+            return False
+        v = sel("energy")
+        if v and not v.endswith("(All)") and s.get("energy", "") != v:
+            return False
+        v = sel("vocal")
+        if v and not v.endswith("(All)") and s.get("vocal", "") != v:
+            return False
+        v = sel("bpm")
+        if v and not v.endswith("(All)") and not self._bpm_in_range(
+                s.get("bpm", 0), v):
+            return False
+        v = sel("enabled")
+        enabled = bool(s.get("is_enabled", 1))
+        if v == "Only Enabled" and not enabled:
+            return False
+        if v == "Disabled" and enabled:
+            return False
+        si = getattr(self, "_search_input", None)
+        text = (si.text() if si is not None else "").lower().strip()
+        if text and text not in (
+                f"{s.get('title', '')} {s.get('artist', '')}").lower():
+            return False
+        return True
+
+    def _apply_filters(self) -> None:
         for row in self._row_widgets:
-            s = row._song
-            visible = True
-            if key == "category" and not sel.endswith("(All)") and sel != "":
-                visible = (s.get("category", "") == sel)
-            elif key == "energy" and not sel.endswith("(All)"):
-                visible = (s.get("energy", "") == sel)
-            elif key == "vocal" and not sel.endswith("(All)"):
-                visible = (s.get("vocal", "") == sel)
-            elif key == "bpm" and not sel.endswith("(All)"):
-                visible = self._bpm_in_range(s.get("bpm", 0), sel)
-            elif key == "enabled":
-                enabled = bool(s.get("is_enabled", 1))
-                if sel == "Only Enabled":
-                    visible = enabled
-                elif sel == "Disabled":
-                    visible = not enabled
-                # "All" → leave visible = True
-            row.setVisible(visible)
+            row.setVisible(self._song_passes_filters(row._song))
+
+    def showEvent(self, event):
+        """Reload on every re-show so Last Played / play counts / edits
+        made elsewhere (Studio, Category Move) are fresh."""
+        super().showEvent(event)
+        if getattr(self, "_shown_once", False):
+            try:
+                self._load_songs()
+            except Exception as exc:
+                log.warning(f"songs library reload on show failed: {exc}")
+        self._shown_once = True
 
     @staticmethod
     def _bpm_in_range(bpm, label: str) -> bool:

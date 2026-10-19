@@ -21,6 +21,7 @@ Live-DB fixtures use a unique '_test_jingle_editor_<uuid8>_' prefix
 
 from __future__ import annotations
 
+import sys
 import uuid
 from typing import List
 
@@ -205,6 +206,8 @@ def test_dialog_save_in_new_mode_inserts_and_emits(qapp, db, monkeypatch):
     d.jingle_saved.connect(fired.append)
     test_name = f"_test_save_new_{uuid.uuid4().hex[:8]}"
     d._title_input.setText(test_name)
+    # 2026-10-17: save now requires an existing audio file.
+    d._file_input.setText(sys.executable)
     d._props_input.setText("Special")
     d._duration_input.setText("0:07")
     d._on_category_picked("Promo")
@@ -236,6 +239,8 @@ def test_dialog_save_in_edit_mode_persists_changes(qapp, db, seeded):
     d.jingle_saved.connect(fired.append)
     d._on_category_picked("News Break")
     d._props_input.setText("News")
+    # 2026-10-17: save now requires an existing audio file.
+    d._file_input.setText(sys.executable)
     d._on_save()
     assert fired == [jid]
     after = dict(db._conn().execute(

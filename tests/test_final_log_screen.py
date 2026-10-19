@@ -251,10 +251,12 @@ def test_default_download_path_format(qapp, db):
     s = FinalLog(db)
     s._sel_year, s._sel_month, s._sel_day = 2099, 6, 15
     p = s._default_download_path(hour=10)
-    # Path looks like ...\\RadioAI\\logs\\2099\\June\\15\\10-11.log
+    # Path looks like <LOGS_DIR>\\2099\\June\\15\\10-11.log — the current
+    # app-data Logs folder (was the legacy %LOCALAPPDATA%\\RadioAI\\logs).
+    from pathlib import Path
+    from core.paths import LOGS_DIR
     parts = p.parts
-    assert "RadioAI" in parts
-    assert "logs"    in parts
+    assert Path(LOGS_DIR) in p.parents
     assert "2099"    in parts
     assert "June"    in parts
     assert "15"      in parts

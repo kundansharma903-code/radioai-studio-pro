@@ -203,15 +203,18 @@ def test_auto_dispatch_uses_row_sweeper_volume(qapp, db):
 
 
 def test_no_duck_when_song_pct_is_100(qapp, db):
-    """Byte-identical to pre-feature behaviour: no callbacks at all."""
+    """No ducking: no on_end restore, and on_start (which now always
+    exists — it logs the play when the overlay REALLY starts, fix
+    2026-10-17) must not slide the deck volume."""
     sched, swe = _FakeScheduler(), _FakeSweeperEngine()
     eng = _FakeAudioEngine()
     s = _studio(db, scheduler=sched, sweeper_engine=swe, engine=eng)
     _arm_deck(s)
     s._dispatch_overlay_sweeper(_sweeper_item(song_pct=100))
     call = swe.scheduled[-1]
-    assert call["on_start"] is None
     assert call["on_end"] is None
+    s._db.log_play = lambda **k: None      # keep the DB copy clean
+    call["on_start"]()
     assert eng.fades == []
     s.deleteLater()
 
@@ -223,7 +226,7 @@ def test_no_duck_when_field_absent(qapp, db):
                 engine=_FakeAudioEngine())
     _arm_deck(s)
     s._dispatch_overlay_sweeper(_sweeper_item())      # no song_pct key
-    assert swe.scheduled[-1]["on_start"] is None
+    assert swe.scheduled[-1]["on_end"] is None        # no duck restore
     s.deleteLater()
 
 
@@ -234,7 +237,7 @@ def test_kill_switch_disables_ducking(qapp, db):
     _arm_deck(s)
     s._cfg_sweeper_ducking = False
     s._dispatch_overlay_sweeper(_sweeper_item(song_pct=10))
-    assert swe.scheduled[-1]["on_start"] is None
+    assert swe.scheduled[-1]["on_end"] is None        # no duck restore
     s.deleteLater()
 
 

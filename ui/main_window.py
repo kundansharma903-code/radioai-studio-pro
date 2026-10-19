@@ -604,6 +604,27 @@ class MainWindow(QMainWindow):
             # belt; this signal is the suspenders.
             self.instant_jingles.pads_changed.connect(
                 self.studio._reload_instant_jingles)
+            # Jingles / Sweepers library save+delete → Studio Libraries
+            # panel reloads that tile if it is the active one.
+            for _lib, _kind in ((getattr(self, "jingles_library", None),
+                                 "Jingles"),
+                                (getattr(self, "sweepers_library", None),
+                                 "Sweepers")):
+                if _lib is not None and hasattr(_lib, "library_changed"):
+                    _lib.library_changed.connect(
+                        lambda k=_kind: self.studio.refresh_library_panel(k))
+            # Campaign / schedule edits in Spots & Commercials → live
+            # scheduler break reload (keeps already-fired breaks) +
+            # Studio Next Break panel + Libraries "Spots" tile.
+            _sc = getattr(self, "spots_commercials", None)
+            if _sc is not None and hasattr(_sc, "campaigns_changed"):
+                if hasattr(self._scheduler, "reload_breaks"):
+                    _sc.campaigns_changed.connect(
+                        self._scheduler.reload_breaks)
+                _sc.campaigns_changed.connect(
+                    self.studio.on_campaigns_changed)
+                _sc.campaigns_changed.connect(
+                    lambda: self.studio.refresh_library_panel("Spots"))
             # Aircheck recorder → header REC pill + Problems panel.
             try:
                 self._aircheck.state_changed.connect(
@@ -722,9 +743,52 @@ class MainWindow(QMainWindow):
             # toggle). 2s delay keeps device init off the first-paint
             # path; recorder no-ops if aircheck_enabled is 0.
             QTimer.singleShot(2000, self._start_aircheck)
+
+            # Scheduled auto-backup — honours General Settings →
+            # backup_interval / path_backup. Checks every 10 min whether
+            # the newest auto-backup is older than the interval; the
+            # snapshot itself runs on a worker thread (pure sqlite3).
+            self._auto_backup_busy = False
+            self._auto_backup_timer = QTimer(self)
+            self._auto_backup_timer.setInterval(10 * 60_000)
+            self._auto_backup_timer.timeout.connect(
+                self._check_auto_backup)
+            self._auto_backup_timer.start()
+            QTimer.singleShot(60_000, self._check_auto_backup)
         except Exception as exc:
             import traceback
             log.error(f"Mount failed: {exc}\n{traceback.format_exc()}")
+
+    def _check_auto_backup(self) -> bool:
+        """Start a background auto-backup when one is due. Returns True
+        when a backup thread was started."""
+        if getattr(self, "_shutting_down", False) or getattr(
+                self, "_auto_backup_busy", False):
+            return False
+        try:
+            from core.settings import Settings
+            from core import backup_restore as br
+            s = Settings()
+            hours = br.interval_hours(s.get("backup_interval",
+                                            "Every 24 hours"))
+            dest = br.resolve_auto_backup_dir(s.get("path_backup", ""))
+            if not br.auto_backup_due(dest, hours):
+                return False
+        except Exception as exc:
+            log.warning(f"auto-backup check failed: {exc}")
+            return False
+        import threading
+        self._auto_backup_busy = True
+
+        def _work():
+            try:
+                br.run_auto_backup(dest)
+            finally:
+                self._auto_backup_busy = False
+
+        threading.Thread(target=_work, name="auto-backup",
+                         daemon=True).start()
+        return True
 
     def _on_card_clicked(self, screen: str) -> None:
         log.info(f"Card → {screen}")
@@ -767,6 +831,13 @@ class MainWindow(QMainWindow):
         its category pills so counts/pills reflect the new homes."""
         log.info(f"category move: {moved} songs moved — refreshing "
                  f"songs library")
+        # Plan picks are category-gated — drop the scheduler's 60s
+        # rotation cache so moved songs stop airing in the old slot now.
+        try:
+            if getattr(self, "_scheduler", None) is not None:
+                self._scheduler.invalidate_rotation_cache()
+        except Exception as exc:
+            log.debug(f"rotation cache invalidate failed: {exc}")
         try:
             if hasattr(self, "songs_library"):
                 self.songs_library._load_songs()
@@ -1520,7 +1591,7 @@ class MainWindow(QMainWindow):
             "sotg_assign", "sotg_generate_report",
             "sotg_assign_api_key",
             "scheduling_automation_hub", "scheduling_daily_plan_review",
-            "category_move",
+            "category_move", "rotation_health",
         )
         for attr in qlabel_screens:
             screen = getattr(self, attr, None)
@@ -1537,11 +1608,14 @@ class MainWindow(QMainWindow):
             if screen is not None:
                 screen.update()
 
-        # FinalLog stores its label as a self attribute (not findChild)
-        if hasattr(self, "final_log") and hasattr(
-                self.final_log, "_station_lbl"):
+        # FinalLog keeps its station label on the tab bar
+        # (final_log._tab_bar._station) — the old lookup for a
+        # non-existent final_log._station_lbl never matched.
+        fl_lbl = getattr(getattr(getattr(self, "final_log", None),
+                                 "_tab_bar", None), "_station", None)
+        if isinstance(fl_lbl, QLabel):
             try:
-                self.final_log._station_lbl.setText(new_text)
+                fl_lbl.setText(new_text)
             except Exception:
                 pass
         log.info(f"Station branding refreshed → {new_text!r}")

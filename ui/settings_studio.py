@@ -554,6 +554,71 @@ class _LabeledToggle(QWidget):
         self._row.set_on(on)
 
 
+class _FallbackTrackRow(QWidget):
+    """Label + read-only path + Browse… / Clear for the default
+    fallback track (settings key ``default_fallback_path``)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        from PyQt6.QtWidgets import QLineEdit
+        v = QVBoxLayout(self)
+        v.setContentsMargins(0, 0, 0, 0); v.setSpacing(4)
+        self._lbl = _FieldLabel("Default fallback track:")
+        v.addWidget(self._lbl)
+        row = QFrame(self)
+        row.setStyleSheet("QFrame { background: transparent; }")
+        h = QHBoxLayout(row)
+        h.setContentsMargins(0, 0, 0, 0); h.setSpacing(6)
+        self._inp = QLineEdit(row)
+        self._inp.setReadOnly(True)
+        self._inp.setFixedHeight(30)
+        self._inp.setFont(inter(10))
+        self._inp.setPlaceholderText("No file chosen")
+        self._inp.setStyleSheet(
+            f"QLineEdit {{ background: {BG_DARK}; color: {TEXT_PRI}; "
+            f"border: 1px solid {rgba(RED, 0.25)}; border-radius: 5px; "
+            f"padding: 0 8px; }}")
+        btn_ss = (
+            f"QPushButton {{ background: {BG_ELEVATED}; color: {TEXT_PRI}; "
+            f"border: 1px solid {rgba('#ffffff', 0.10)}; "
+            f"border-radius: 5px; padding: 0 8px; }}"
+            f"QPushButton:hover {{ border: 1px solid {rgba(RED, 0.55)}; }}")
+        self._btn = QPushButton("Browse…", row)
+        self._btn.setFixedHeight(30)
+        self._btn.setFont(inter(10, QFont.Weight.Medium))
+        self._btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self._btn.setStyleSheet(btn_ss)
+        self._btn.clicked.connect(self._on_browse)
+        self._clear = QPushButton("Clear", row)
+        self._clear.setFixedHeight(30)
+        self._clear.setFont(inter(10, QFont.Weight.Medium))
+        self._clear.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self._clear.setStyleSheet(btn_ss)
+        self._clear.clicked.connect(lambda: self.set_path(""))
+        h.addWidget(self._inp, stretch=1)
+        h.addWidget(self._btn)
+        h.addWidget(self._clear)
+        v.addWidget(row)
+
+    def path(self) -> str:
+        return self._inp.text().strip()
+
+    def set_path(self, p: str) -> None:
+        self._inp.setText(p or "")
+        self._inp.setToolTip(p or "")
+
+    def _on_browse(self) -> None:
+        import os
+        from PyQt6.QtWidgets import QFileDialog
+        start = os.path.dirname(self.path()) if self.path() else ""
+        f, _ = QFileDialog.getOpenFileName(
+            self, "Choose default fallback track", start,
+            "Audio files (*.mp3 *.wav *.flac *.ogg *.m4a *.aac *.wma);;"
+            "All files (*.*)")
+        if f:
+            self.set_path(os.path.normpath(f))
+
+
 class _RadioOption(QFrame):
     """One row in a radio-option list — circular check + label.
     Click anywhere on the row selects this option (parent group
@@ -754,6 +819,7 @@ class SettingsStudio(QWidget):
         self._build_center_column()
         self._build_right_column()
         self._build_status_bar()
+        self._mark_inactive_controls()
 
         self._load_settings()
 
@@ -877,10 +943,12 @@ class SettingsStudio(QWidget):
         # CROSSFADE & TRANSITIONS
         c1 = _SectionCard("Crossfade & Transitions", PURPLE, content)
         self._sl_crossfade = _LabeledSlider(
-            "Crossfade Duration", 0, 10, 3, PURPLE, "",
+            # Defaults match the Studio runtime defaults (studio.py
+            # _apply_studio_settings: crossfade 5 s, fade-out start 5 s).
+            "Crossfade Duration", 0, 10, 5, PURPLE, "",
             caption="How long songs overlap during mix")
         self._sl_fade_out = _LabeledSlider(
-            "Fade Out Start", 0, 10, 6, AMBER, "",
+            "Fade Out Start", 0, 10, 5, AMBER, "",
             caption="When outgoing song starts fading")
         self._curve = _CurveRow("Fade Curve Type", FADE_CURVES, PURPLE)
         for w in (self._sl_crossfade, self._sl_fade_out, self._curve):
@@ -909,9 +977,13 @@ class SettingsStudio(QWidget):
         self._tg_missing_alert = _LabeledToggle(
             "Missing file alert:",
             "Show on-screen warning immediately", GREEN)
+        # File used by "Play default fallback track" (Studio reads
+        # settings.default_fallback_path when a song file is missing).
+        self._fallback_path = _FallbackTrackRow()
         c3.add_row(self._cmb_fallback)
+        c3.add_row(self._fallback_path)
         c3.add_row(self._tg_missing_alert)
-        c3.setFixedHeight(38 + 54 + 64 + 16)
+        c3.setFixedHeight(38 + 54 + 70 + 64 + 16)
         v.addWidget(c3)
 
         # Save Transition Settings
@@ -986,8 +1058,11 @@ class SettingsStudio(QWidget):
         c1 = _SectionCard("Cue Split (Headphone Monitoring)",
                            CYAN, content)
         self._cue_split = _RadioGroup(CUE_SPLIT_OPTIONS, GREEN)
+        self._cue_split_note = _SubFieldLabel(
+            "Coming soon — not active in this version")
         c1.add_row(self._cue_split)
-        c1.setFixedHeight(38 + 4 * 44 + 16)
+        c1.add_row(self._cue_split_note)
+        c1.setFixedHeight(38 + 4 * 44 + 26 + 16)
         v.addWidget(c1)
 
         # CROSSFADE PREVIEW
@@ -1104,6 +1179,30 @@ class SettingsStudio(QWidget):
     def _tick_clock(self) -> None:
         self._clock_lbl.setText(datetime.now().strftime("%H:%M:%S"))
 
+    # ── Not-active-yet controls ───────────────────────────────────────
+
+    def _inactive_controls(self) -> list:
+        """Controls whose saved value nothing in the app acts on yet
+        (Studio only logs load_next_song / preload_buffer, and
+        fade_curve_type is only written to the log as of 2026-10-17 —
+        drop self._curve from this list once a fade really uses it)."""
+        return [
+            self._curve,
+            self._cmb_load_next, self._cmb_preload,
+            self._sl_autocue, self._cmb_autocue_scan,
+            self._sl_cue, self._sl_jingle, self._sl_mic,
+            self._cmb_vu_decay, self._cmb_peak_hold, self._tg_clip,
+            self._cue_split,
+        ]
+
+    def _mark_inactive_controls(self) -> None:
+        from ui.widgets.not_active import mark_not_active
+        for w in self._inactive_controls():
+            # Cue split's "label" is the card title; its note row
+            # carries the coming-soon text instead.
+            mark_not_active(w, label=False if w is self._cue_split
+                            else None)
+
     # ── Settings IO ───────────────────────────────────────────────────
     #
     # Three save buttons map to three logical groups; the load path
@@ -1112,9 +1211,11 @@ class SettingsStudio(QWidget):
 
     def _load_settings(self) -> None:
         s = Settings()
-        # Left column
-        self._sl_crossfade.set_value(s.get_int("crossfade_duration", 3))
-        self._sl_fade_out.set_value(s.get_int("fade_out_start", 6))
+        # Left column — defaults = Studio runtime defaults (5 s / 5 s)
+        self._sl_crossfade.set_value(s.get_int("crossfade_duration", 5))
+        self._sl_fade_out.set_value(s.get_int("fade_out_start", 5))
+        self._fallback_path.set_path(
+            s.get("default_fallback_path", "") or "")
         self._curve.set_active(
             s.get("fade_curve_type", "Logarithmic") or "Logarithmic")
         self._cmb_load_next.set_current_text(
@@ -1171,6 +1272,7 @@ class SettingsStudio(QWidget):
         s.set("preload_buffer",     self._cmb_preload.current_text())
         s.set("automix_trigger",    self._cmb_automix.current_text())
         s.set("fallback_action",    self._cmb_fallback.current_text())
+        s.set("default_fallback_path", self._fallback_path.path())
         s.set("missing_file_alert",
               "1" if self._tg_missing_alert.is_on() else "0")
 
@@ -1203,7 +1305,10 @@ class SettingsStudio(QWidget):
         self.settings_saved.emit()
         dialogs.info(
             self, "Saved",
-            "Transition + fade settings saved.")
+            "Transition, fallback and missing-file settings saved — "
+            "applied to the Studio now.\n\n"
+            "Options marked “coming soon” are stored but not active in "
+            "this version.")
 
     def _on_save_center(self) -> None:
         try:
@@ -1214,7 +1319,10 @@ class SettingsStudio(QWidget):
         self.settings_saved.emit()
         dialogs.info(
             self, "Saved",
-            "Audio levels + VU + AutoCue settings saved.")
+            "Master output level saved — applied to the Studio now."
+            "\n\nAutoCue, cue / jingle / mic levels and VU meter options "
+            "are marked “coming soon”: stored, but not active in this "
+            "version.")
 
     def _on_save_right(self) -> None:
         try:
@@ -1225,8 +1333,9 @@ class SettingsStudio(QWidget):
         self.settings_saved.emit()
         dialogs.info(
             self, "Saved",
-            "Cue split + preview + audio engine preferences saved.\n\n"
-            "Audio engine changes take effect after RadioAI restart.")
+            "Crossfade preview + mix-point flash saved — applied to the "
+            "Studio waveform now.\n\nCue split is marked “coming soon”: "
+            "stored, but not active in this version.")
 
     # ── Public API ────────────────────────────────────────────────────
 

@@ -160,7 +160,11 @@ def test_spot_double_click_with_zero_id_is_noop(qtbot, db_with_campaign, engine)
     s._library_spots.insert(0, {"id": 0, "name": "_invalid",
                                 "auto_code": "", "file_count": 0,
                                 "end_date": ""})
+    # Rows now resolve through their own data (search-safe, 2026-10-17)
+    # so the stale row must be the VISIBLE row 0 too.
+    s._libraries.set_songs([{"id": 0, "title": "_invalid",
+                             "artist": "—"}], 1)
     fired: list[int] = []
-    s._do_scheduler_spot_due = lambda c: fired.append(int(c))
+    s._do_scheduler_spot_due = lambda c, **_k: fired.append(int(c))
     s._on_library_song_double_clicked(0)
     assert fired == [], "id=0 must not trigger spot dispatch"

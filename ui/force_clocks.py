@@ -150,6 +150,19 @@ class _AddOverrideDialog(QDialog):
             dialogs.warning(self, "Invalid date",
                                 "Date must be YYYY-MM-DD (e.g. 2026-08-15).")
             return
+        # Times are compared as zero-padded HH:MM; end is exclusive.
+        from core.database import Database
+        ts_n = Database.normalize_hhmm(ts)
+        te_n = Database.normalize_hhmm(te)
+        if ts_n is None or te_n is None or ts_n == "24:00":
+            dialogs.warning(self, "Invalid time",
+                                "Times must be HH:MM (e.g. 09:00, 23:59).")
+            return
+        if te_n <= ts_n:
+            dialogs.warning(self, "Invalid time",
+                                "End time must be after start time.")
+            return
+        ts, te = ts_n, te_n
         self.result_payload = {
             "name": name, "clock_id": int(clock_id),
             "override_date": date, "time_start": ts, "time_end": te,

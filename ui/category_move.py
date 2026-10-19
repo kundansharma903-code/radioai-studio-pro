@@ -860,7 +860,9 @@ class CategoryMove(QWidget):
                 self, "Change Category",
                 f"Move {len(ids)} song{'s' if len(ids) != 1 else ''} "
                 f"from '{src}' to '{dst}'?\n\n"
-                f"Play history and reports are not affected.",
+                f"Play history is kept, but Final Log and Category "
+                f"Performance will show these songs under '{dst}' — "
+                f"including past plays.",
                 yes_label="Change Category"):
             return
         try:

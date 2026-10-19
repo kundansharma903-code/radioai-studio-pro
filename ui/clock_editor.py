@@ -1909,6 +1909,11 @@ class _ClockEditorCard(QWidget):
                                   COL_CYAN, self)
         self._loop_cb.move(15, 499)
         self._loop_cb.toggled.connect(self.loop_changed.emit)
+        # The scheduler always cycles clock slots (Jazler lesson 5) —
+        # a no-loop mode with backup-filter fill is not built yet, so
+        # the toggle must not pretend to do anything.
+        self._loop_cb.setEnabled(False)
+        self._loop_cb.setToolTip("Not active yet — clocks always cycle.")
         self._desc_cb = _Checkbox("Show only song descriptions",
                                   COL_CYAN, self)
         self._desc_cb.move(239, 499)
@@ -2334,6 +2339,18 @@ class ClockEditor(QWidget):
         self._editor.face().set_selected(None)
         self._sync_contents_list()
         self._editor.set_status("ok", "No Errors Found")
+        # AUTO clocks belong to the Category Auto-Grid builder. Saving
+        # here marks the clock hand-edited; the builder then stops
+        # refreshing its slots (core.auto_grid_builder._is_builder_owned).
+        try:
+            from core.auto_grid_builder import AUTO_CLOCK_PREFIX
+            if (mode == MODE_EDIT
+                    and self._meta.name().startswith(AUTO_CLOCK_PREFIX)):
+                self._editor.set_status(
+                    "warn", "AUTO clock (Category Air Time) — once you "
+                    "change its elements the builder stops updating it")
+        except Exception:
+            pass
         self._refresh_action_states()
         self._refresh_filter_results()
         # End of programmatic load — re-enable dirty tracking
@@ -2415,7 +2432,8 @@ class ClockEditor(QWidget):
         for s in slots:
             keys = s.keys()
             stype_db = (s["slot_type"] if "slot_type" in keys else "song") or "song"
-            ui_type = DB_TO_ELEMENT_TYPE.get(stype_db.lower(), "song")
+            ui_type = DB_TO_ELEMENT_TYPE.get(
+                stype_db.strip().lower().replace(" ", "_"), "song")
             cat_id = s["category_id"] if "category_id" in keys else None
             cat_color = s["cat_color"] if "cat_color" in keys else None
             fjs = s["filter_json"] if "filter_json" in keys else None
@@ -2905,7 +2923,8 @@ class ClockEditor(QWidget):
             "name":                   self._meta.name(),
             "comments":               self._meta.comments(),
             "color":                  self._meta.color(),
-            "backup_song_filter":     None,    # picker out of scope
+            # backup_song_filter deliberately NOT written: the editor has
+            # no picker for it, and sending None wiped any stored value.
             "loop_cycle_enabled":     1 if self._editor.loop() else 0,
             "show_only_descriptions": 1 if self._editor.show_only_descriptions() else 0,
         }
@@ -2921,9 +2940,19 @@ class ClockEditor(QWidget):
             # NEW or DUPLICATE — create a fresh row, then save the rest.
             try:
                 target_id = int(self._db.create_clock(meta_payload["name"]))
-                self._db.save_clock(target_id, meta_payload)
             except Exception as exc:
                 log.warning(f"create_clock failed: {exc}")
+                dialogs.warning(self, "Save failed", str(exc))
+                return None
+            # The row exists now — switch to EDIT on it immediately so a
+            # second OK (or a retry after a slot-save failure below)
+            # updates this clock instead of creating a duplicate.
+            self._mode = MODE_EDIT
+            self._source_id = target_id
+            try:
+                self._db.save_clock(target_id, meta_payload)
+            except Exception as exc:
+                log.warning(f"save_clock (new) failed: {exc}")
                 dialogs.warning(self, "Save failed", str(exc))
                 return None
         # Slots — atomic replace
@@ -2950,6 +2979,13 @@ class ClockEditor(QWidget):
         for el in elements:
             ui_type = el.get("element_type") or "song"
             stype_db = ELEMENT_TYPE_TO_DB.get(ui_type, "song")
+            # Station-ID slots share the "jingle" UI type but must round-
+            # trip as station_id (else every save silently demoted them
+            # to plain jingles and the scheduler stopped picking IDs).
+            stored = str(el.get("slot_type_db") or "").strip().lower(
+                ).replace(" ", "_")
+            if ui_type == "jingle" and stored == "station_id":
+                stype_db = "station_id"
             dur_s = int(el.get("duration_seconds") or
                         DEFAULT_DURATION_S.get(ui_type, 240))
             mp = int(round(running_min))

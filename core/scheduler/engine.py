@@ -80,6 +80,16 @@ def _same_thread(a, b) -> bool:
         return a is b
 
 
+
+def _file_exists(row) -> bool:
+    """True when ``row['file_path']`` is set and exists on disk."""
+    import os
+    try:
+        fp = row["file_path"]
+    except (IndexError, KeyError, TypeError):
+        return False
+    return bool(fp) and os.path.exists(fp)
+
 class SchedulerEngine(QObject):
     """Background scheduler. 1Hz tick, event queue, Qt-signal-bridged
     to UI consumers."""
@@ -149,11 +159,26 @@ class SchedulerEngine(QObject):
         # Dedupe keys: (campaign_id, break_time) for spots already fired today;
         # ('warn', campaign_id, break_time) for 30s-warning that already fired.
         self._fired_breaks: set = set()
+        # Guards every add/clear/copy of _fired_breaks — the scheduler
+        # thread adds keys while peek_next (main thread) snapshots it.
+        self._fired_lock = threading.Lock()
+        # Per-thread simulation set used by _pick_break while peek_next
+        # runs, so a preview never touches (or replaces) the real set.
+        self._peek_local = threading.local()
+        # Live reload (2026-10-17): set by reload_breaks() from any
+        # thread; the next tick reloads in place (keeps _fired_breaks).
+        self._breaks_dirty: bool = False
+        # monotonic() deadline for the next retry after a failed load
+        # (None = no retry pending).
+        self._breaks_retry_at: Optional[float] = None
 
         # Phase F2: clock-slot cursor for pick_next_song. Reset on hour
         # rollover so each hour starts at slot 0.
         self._clock_slot_cursor: int = 0
         self._active_hour_key: Optional[tuple[int, int]] = None
+        # Clock the cursor indexes into — reset the cursor when the
+        # resolved clock changes (force override / grid edit).
+        self._cursor_clock_id: Optional[int] = None
 
         # Active-clock tracking (Studio header indicator).
         # `_active_clock_id is None` means "no tick has resolved yet" —
@@ -184,6 +209,9 @@ class SchedulerEngine(QObject):
         self._rot_dec_cache: dict = {
             "active": False, "rest_ids": set(), "picks": []}
         self._rot_dec_cache_at: float = 0.0   # monotonic ts of last fetch
+        # Set when a cache refresh changes the result; _on_tick emits
+        # queue_changed (never from inside a peek simulation).
+        self._queue_dirty: bool = False
 
         # Category air-time tags (core.category_air_time). Read with a
         # 60 s TTL — peek_next simulates 5 picks per refresh — so a tag
@@ -362,6 +390,16 @@ class SchedulerEngine(QObject):
         # _dispatch_due_events above). Broadcast safety: keep the
         # 1Hz heartbeat alive at all costs.
         self._check_active_clock_change()
+        # Deferred queue_changed from a cache refresh that changed what
+        # slots may air (plan approval, air-time edit, invalidation).
+        # Raised inside picks — possibly during a peek simulation — so
+        # it is emitted here, never inside the suppressed window.
+        if self._queue_dirty and not self._suppress_queue_emit:
+            self._queue_dirty = False
+            try:
+                self.queue_changed.emit()
+            except Exception:
+                pass
 
     # ── Active-clock tracking (Studio header indicator) ───────────────────
 
@@ -382,22 +420,16 @@ class SchedulerEngine(QObject):
         so the indicator displays the last known clock until the next
         successful resolve."""
         try:
-            now = datetime.now()
-            dow = int(now.weekday())
-            hour = int(now.hour)
-            row = self._db.get_active_clock(dow, hour)
-            if row is None:
+            # Shared resolver (force override → grid) — the indicator
+            # must name the clock dispatch actually plays.
+            from core.clock_resolver import resolve_clock
+            res = resolve_clock(self._db, datetime.now())
+            if res is None:
                 new_id = -1
                 new_name = ""
             else:
-                try:
-                    new_id = int(row["id"])
-                except (KeyError, IndexError, TypeError, ValueError):
-                    new_id = -1
-                try:
-                    new_name = str(row["name"] or "")
-                except (KeyError, IndexError, TypeError):
-                    new_name = ""
+                new_id = int(res["id"])
+                new_name = res["name"]
         except Exception as exc:
             log.warning(f"active-clock check failed: "
                         f"{type(exc).__name__}: {exc}")
@@ -481,14 +513,18 @@ class SchedulerEngine(QObject):
             try:
                 self._reload_today_breaks(now)
             except Exception as exc:
-                log.warning(f"break-schedule reload failed: {exc}")
-                # Don't keep retrying every tick on failure — mark loaded
-                # so next attempt happens at the next day rollover.
+                # Don't hammer the DB every tick, but don't give up for
+                # the whole day either — retry every BREAK_RETRY_S.
                 self._loaded_date = today
                 self._loaded_breaks = []
-                self._fired_breaks.clear()
+                with self._fired_lock:
+                    self._fired_breaks.clear()
+                self._note_break_load_failure(exc)
             else:
-                self._fired_breaks.clear()
+                self._breaks_retry_at = None
+                self._breaks_dirty = False
+                with self._fired_lock:
+                    self._fired_breaks.clear()
                 # New day → yesterday's rotation-plan decisions are
                 # stale; force a refetch on the next pick.
                 self._rot_dec_cache_key = None
@@ -514,6 +550,26 @@ class SchedulerEngine(QObject):
                 log.info(
                     f"scheduler reloaded {len(self._loaded_breaks)} "
                     f"breaks for day {now.weekday()}")
+        elif self._breaks_dirty or (
+                self._breaks_retry_at is not None
+                and time.monotonic() >= self._breaks_retry_at):
+            # Live reload (campaign edited / failed-load retry): reload
+            # IN PLACE — _fired_breaks is kept so already-aired breaks
+            # never re-fire.
+            self._breaks_dirty = False
+            try:
+                self._reload_today_breaks(now)
+            except Exception as exc:
+                self._note_break_load_failure(exc)
+            else:
+                self._breaks_retry_at = None
+                log.info(
+                    f"scheduler live-reloaded {len(self._loaded_breaks)} "
+                    f"breaks (fired set kept)")
+                try:
+                    self.queue_changed.emit()
+                except Exception:
+                    pass
 
         # Walk today's breaks; emit due / approaching; track next future
         next_break_secs = -1
@@ -535,7 +591,8 @@ class SchedulerEngine(QObject):
             # In the due window? (±SPOT_TOLERANCE_S around break_time)
             if (not already_fired_spot
                     and abs(delta) <= self.SPOT_TOLERANCE_S):
-                self._fired_breaks.add(spot_key)
+                with self._fired_lock:
+                    self._fired_breaks.add(spot_key)
                 self.spot_due.emit(campaign_id)
                 log.info(
                     f"scheduler: spot_due campaign={campaign_id} "
@@ -545,7 +602,8 @@ class SchedulerEngine(QObject):
             # outside-in. We require delta > 0 (future) AND <= BREAK_WARN_S.
             elif (not already_fired_warn
                     and 0 < delta <= self.BREAK_WARN_S):
-                self._fired_breaks.add(warn_key)
+                with self._fired_lock:
+                    self._fired_breaks.add(warn_key)
                 self.break_approaching.emit(int(delta))
 
             # Track nearest future break for the per-tick countdown
@@ -566,6 +624,98 @@ class SchedulerEngine(QObject):
         # holding the connection cursor)
         self._loaded_breaks = [{k: r[k] for k in r.keys()} for r in rows]
         self._loaded_date = now.date()
+
+    # Failed break-schedule loads are retried this often (seconds).
+    BREAK_RETRY_S = 60
+
+    def reload_breaks(self) -> None:
+        """Public, thread-safe: mark today's break schedule dirty. The
+        next scheduler tick reloads it IN PLACE (``_fired_breaks`` is
+        kept, so breaks that already aired never re-fire) and emits
+        ``queue_changed``. Call after any campaign / schedule edit."""
+        self._breaks_dirty = True
+
+    def _note_break_load_failure(self, exc) -> None:
+        """Schedule a retry in BREAK_RETRY_S and tell the operator."""
+        self._breaks_retry_at = time.monotonic() + self.BREAK_RETRY_S
+        msg = (f"Could not load today's commercial breaks ({exc}) — "
+               f"spots will NOT air until this succeeds; retrying in "
+               f"{self.BREAK_RETRY_S}s.")
+        log.warning(msg)
+        try:
+            self.error_occurred.emit(msg)
+        except Exception:
+            pass
+
+    def _fired_snapshot(self) -> set:
+        with self._fired_lock:
+            return set(self._fired_breaks)
+
+    def next_break_info(self, now: Optional[datetime] = None) -> Optional[dict]:
+        """The next not-yet-fired break (all campaigns sharing its
+        break_time) from the loaded — i.e. date-filtered — schedule.
+        Returns {break_time, break_dt, seconds, campaign_ids,
+        campaign_names} or None. Read-only; safe from any thread."""
+        now = now or datetime.now()
+        fired = self._fired_snapshot()
+        best_dt, groups = None, {}
+        for row in list(self._loaded_breaks):
+            bt = row.get("break_time") or ""
+            bdt = self._break_time_to_dt(bt, now)
+            if bdt is None:
+                continue
+            cid = int(row.get("campaign_id") or 0)
+            if (cid, bt) in fired:
+                continue
+            if (bdt - now).total_seconds() < -self.SPOT_TOLERANCE_S:
+                continue
+            groups.setdefault(bdt, []).append(row)
+            if best_dt is None or bdt < best_dt:
+                best_dt = bdt
+        if best_dt is None:
+            return None
+        rows = groups[best_dt]
+        return {
+            "break_time": rows[0].get("break_time") or "",
+            "break_dt": best_dt,
+            "seconds": int((best_dt - now).total_seconds()),
+            "campaign_ids": [int(r.get("campaign_id") or 0) for r in rows],
+            "campaign_names": [r.get("campaign_name") or "Spot"
+                               for r in rows],
+        }
+
+    def upcoming_breaks(self, within_s: int,
+                        now: Optional[datetime] = None) -> list[dict]:
+        """Unfired loaded breaks due within ``within_s`` seconds (and not
+        older than SPOT_TOLERANCE_S). Same filtered source as dispatch."""
+        now = now or datetime.now()
+        fired = self._fired_snapshot()
+        out = []
+        for row in list(self._loaded_breaks):
+            bt = row.get("break_time") or ""
+            bdt = self._break_time_to_dt(bt, now)
+            if bdt is None:
+                continue
+            if (int(row.get("campaign_id") or 0), bt) in fired:
+                continue
+            delta = (bdt - now).total_seconds()
+            if -self.SPOT_TOLERANCE_S <= delta <= within_s:
+                out.append(dict(row))
+        return out
+
+    def skip_next_break(self, now: Optional[datetime] = None) -> Optional[dict]:
+        """Mark every campaign of the next unfired break as fired so it
+        will not dispatch. Returns the skipped break info (or None)."""
+        info = self.next_break_info(now)
+        if not info:
+            return None
+        with self._fired_lock:
+            for cid in info["campaign_ids"]:
+                self._fired_breaks.add((cid, info["break_time"]))
+                self._fired_breaks.add(("warn", cid, info["break_time"]))
+        log.info(f"scheduler: operator SKIPPED break {info['break_time']} "
+                 f"campaigns={info['campaign_ids']}")
+        return info
 
     @staticmethod
     def _break_time_to_dt(time_str, ref_now: datetime) -> Optional[datetime]:
@@ -618,23 +768,30 @@ class SchedulerEngine(QObject):
             self._clock_slot_cursor = 0
             self._active_hour_key = hour_key
 
-        # Phase F-Final S4: force_clocks override layer
-        clock_id: Optional[int] = None
+        # Song delete / Category Move / clock save bump the DB's data
+        # generation → drop the 60s plan + air-time caches right away.
+        gen = getattr(self._db, "data_generation", 0)
+        if gen != getattr(self, "_seen_data_generation", gen):
+            self.invalidate_rotation_cache()
+        self._seen_data_generation = gen
+
+        # Phase F-Final S4: force_clocks override layer → grid fallback
+        # (core.clock_resolver — the same rule the indicator uses).
+        from core.clock_resolver import resolve_clock
         try:
-            fc = self._db.get_force_clock_for(now)
-            if fc is not None:
-                clock_id = int(fc["clock_id"])
+            res = resolve_clock(self._db, now)
         except Exception as exc:
-            log.debug(f"pick_next_item: get_force_clock_for failed: {exc}")
-        if clock_id is None:
-            try:
-                clock_row = self._db.get_active_clock(dow, hour)
-            except Exception as exc:
-                log.debug(f"pick_next_item: get_active_clock failed: {exc}")
-                return None
-            if not clock_row:
-                return None
-            clock_id = int(clock_row["id"])
+            log.debug(f"pick_next_item: get_active_clock failed: {exc}")
+            return None
+        if not res:
+            return None
+        clock_id: int = int(res["id"])
+        # Slot cursor belongs to ONE clock — a force override starting
+        # mid-hour (or a grid edit) must restart at slot 0 instead of
+        # indexing the new clock with the old clock's position.
+        if getattr(self, "_cursor_clock_id", None) != clock_id:
+            self._clock_slot_cursor = 0
+            self._cursor_clock_id = clock_id
 
         try:
             slots = self._db.get_clock_slots(clock_id)
@@ -721,6 +878,14 @@ class SchedulerEngine(QObject):
                         f"SELECT DISTINCT category_id FROM songs "
                         f"WHERE is_enabled = 1 AND category_id IN ({marks})",
                         cats).fetchall()}
+                sig = (tuple(sorted(
+                           (int(p["category_id"]), p.get("day_of_week"),
+                            int(p["hour_start"]), int(p["hour_end"]))
+                           for p in parts)), frozenset(playable))
+                prev_sig = getattr(self, "_air_time_sig", None)
+                if prev_sig is not None and prev_sig != sig:
+                    self._queue_dirty = True    # emitted by _on_tick
+                self._air_time_sig = sig
                 self._air_time_parts = parts
                 self._air_time_playable = playable
                 self._air_time_names = {
@@ -820,12 +985,14 @@ class SchedulerEngine(QObject):
             return []
 
         # Snapshot every state variable touched by the pick pipeline.
-        # _fired_breaks is mutated inside _pick_break (line 826); we copy
-        # the set so add/remove operations during the simulated picks
-        # don't bleed back into real dispatch.
+        # _fired_breaks: _pick_break writes to a per-thread SIMULATION
+        # copy while we peek; the real set is never replaced, so a key
+        # the scheduler thread adds mid-peek can't be lost (2026-10-17).
         saved_cursor = self._clock_slot_cursor
         saved_hour_key = self._active_hour_key
-        saved_fired_breaks = set(self._fired_breaks)
+        saved_cursor_clock = getattr(self, "_cursor_clock_id", None)
+        saved_sim_fired = getattr(self._peek_local, "fired", None)
+        self._peek_local.fired = self._fired_snapshot()
         # Phase 2 — block queue_changed emission while we simulate
         # dispatches. Without this gate every peek_next would emit
         # `n` redundant signals, and Studio's `_on_scheduler_queue_changed`
@@ -862,7 +1029,8 @@ class SchedulerEngine(QObject):
             # returns.
             self._clock_slot_cursor = saved_cursor
             self._active_hour_key = saved_hour_key
-            self._fired_breaks = saved_fired_breaks
+            self._cursor_clock_id = saved_cursor_clock
+            self._peek_local.fired = saved_sim_fired
             self._suppress_queue_emit = saved_suppress
         return out
 
@@ -920,6 +1088,17 @@ class SchedulerEngine(QObject):
                 return self._rot_dec_cache
             decisions = self._db.get_active_rotation_decisions(
                 pick_date, int(clock_id), int(hour))
+            # Plan approved / discarded / edited mid-hour → the Up
+            # Coming view is stale. Flag it; _on_tick emits
+            # queue_changed outside any peek simulation.
+            sig = (bool(decisions.get("active")),
+                   frozenset(decisions.get("rest_ids") or ()),
+                   tuple(sorted(int(p["song_id"])
+                                for p in decisions.get("picks") or [])))
+            prev = getattr(self, "_rot_dec_sig", None)
+            if prev is not None and prev[0] == key and prev[1] != sig:
+                self._queue_dirty = True
+            self._rot_dec_sig = (key, sig)
             self._rot_dec_cache_key = key
             self._rot_dec_cache = decisions
             self._rot_dec_cache_at = time.monotonic()
@@ -929,6 +1108,18 @@ class SchedulerEngine(QObject):
                 f"_active_rotation_decisions failed: {exc} "
                 f"— treating rotation plan as inactive")
             return inactive
+
+    def invalidate_rotation_cache(self) -> None:
+        """Drop the memoised approved-plan decisions + category air-time
+        snapshot so the next pick re-reads the DB. Call after anything
+        that changes what a slot may air: Category Move, song delete,
+        clock save, plan approval. Thread-safe enough: plain attribute
+        writes the scheduler thread re-checks on its next pick."""
+        self._rot_dec_cache_key = None
+        self._rot_dec_cache_at = 0.0
+        self._air_time_at = -1e9
+        # Up Coming must re-peek even if nothing else ticks it.
+        self._queue_dirty = True
 
     def _pick_song(self, slot) -> Optional[dict]:
         """Song pick — Phase F-Final C3 dispatch order:
@@ -949,8 +1140,15 @@ class SchedulerEngine(QObject):
         sid = slot["specific_song_id"] if "specific_song_id" in slot.keys() else None
         if sid:
             row = self._db.get_song(int(sid))
-            if row:
+            # A pinned song that was disabled in the library must not
+            # air — fall through to the artist/filter/category pickers.
+            if row and ("is_enabled" not in row.keys()
+                        or row["is_enabled"] is None
+                        or int(row["is_enabled"]) == 1):
                 return self._song_row_to_item({k: row[k] for k in row.keys()})
+            if row:
+                log.warning(f"_pick_song: pinned song {sid} is disabled "
+                            f"— falling through")
 
         # 2) specific artist — random from artist's catalog. Songs hold
         #    the artist as TEXT (there is no songs.artist_id column — the
@@ -1018,8 +1216,19 @@ class SchedulerEngine(QObject):
                     self.SEPARATION_SAME_ARTIST_MIN)
                 recent_song_ids = self._recent_song_ids(
                     self.SEPARATION_SAME_SONG_MIN)
-                playable = [
+                # Slot-category gate: a plan pick only airs in a slot of
+                # the category it was planned FOR, and only while the
+                # song still LIVES there (Category Move takes effect at
+                # once). An all-songs slot (no category) takes any pick.
+                cat_picks = [
                     p for p in rot["picks"]
+                    if category_id is None or (
+                        p.get("category_id") == category_id
+                        and p.get("target_category_id") in (
+                            None, category_id))
+                ]
+                playable = [
+                    p for p in cat_picks
                     if p.get("file_path")
                     and os.path.exists(p["file_path"])
                     and int(p["song_id"]) not in recent_song_ids
@@ -1270,10 +1479,13 @@ class SchedulerEngine(QObject):
         library migration still works.
 
         Mode dispatch:
-          • specific + item_id   → master `jingles` row (preferred);
-                                   falls back to `jingle_pads.id` lookup
-                                   for pre-migration slots that referenced
-                                   the pad-grid table by id.
+          • specific + item_id   → master `jingles` row ONLY. (The old
+                                   fallback to `jingle_pads` by the same
+                                   id aired an UNRELATED pad whenever the
+                                   pinned jingle was disabled — the two
+                                   tables have separate id spaces.)
+        Every path skips rows whose file is missing on disk (same
+        hardening as _pick_sweeper) so a broken row can't stall air.
           • random_from_category + cat_id → legacy pad-grid path
                                    (cat_id interpreted as pallet_id).
                                    The master library doesn't map to
@@ -1287,22 +1499,20 @@ class SchedulerEngine(QObject):
         cat_id  = self._slot_category_id(slot)   # legacy: interpreted as pallet_id
 
         if mode == "specific" and item_id:
-            # Prefer the master library.
             row = self._db._conn().execute(
                 "SELECT * FROM jingles WHERE id = ? AND is_enabled = 1 "
                 "AND file_path IS NOT NULL AND file_path != ''",
                 [item_id]).fetchone()
-            if row:
+            if row and _file_exists(row):
                 return self._jingle_to_item(row)
-            # Fallback: legacy pad-grid lookup (pre-migration clocks).
-            row = self._db._conn().execute(
-                "SELECT * FROM jingle_pads WHERE id = ? "
-                "AND file_path IS NOT NULL AND file_path != ''",
-                [item_id]).fetchone()
-            return self._jingle_pad_to_item(row) if row else None
+            if row:
+                log.warning(f"_pick_jingle: jingle id={item_id} file "
+                            f"missing on disk — slot skipped")
+            return None
 
         if mode == "random_from_category" and cat_id:
-            pads = list(self._db.get_jingle_pads_active(pallet_id=cat_id))
+            pads = [p for p in self._db.get_jingle_pads_active(
+                        pallet_id=cat_id) if _file_exists(p)]
             if pads:
                 return self._jingle_pad_to_item(random.choice(pads))
 
@@ -1314,10 +1524,12 @@ class SchedulerEngine(QObject):
             ).fetchall()
         except Exception:
             jingles = []
+        jingles = [j for j in jingles if _file_exists(j)]
         if jingles:
             return self._jingle_to_item(random.choice(jingles))
-        # Greenfield fallback — nothing in `jingles`, take a pad.
-        pads = list(self._db.get_jingle_pads_active())
+        # Greenfield fallback — nothing playable in `jingles`, take a pad.
+        pads = [p for p in self._db.get_jingle_pads_active()
+                if _file_exists(p)]
         if not pads:
             return None
         return self._jingle_pad_to_item(random.choice(pads))
@@ -1330,6 +1542,9 @@ class SchedulerEngine(QObject):
             "file_path":   row["file_path"] if row and "file_path" in row.keys() else None,
             "title":       row["label"]     if row and "label"     in row.keys() else "Jingle",
             "artist":      "JINGLE",
+            # item_id here is a jingle_pads.id — NOT a jingles.id, so it
+            # must never be logged as broadcast_log.jingle_id.
+            "_source":     "pad",
             "duration_ms": int(row["duration_ms"] or 0)
                            if row and "duration_ms" in row.keys() else 0,
         }
@@ -1450,9 +1665,11 @@ class SchedulerEngine(QObject):
                 "SELECT * FROM jingles WHERE id = ? "
                 "AND category = 'Station ID' AND is_enabled = 1",
                 [item_id]).fetchone()
-            return self._station_id_to_item(row) if row else None
+            return (self._station_id_to_item(row)
+                    if row and _file_exists(row) else None)
 
-        rows = list(self._db.get_station_ids_active())
+        rows = [r for r in self._db.get_station_ids_active()
+                if _file_exists(r)]
         if not rows:
             return None
         return self._station_id_to_item(random.choice(rows))
@@ -1517,8 +1734,13 @@ class SchedulerEngine(QObject):
             return None
         if not day_breaks:
             return None
-        # Filter to campaigns whose break_time falls in the current hour
-        # and aren't already in _fired_breaks.
+        # Filter to campaigns whose break_time falls in the current hour,
+        # is actually DUE (break_dt <= now + SPOT_TOLERANCE_S — never a
+        # break scheduled later this hour), and isn't already fired.
+        # While peek_next simulates, use its per-thread copy instead of
+        # the real set (race fix 2026-10-17).
+        sim_fired = getattr(self._peek_local, "fired", None)
+        fired = sim_fired if sim_fired is not None else self._fired_breaks
         cur_hour = int(now.hour)
         for br in day_breaks:
             br_time = (br["break_time"] or "").strip()
@@ -1530,9 +1752,12 @@ class SchedulerEngine(QObject):
                 continue
             if br_h != cur_hour:
                 continue
+            br_dt = self._break_time_to_dt(br_time, now)
+            if br_dt is None or (br_dt - now).total_seconds() > self.SPOT_TOLERANCE_S:
+                continue
             campaign_id = int(br["campaign_id"])
             dedupe_key = (campaign_id, br_time)
-            if dedupe_key in self._fired_breaks:
+            if dedupe_key in fired:
                 continue
             # Pick the first playable spot file for this campaign.
             try:
@@ -1548,10 +1773,15 @@ class SchedulerEngine(QObject):
                     break
             if chosen is None:
                 continue
-            self._fired_breaks.add(dedupe_key)
+            if sim_fired is not None:
+                sim_fired.add(dedupe_key)
+            else:
+                with self._fired_lock:
+                    self._fired_breaks.add(dedupe_key)
             return {
                 "item_type":   "spot",
                 "item_id":     campaign_id,
+                "campaign_id": campaign_id,
                 "file_path":   chosen["file_path"]
                                if "file_path" in chosen.keys() else None,
                 "title":       br["campaign_name"] or "Spot",

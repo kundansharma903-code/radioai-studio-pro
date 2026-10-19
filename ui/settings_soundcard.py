@@ -379,7 +379,7 @@ class _ChannelCard(QFrame):
             lambda _=False: self.test_clicked.emit(self._channel_key))
 
         # Connection status
-        self._status_lbl = QLabel("● Connected & Active", self)
+        self._status_lbl = QLabel("● Selected", self)
         self._status_lbl.setGeometry(14, 316, self.width() - 28, 14)
         self._status_lbl.setFont(inter(9, QFont.Weight.Bold))
         self._status_lbl.setStyleSheet(
@@ -438,14 +438,29 @@ class _ChannelCard(QFrame):
     def channel_mode(self) -> str:
         return self._cmb_channel.currentText()
 
+    def mark_not_active(self, device_too: bool) -> None:
+        """Grey out the controls nothing reads yet: volume, channel mode
+        and the test button always; the device combo too when this
+        whole channel is not routed by the engine (`device_too`)."""
+        from ui.widgets.not_active import mark_not_active
+        mark_not_active(self._sl_vol, label=self._vol_lbl)
+        mark_not_active(self._cmb_channel, label=False)
+        mark_not_active(self._btn_test, label=False)
+        if device_too:
+            mark_not_active(self._cmb_device, label=False)
+
     # ── Internal ──────────────────────────────────────────────────────
 
     def _on_vol_changed(self, v: int) -> None:
-        self._vol_lbl.setText(f"VOL: {v}%")
+        from ui.widgets.not_active import COMING_SOON_SUFFIX, is_not_active
+        sfx = COMING_SOON_SUFFIX if is_not_active(self._sl_vol) else ""
+        self._vol_lbl.setText(f"VOL: {v}%{sfx}")
 
     def _refresh_status(self) -> None:
+        # Reflects the SELECTION only — no live device check is made,
+        # so never claim "Connected & Active".
         if self.selected_device():
-            self._status_lbl.setText("● Connected & Active")
+            self._status_lbl.setText("● Selected")
             self._status_lbl.setStyleSheet(
                 f"color: {GREEN_LIGHT}; background: transparent; "
                 f"border: none;")
@@ -647,8 +662,8 @@ class SettingsSoundcard(QWidget):
             f"color: {CYAN_LIGHT}; background: transparent; border: none;")
 
         sub = QLabel(
-            "Assign Windows audio devices to each RadioAI output channel. "
-            "Changes require restart.",
+            "Assign the Windows audio device for Output 1 (Main On-Air). "
+            "Changes require restart. Other channels: coming soon.",
             cont)
         sub.setGeometry(16, 28, 800, 14)
         sub.setFont(inter(10))
@@ -675,6 +690,10 @@ class SettingsSoundcard(QWidget):
             c.move(start_x + i * (CARD_W + GAP), y)
             c.populate_devices(self._devices)
             c.test_clicked.connect(self._on_test_clicked)
+            # Only Output 1's DEVICE is used (applied at boot). Outputs
+            # 2-4 / the mic input, every volume + channel mode and the
+            # test tones are not active in this version.
+            c.mark_not_active(device_too=(key != "output_1"))
             self._cards[key] = c
 
     # ── Warning strip + action buttons ────────────────────────────────
@@ -696,8 +715,8 @@ class SettingsSoundcard(QWidget):
             f"color: {AMBER_LIGHT}; background: transparent; border: none;")
 
         main = QLabel(
-            "Audio driver changes and volume settings require RadioAI "
-            "restart to take full effect.",
+            "The Output 1 (Main On-Air) device applies after a RadioAI "
+            "restart.",
             strip)
         main.setGeometry(56, 8, strip.width() - 360, 22)
         main.setFont(inter(12, QFont.Weight.Bold))
@@ -705,7 +724,8 @@ class SettingsSoundcard(QWidget):
             f"color: {AMBER_LIGHT}; background: transparent; border: none;")
 
         sub = QLabel(
-            "Always use 'Test Tone' to verify output before going on air.",
+            "Outputs 2–4, the mic input, volume and channel settings are "
+            "not active in this version.",
             strip)
         sub.setGeometry(56, 30, strip.width() - 360, 18)
         sub.setFont(inter(10))
@@ -727,6 +747,8 @@ class SettingsSoundcard(QWidget):
             f"border: 1px solid {rgba(CYAN, 0.70)}; }}"
         )
         self._btn_test_all.clicked.connect(self._on_test_all)
+        from ui.widgets.not_active import mark_not_active
+        mark_not_active(self._btn_test_all, label=False)
 
         # Save Routing button
         self._btn_save = QPushButton("✓  Save Routing", strip)
@@ -951,9 +973,10 @@ class SettingsSoundcard(QWidget):
         self.settings_saved.emit()
         dialogs.info(
             self, "Saved",
-            "Routing saved.\n\nAudio driver changes take effect after "
-            "RadioAI restart. Use Test Tone to verify output before "
-            "going on air.")
+            "Routing saved.\n\nThe Output 1 (Main On-Air) device takes "
+            "effect after a RadioAI restart. Aircheck recorder settings "
+            "apply now.\n\nOutputs 2–4, the mic input, volume and "
+            "channel settings are stored but not active in this version.")
 
     def _on_test_clicked(self, channel_key: str) -> None:
         is_input = channel_key.startswith("input")

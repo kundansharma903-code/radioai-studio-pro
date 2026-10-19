@@ -88,12 +88,17 @@ class _MinimalScheduler:
 
 
 @pytest.fixture
-def studio(qtbot, engine):
+def studio(qtbot, engine, monkeypatch):
     """Studio with the shared engine fixture from conftest.py + a fresh
     Database. No scheduler — these tests cover Studio's internal
     deferred-spot state machine, which doesn't depend on the scheduler
     thread (we exercise the handler entry points directly)."""
     db = Database()
+    # Campaign contract limits (2026-10-17) are covered by
+    # tests/test_spot_engine_fixes.py; these synthetic campaign ids
+    # (12345, 100..500) must reach the defer state machine.
+    monkeypatch.setattr(db, "campaign_air_check",
+                        lambda cid, now=None: (True, ""), raising=False)
     s = Studio(db=db, engine=engine, scheduler=None,
                instant_jingle_engine=None)
     if len(s._queue_songs) < 2:
@@ -520,6 +525,10 @@ def test_t60_preview_populates_upcoming_spots_from_campaign_schedule(
             return _FakeCursor()
 
     monkeypatch.setattr(studio._db, "_conn", lambda: _FakeConn())
+    # 2026-10-17: the preview now reads the SAME date-filtered source as
+    # dispatch (get_active_breaks_for_day) instead of a raw query.
+    monkeypatch.setattr(studio._db, "get_active_breaks_for_day",
+                        lambda dow: list(fake_rows))
     monkeypatch.setattr(studio._db, "get_sotg_assignments_for_date",
                         lambda d, status=None: [])
 

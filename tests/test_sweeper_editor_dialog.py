@@ -19,6 +19,7 @@ dev DB stays untouched. try/finally cleanup.
 
 from __future__ import annotations
 
+import sys
 import uuid
 from typing import List
 
@@ -229,6 +230,8 @@ def test_save_inserts_row_and_emits_signal(qapp, db, cleanup):
     prefix, register = cleanup
     dlg = SweeperEditorDialog(db, sweeper_id=None)
     dlg._title_input.setText(prefix + "FromDialog")
+    # 2026-10-17: save now requires an existing audio file.
+    dlg._file_input.setText(sys.executable)
     dlg._duration_input.setText("0:10")
     dlg._on_position_picked("Independent")
     dlg._on_category_picked("Custom")
@@ -259,6 +262,8 @@ def test_save_in_edit_mode_updates_existing(qapp, db, cleanup):
     register(sid)
     dlg = SweeperEditorDialog(db, sweeper_id=sid)
     dlg._title_input.setText(prefix + "Post")
+    # 2026-10-17: save now requires an existing audio file.
+    dlg._file_input.setText(sys.executable)
     dlg._on_category_picked("Sports")
 
     captured: list[int] = []

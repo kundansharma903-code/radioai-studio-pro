@@ -855,6 +855,19 @@ class JingleEditorDialog(BaseDialog):
             if self._title_input:
                 self._title_input.setFocus()
             return
+        # Required: an audio file that exists on disk. A row saved
+        # without one is silently skipped on air (or stalls dispatch).
+        fp = (data.get("file_path") or "").strip()
+        if not fp or not os.path.isfile(fp):
+            dialogs.warning(
+                self, "Audio file required",
+                ("Choose an audio file for this jingle before "
+                 "saving." if not fp else
+                 f"The audio file doesn't exist:\n{fp}\n\n"
+                 f"Browse to a valid file before saving."))
+            if self._file_input:
+                self._file_input.setFocus()
+            return
         try:
             if self._mode_edit:
                 self._db.update_jingle(int(self._jingle_id), data)

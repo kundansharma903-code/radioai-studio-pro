@@ -175,6 +175,10 @@ def test_spot_that_cannot_open_moves_to_next_spot(idle_studio, monkeypatch,
     eng = _Eng(bad={str(bad)})
     s = idle_studio(eng)
     monkeypatch.setattr(s._db, "get_spot_files", lambda cid: files[cid])
+    # Campaign ids 1/2 are stand-ins — keep the 2026-10-17 contract
+    # gate (date window / limits) out of this file-failure test.
+    monkeypatch.setattr(s._db, "campaign_air_check",
+                        lambda cid, *a, **kw: (True, ""))
     s._pending_spots = [2]
     s._do_scheduler_spot_due(1, _policy_exempt=True)
     _pump()

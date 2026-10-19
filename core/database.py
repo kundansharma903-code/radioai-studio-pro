@@ -20,6 +20,10 @@ class Database:
 
     _instance = None
     _lock = threading.Lock()
+    # Bumped by writes that change what a clock slot may air (song
+    # delete, Category Move, clock slot save). SchedulerEngine compares
+    # it to drop its 60s rotation-plan / air-time caches immediately.
+    data_generation: int = 0
 
     def __new__(cls):
         if cls._instance is None:
@@ -88,13 +92,19 @@ class Database:
         vocal: Optional[str] = None,
         search: Optional[str] = None,
         limit: Optional[int] = None,
+        include_disabled: bool = False,
     ) -> List[sqlite3.Row]:
+        # include_disabled=True is for the Songs Library only (so the
+        # operator can find + re-enable disabled songs). Every on-air
+        # caller keeps the default enabled-only behaviour.
         sql = """
             SELECT s.*, c.name AS cat_name, c.color AS cat_color
             FROM   songs s
             LEFT JOIN categories c ON s.category_id = c.id
-            WHERE  s.is_enabled = 1
+            WHERE  1 = 1
         """
+        if not include_disabled:
+            sql += " AND s.is_enabled = 1"
         params: list = []
         if category_id:
             sql += " AND s.category_id = ?"
@@ -112,6 +122,20 @@ class Database:
         if limit:
             sql += f" LIMIT {int(limit)}"
         return self._conn().execute(sql, params).fetchall()
+
+    def set_songs_enabled(self, song_ids: list, enabled: bool) -> int:
+        """Enable / disable songs by exact id (Songs Library context
+        menu). Returns the number of rows changed."""
+        ids = [int(i) for i in (song_ids or [])]
+        if not ids:
+            return 0
+        conn = self._conn()
+        marks = ",".join("?" for _ in ids)
+        cur = conn.execute(
+            f"UPDATE songs SET is_enabled = ? WHERE id IN ({marks})",
+            [1 if enabled else 0] + ids)
+        conn.commit()
+        return cur.rowcount or 0
 
     def get_song(self, song_id: int) -> Optional[sqlite3.Row]:
         return self._conn().execute(
@@ -176,12 +200,21 @@ class Database:
                 "WHERE slot_type = 'song' AND item_id = ?",
                 [sid],
             )
+            # clock_slots.specific_song_id is a real FK (REFERENCES songs)
+            # → a song pinned in any clock aborted the delete. Unpin it.
+            try:
+                conn.execute(
+                    "UPDATE clock_slots SET specific_song_id = NULL "
+                    "WHERE specific_song_id = ?", [sid])
+            except sqlite3.OperationalError:
+                pass   # very old schema without the column
             # DELETE membership rows
             conn.execute("DELETE FROM playlist_songs    WHERE song_id = ?", [sid])
             conn.execute("DELETE FROM final_log_entries WHERE song_id = ?", [sid])
             # Finally the song
             conn.execute("DELETE FROM songs WHERE id = ?", [sid])
             conn.commit()
+            Database.data_generation += 1
             log.info(f"Song id={sid} deleted")
         except Exception:
             conn.rollback()
@@ -283,6 +316,9 @@ class Database:
         adds = [
             ("clock_id",  "INTEGER REFERENCES clocks(id)"),
             ("slot_idx",  "INTEGER"),
+            # Display name for rows with no FK to resolve one from
+            # (overlay sweepers, Instant Jingle pads). Non-destructive.
+            ("item_name", "TEXT"),
         ]
         for col, decl in adds:
             if col not in cols:
@@ -299,23 +335,29 @@ class Database:
         was_manual: int = 0,
         clock_id: Optional[int] = None,
         slot_idx: Optional[int] = None,
+        jingle_id: Optional[int] = None,
+        item_name: Optional[str] = None,
     ) -> None:
+        """``jingle_id`` must be a real ``jingles.id`` (FK) — Final Log
+        resolves the name through it. ``item_name`` is a free-text label
+        for rows with no FK (sweepers, Instant Jingle pads)."""
         self._ensure_broadcast_log_columns()
         conn = self._conn()
         sql = """
             INSERT INTO broadcast_log
                 (entry_type, song_id, campaign_id, duration_ms,
                  deck, was_manual, operator,
-                 clock_id, slot_idx,
+                 clock_id, slot_idx, jingle_id, item_name,
                  played_at, actual_time)
             VALUES (?, ?, ?, ?, ?, ?, 'AI AUTO',
-                    ?, ?,
+                    ?, ?, ?, ?,
                     datetime('now','localtime'),
                     datetime('now','localtime'))
             """
         try:
             conn.execute(sql, [entry_type, song_id, campaign_id, duration_ms,
-                               deck, was_manual, clock_id, slot_idx])
+                               deck, was_manual, clock_id, slot_idx,
+                               jingle_id, item_name])
         except sqlite3.IntegrityError as exc:
             # The item really aired — never lose that record because a
             # clock was deleted while one of its items was in flight
@@ -324,12 +366,17 @@ class Database:
             # id). clock_id is context, not the fact of the play: retry
             # without it. song/campaign links are kept — if those are
             # dangling too the original error stands.
-            if clock_id is None or "FOREIGN KEY" not in str(exc).upper():
+            # jingle_id is likewise a display link (item_name still
+            # carries the label), so drop it too on a dangling FK.
+            if ((clock_id is None and jingle_id is None)
+                    or "FOREIGN KEY" not in str(exc).upper()):
                 raise
-            log.warning(f"log_play: clock_id={clock_id} no longer exists "
-                        f"— logging {entry_type} without it ({exc})")
+            log.warning(f"log_play: clock_id={clock_id} / jingle_id="
+                        f"{jingle_id} no longer exists — logging "
+                        f"{entry_type} without them ({exc})")
             conn.execute(sql, [entry_type, song_id, campaign_id, duration_ms,
-                               deck, was_manual, None, slot_idx])
+                               deck, was_manual, None, slot_idx,
+                               None, item_name])
         conn.commit()
 
     def get_history(self, limit: int = 20,
@@ -1743,6 +1790,7 @@ class Database:
             "WHERE plan_date = ?",
             [ts, (plan_date or "").strip()])
         conn.commit()
+        Database.data_generation += 1   # plan live now → drop caches
 
     def mark_ai_rotation_plan_discarded(self, plan_date: str) -> None:
         """Stamp status='discarded' + discarded_at + WIPE the decision
@@ -1764,6 +1812,7 @@ class Database:
                 "DELETE FROM ai_rotation_decisions WHERE plan_id = ?",
                 [int(plan["id"])])
         conn.commit()
+        Database.data_generation += 1   # plan off now → drop caches
 
     def mark_ai_rotation_plan_auto_applied(self, plan_date: str) -> None:
         """Stamp status='auto_applied' (5-PM safety net path). Decisions
@@ -1778,6 +1827,7 @@ class Database:
             "WHERE plan_date = ?",
             [ts, (plan_date or "").strip()])
         conn.commit()
+        Database.data_generation += 1   # plan live now → drop caches
 
     def get_rotation_decisions_for_date(self, plan_date: str) -> list:
         """All decisions for a date joined with song / clock / category
@@ -1857,6 +1907,7 @@ class Database:
         rows = self._conn().execute(
             """
             SELECT  d.song_id, d.action,
+                    d.target_category_id, s.category_id AS song_category_id,
                     s.title, s.artist, s.file_path, s.duration_ms
             FROM    ai_rotation_decisions d
             JOIN    songs s ON s.id = d.song_id
@@ -1880,6 +1931,17 @@ class Database:
                         "file_path":   r["file_path"],
                         "duration_ms": r["duration_ms"],
                         "action":      action,
+                        # Slot-category filter inputs for _pick_song:
+                        # the category the AI planned the pick FOR, and
+                        # the song's CURRENT category (Category Move).
+                        "target_category_id": (
+                            int(r["target_category_id"])
+                            if r["target_category_id"] is not None
+                            else None),
+                        "category_id": (
+                            int(r["song_category_id"])
+                            if r["song_category_id"] is not None
+                            else None),
                     })
         return out
 
@@ -3049,7 +3111,8 @@ class Database:
         try:
             row = self._conn().execute(
                 "SELECT COUNT(*) FROM clock_slots "
-                "WHERE slot_type IN ('jingle', 'station_id') AND item_id = ?",
+                "WHERE LOWER(REPLACE(TRIM(slot_type), ' ', '_')) "
+                "IN ('jingle', 'station_id') AND item_id = ?",
                 [int(jingle_id)],
             ).fetchone()
             return int(row[0] or 0) if row else 0
@@ -3086,7 +3149,8 @@ class Database:
             conn.execute(
                 "UPDATE clock_slots "
                 "SET item_id = 0, selection_mode = 'random_from_category' "
-                "WHERE slot_type IN ('jingle', 'station_id') AND item_id = ?",
+                "WHERE LOWER(REPLACE(TRIM(slot_type), ' ', '_')) "
+                "IN ('jingle', 'station_id') AND item_id = ?",
                 [jid],
             )
             # Historical reference — preserve the row, clear the link
@@ -3330,9 +3394,11 @@ class Database:
                 "UPDATE broadcast_log SET clock_id = NULL "
                 "WHERE clock_id = ?", [cid])
             try:
+                # Deactivate too — a NULL-clock override is dead weight
+                # that the Force Clocks list would still show as live.
                 conn.execute(
-                    "UPDATE force_clocks SET clock_id = NULL "
-                    "WHERE clock_id = ?", [cid])
+                    "UPDATE force_clocks SET clock_id = NULL, "
+                    "is_active = 0 WHERE clock_id = ?", [cid])
             except Exception:
                 pass
             # 3. Finally drop the clock itself
@@ -3496,10 +3562,40 @@ class Database:
 
     # ── Force Clocks (Phase F-Final S4 resolution layer) ─────────────────────
 
+    @staticmethod
+    def normalize_hhmm(value) -> Optional[str]:
+        """'9:5' / '09:05' / '09:05:00' → '09:05'; '24:00' allowed (end of
+        day). Returns None for anything unparseable / out of range.
+        force_clocks times were compared as raw TEXT, so '9:00' sorted
+        after '10:00' and an override silently never matched."""
+        if value is None:
+            return None
+        txt = str(value).strip()
+        if not txt:
+            return None
+        parts = txt.split(":")
+        if len(parts) < 2 or len(parts) > 3:
+            return None
+        try:
+            h, m = int(parts[0]), int(parts[1])
+        except ValueError:
+            return None
+        if h == 24 and m == 0:
+            return "24:00"
+        if not (0 <= h <= 23 and 0 <= m <= 59):
+            return None
+        return f"{h:02d}:{m:02d}"
+
     def get_force_clock_for(self, when) -> Optional[sqlite3.Row]:
         """Return the force_clocks row that overrides today × hour at the
         given datetime, or None. Single-shot rule: first matching override
         for the date wins (active only).
+
+        Window is [time_start, time_end) on zero-padded HH:MM — the end
+        is EXCLUSIVE so a 10:00-11:00 override hands back to the grid at
+        11:00. The legacy default end '23:59' is read as end-of-day.
+        Rows with a NULL clock_id (clock deleted) or an inactive clock
+        are ignored.
 
         `when`: datetime — inspected for date + time."""
         from datetime import datetime as _dt
@@ -3507,18 +3603,32 @@ class Database:
             when = _dt.now()
         date_str = when.strftime("%Y-%m-%d")
         time_str = when.strftime("%H:%M")
-        return self._conn().execute(
+        rows = self._conn().execute(
             """
-            SELECT * FROM force_clocks
-            WHERE  is_active = 1
-            AND    override_date = ?
-            AND    (time_start IS NULL OR time_start <= ?)
-            AND    (time_end   IS NULL OR time_end   >= ?)
-            ORDER  BY id
-            LIMIT  1
+            SELECT f.* FROM force_clocks f
+            JOIN   clocks c ON c.id = f.clock_id
+            WHERE  f.is_active = 1
+            AND    f.clock_id IS NOT NULL
+            AND    c.is_active = 1
+            AND    f.override_date = ?
+            ORDER  BY f.id
             """,
-            [date_str, time_str, time_str],
-        ).fetchone()
+            [date_str],
+        ).fetchall()
+        for r in rows:
+            start = self.normalize_hhmm(r["time_start"]) or "00:00"
+            end = self.normalize_hhmm(r["time_end"]) or "24:00"
+            if end == "23:59":
+                end = "24:00"
+            if start <= time_str < end:
+                return r
+        return None
+
+    def resolve_clock_for(self, when=None) -> Optional[dict]:
+        """Force override first, else weekly grid — see
+        core.clock_resolver.resolve_clock (the one shared rule)."""
+        from core.clock_resolver import resolve_clock
+        return resolve_clock(self, when)
 
     def list_force_clocks(self) -> List[sqlite3.Row]:
         """All active force_clocks rows, most-recent-first."""
@@ -3730,12 +3840,26 @@ class Database:
         conn.commit()
 
     def clear_all_auto_schedule(self) -> int:
-        """Wipe the entire grid. Returns rows removed.
-        Refuses if WHERE-style clauses leak — uses unconditional DELETE."""
+        """Wipe the entire grid. Returns auto_schedule rows removed.
+        Whole-table wipe is the intent (operator confirmed in the UI) —
+        no pattern WHERE that could leak. Also drops the Auto-Grid
+        builder's cell CLAIMS (auto_grid_cells) in the same transaction:
+        leaving them made the builder treat the wiped hours as its own
+        and silently re-place them at the next midnight rebuild.
+        (Category air-time TAGS are untouched — remove those in Edit
+        Categories to stop the builder filling hours.)"""
+        self._ensure_auto_grid_tables()     # before BEGIN (commits)
         conn = self._conn()
-        cur = conn.execute("DELETE FROM auto_schedule")
-        conn.commit()
-        return int(cur.rowcount or 0)
+        try:
+            conn.execute("BEGIN")
+            cur = conn.execute("DELETE FROM auto_schedule")
+            n = int(cur.rowcount or 0)
+            conn.execute("DELETE FROM auto_grid_cells")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        return n
 
     def migrate_spot_to_break(self) -> int:
         """Phase F2.3 — rename clock_slots.slot_type 'Spot'/'spot' to
@@ -3783,6 +3907,7 @@ class Database:
                     list(payload.values()),
                 )
             conn.commit()
+            Database.data_generation += 1
         except Exception:
             conn.rollback()
             raise
@@ -3850,7 +3975,7 @@ class Database:
             sql += """
             AND (c.end_date IS NULL
               OR c.end_date = 'Never'
-              OR c.end_date >= date('now'))
+              OR c.end_date >= date('now','localtime'))
             AND c.is_active = 1
             """
         sql += " GROUP BY c.id ORDER BY c.name"
@@ -3949,7 +4074,7 @@ class Database:
                        WHEN c.is_active = 0 THEN 0
                        WHEN c.end_date IS NULL OR c.end_date = ''
                             OR c.end_date = 'Never'
-                            OR c.end_date >= date('now') THEN 1
+                            OR c.end_date >= date('now','localtime') THEN 1
                        ELSE 0
                    END AS is_currently_active
             FROM   campaigns c
@@ -3960,10 +4085,10 @@ class Database:
         if f == "active":
             sql += " WHERE c.is_active = 1 AND (c.end_date IS NULL " \
                    "OR c.end_date = '' OR c.end_date = 'Never' " \
-                   "OR c.end_date >= date('now'))"
+                   "OR c.end_date >= date('now','localtime'))"
         elif f == "expired":
             sql += " WHERE c.end_date IS NOT NULL AND c.end_date != '' " \
-                   "AND c.end_date != 'Never' AND c.end_date < date('now')"
+                   "AND c.end_date != 'Never' AND c.end_date < date('now','localtime')"
         sql += " GROUP BY c.id ORDER BY c.name"
         return self._conn().execute(sql, params).fetchall()
 
@@ -4037,12 +4162,19 @@ class Database:
     def delete_campaign(self, campaign_id: int) -> None:
         """Delete a campaign. spot_files cascades via FK; campaign_schedule
         is hand-cleaned because that table doesn't declare CASCADE."""
+        self._ensure_broadcast_log_columns()   # item_name (commits; run first)
         conn = self._conn()
         sid = int(campaign_id)
         conn.execute("DELETE FROM campaign_schedule WHERE campaign_id = ?", [sid])
         # broadcast_log + final_log_entries reference campaigns(id) but we
         # preserve their history rows by NULL-ing the FK (same pattern as
-        # delete_song).
+        # delete_song). Stamp the client's name into item_name FIRST so
+        # Final Log / Play Report still show who aired (proof of play).
+        conn.execute(
+            "UPDATE broadcast_log SET item_name = "
+            "(SELECT name FROM campaigns WHERE id = ?) "
+            "WHERE campaign_id = ? "
+            "AND (item_name IS NULL OR TRIM(item_name) = '')", [sid, sid])
         conn.execute("UPDATE broadcast_log SET campaign_id = NULL "
                      "WHERE campaign_id = ?", [sid])
         conn.execute("UPDATE final_log_entries SET campaign_id = NULL "
@@ -4214,13 +4346,109 @@ class Database:
             JOIN   campaigns c ON cs.campaign_id = c.id
             WHERE  cs.day_of_week = ?
             AND    c.is_active = 1
-            AND   (c.end_date IS NULL OR c.end_date = ''
+            AND   (c.start_date IS NULL OR TRIM(c.start_date) = ''
+                    OR c.start_date = 'Never'
+                    OR c.start_date <= date('now','localtime'))
+            AND   (c.end_date IS NULL OR TRIM(c.end_date) = ''
                     OR c.end_date = 'Never'
-                    OR c.end_date >= date('now'))
+                    OR c.end_date >= date('now','localtime'))
             ORDER  BY cs.break_time
             """,
             [int(day_of_week)],
         ).fetchall()
+
+    def campaign_air_check(self, campaign_id: int, now=None,
+                           scheduled: bool = False) -> tuple:
+        """May this campaign air a spot NOW? Returns (ok, reason).
+
+        ``scheduled=True`` = the spot comes from the operator's own
+        programming grid (campaign_schedule break time). Unless the
+        ``campaign_limits_mode`` setting is 'strict', the grid wins:
+        only is_active + the date window are checked, so every slot the
+        operator programmed airs and the play limits below only cap
+        EXTRA plays (Break-slot pulls, duplicates). Operator decision
+        pending 2026-10-17 — default 'grid'.
+
+        Enforces what the Add Campaign dialog saves: is_active, the
+        start/end date window (local time; NULL/''/'Never' = open),
+        contracted_plays_per_day (today's spot plays in broadcast_log,
+        when > 0), min_gap_minutes (since its last spot play, when > 0)
+        and max_per_break (spots of this campaign since the last song
+        in broadcast_log = the current contiguous break chain, when > 0).
+        Read-only."""
+        from datetime import datetime as _dt, timedelta as _td
+        now = now or _dt.now()
+        conn = self._conn()
+        row = conn.execute("SELECT * FROM campaigns WHERE id = ?",
+                           [int(campaign_id)]).fetchone()
+        if row is None:
+            return False, "campaign not found (deleted)"
+        keys = set(row.keys())
+
+        def _get(k, default=None):
+            return row[k] if k in keys else default
+
+        def _int(k):
+            try:
+                return int(_get(k) or 0)
+            except (TypeError, ValueError):
+                return 0
+
+        if not _int("is_active"):
+            return False, "campaign is inactive / draft"
+        today = now.strftime("%Y-%m-%d")
+        sd = str(_get("start_date") or "").strip()
+        if sd and sd.lower() != "never" and sd[:10] > today:
+            return False, f"campaign starts {sd[:10]}"
+        ed = str(_get("end_date") or "").strip()
+        if ed and ed.lower() != "never" and ed[:10] < today:
+            return False, f"campaign ended {ed[:10]}"
+        if scheduled:
+            try:
+                mrow = conn.execute(
+                    "SELECT value FROM settings WHERE key = "
+                    "'campaign_limits_mode'").fetchone()
+                mode = str(mrow[0] if mrow else "grid").strip().lower()
+            except Exception:
+                mode = "grid"
+            if mode != "strict":
+                return True, ""
+        ppd = _int("contracted_plays_per_day")
+        if ppd > 0:
+            n = conn.execute(
+                "SELECT COUNT(*) FROM broadcast_log WHERE campaign_id = ? "
+                "AND entry_type = 'spot' AND date(played_at) = ?",
+                [int(campaign_id), today]).fetchone()[0]
+            if int(n or 0) >= ppd:
+                return False, f"daily limit reached ({n}/{ppd} plays today)"
+        gap = _int("min_gap_minutes")
+        if gap > 0:
+            last = conn.execute(
+                "SELECT MAX(played_at) FROM broadcast_log "
+                "WHERE campaign_id = ? AND entry_type = 'spot'",
+                [int(campaign_id)]).fetchone()[0]
+            if last:
+                try:
+                    last_dt = _dt.strptime(str(last)[:19],
+                                           "%Y-%m-%d %H:%M:%S")
+                except ValueError:
+                    last_dt = None
+                if (last_dt is not None and last_dt <= now
+                        and now - last_dt < _td(minutes=gap)):
+                    mins = int((now - last_dt).total_seconds() // 60)
+                    return False, (f"min gap {gap} min not met "
+                                   f"(last aired {mins} min ago)")
+        mpb = _int("max_per_break")
+        if mpb > 0:
+            n = conn.execute(
+                "SELECT COUNT(*) FROM broadcast_log "
+                "WHERE entry_type = 'spot' AND campaign_id = ? "
+                "AND id > COALESCE((SELECT MAX(id) FROM broadcast_log "
+                "                   WHERE entry_type = 'song'), 0)",
+                [int(campaign_id)]).fetchone()[0]
+            if int(n or 0) >= mpb:
+                return False, f"max {mpb} per break reached"
+        return True, ""
 
     # ── Break schedule (campaign × day × break_time) ──────────────────────────
 
@@ -4625,7 +4853,7 @@ class Database:
         s["clock_slots_total"] = cnt("SELECT COUNT(*) FROM clock_slots")
         s["campaigns_active"]  = cnt(
             "SELECT COUNT(*) FROM campaigns WHERE is_active=1 "
-            "AND (end_date IS NULL OR end_date='' OR end_date='Never' OR end_date>=date('now'))"
+            "AND (end_date IS NULL OR end_date='' OR end_date='Never' OR end_date>=date('now','localtime'))"
         )
         s["spot_files_total"]  = cnt("SELECT COUNT(*) FROM spot_files")
         s["jingles_total"]     = cnt("SELECT COUNT(*) FROM jingles WHERE is_enabled=1")
@@ -4824,14 +5052,27 @@ class Database:
             return 0
         dest = None if dest_category_id is None else int(dest_category_id)
         conn = self._conn()
-        placeholders = ", ".join(["?"] * len(ids))
-        cur = conn.execute(
-            f"UPDATE songs SET category_id = ? "
-            f"WHERE id IN ({placeholders})",
-            [dest, *ids],
-        )
-        conn.commit()
-        return int(cur.rowcount or 0)
+        # Chunked: SQLite caps bound variables (999 on older builds) —
+        # a whole-library move used to raise "too many SQL variables".
+        # One transaction so a mid-way failure moves nothing.
+        total = 0
+        try:
+            conn.execute("BEGIN")
+            for i in range(0, len(ids), 900):
+                chunk = ids[i:i + 900]
+                placeholders = ", ".join(["?"] * len(chunk))
+                cur = conn.execute(
+                    f"UPDATE songs SET category_id = ? "
+                    f"WHERE id IN ({placeholders})",
+                    [dest, *chunk],
+                )
+                total += int(cur.rowcount or 0)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        Database.data_generation += 1
+        return total
 
     # ── Artists ───────────────────────────────────────────────────────────────
 

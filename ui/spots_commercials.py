@@ -1017,6 +1017,9 @@ class SpotsCommercials(QWidget):
     add_campaign_clicked  = pyqtSignal()
     edit_breaks_clicked   = pyqtSignal(int)   # campaign_id
     campaign_selected     = pyqtSignal(int)
+    # Any campaign / schedule / programming change that affects what
+    # airs. MainWindow → scheduler.reload_breaks() + Studio Next Break.
+    campaigns_changed     = pyqtSignal()
 
     def __init__(self, db, parent=None, engine=None):
         super().__init__(parent)
@@ -2120,6 +2123,7 @@ class SpotsCommercials(QWidget):
         log.info(f"campaign_saved received: id={campaign_id}")
         self._load_campaigns()
         self._select_campaign(int(campaign_id))
+        self.campaigns_changed.emit()
 
     def _on_edit_campaign(self, campaign_id: Optional[int] = None):
         """Open AddCampaignDialog in edit mode for the selected campaign,
@@ -2164,6 +2168,7 @@ class SpotsCommercials(QWidget):
                  f"{len(_rows)} rows")
         if self._selected_id == campaign_id:
             self._refresh_detail_panel()
+        self.campaigns_changed.emit()
 
     def _on_break_settings(self):
         """Break Policy dialog (2026-07-04) — windows, hourly ad
@@ -2200,6 +2205,7 @@ class SpotsCommercials(QWidget):
         except Exception as exc:
             log.error(f"delete_campaign failed: {exc}")
             dialogs.error(self, "Delete failed", str(exc))
+        self.campaigns_changed.emit()
 
     def _on_add_file(self):
         if not self._selected_id:

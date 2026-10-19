@@ -376,6 +376,9 @@ def test_pop_next_teased_song_order_and_missing_file_skip(qtbot, db, cfg_snapsho
     s, eng, sti = studio
     ok1 = tmp_path / "a.mp3"; ok1.write_bytes(b"\x00")
     ok2 = tmp_path / "b.mp3"; ok2.write_bytes(b"\x00")
+    # Synthetic ids (not in the songs table) — bypass the 2026-10-17
+    # deleted/disabled-song check, which would treat them as deleted.
+    s._song_is_airable = lambda song: True
     s._teased_songs = [
         {"id": 1, "title": "A", "file_path": str(ok1)},
         {"id": 2, "title": "GONE", "file_path": r"Z:\missing.mp3"},

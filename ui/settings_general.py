@@ -717,6 +717,7 @@ class SettingsGeneral(QWidget):
         self._build_left_column()
         self._build_right_column()
         self._build_status_bar()
+        self._mark_inactive_controls()
 
         # Initial load
         self._load_settings()
@@ -863,7 +864,8 @@ class SettingsGeneral(QWidget):
         self._fld_freq = _LabeledLineEdit(
             "Broadcast Frequency", caption="Your FM frequency")
         self._fld_slogan = _LabeledLineEdit(
-            "Station Slogan", caption="Used in RDS and exports")
+            "Station Slogan",
+            caption="Stored for reference — not sent to RDS or exports yet")
         self._fld_email = _LabeledLineEdit(
             "Contact Email", caption="For system notifications")
         # Logo row saves immediately (it copies a file), so it is not
@@ -958,9 +960,12 @@ class SettingsGeneral(QWidget):
         bh.addWidget(self._btn_backup_now)
         bh.addWidget(self._btn_restore)
         bh.addStretch()
-        for w in (self._cmb_backup_interval, self._fld_backup_path, btn_row):
+        # Last scheduled/launch auto-backup — refreshed by _load_settings.
+        self._lbl_last_backup = _SubFieldLabel("Last auto-backup: —")
+        for w in (self._cmb_backup_interval, self._fld_backup_path,
+                  self._lbl_last_backup, btn_row):
             self._card_backup.add_row(w)
-        self._card_backup.setFixedHeight(36 + 58 + 66 + 50 + 16)
+        self._card_backup.setFixedHeight(36 + 58 + 66 + 26 + 50 + 16)
         v.addWidget(self._card_backup)
 
         # Save All Preferences button (last item — same reachability
@@ -977,6 +982,24 @@ class SettingsGeneral(QWidget):
         self._status_bar = _StatusBar(self)
         self._status_bar.move(0, WINDOW_H - STATUS_H)
         self._status_bar.studio_clicked.connect(self.studio_clicked.emit)
+
+    def _inactive_controls(self) -> list:
+        """Controls whose saved value nothing in the app reads yet."""
+        return [
+            self._fld_city, self._fld_region, self._fld_email,
+            self._fld_path_music, self._fld_path_logs,
+            self._fld_path_exports,
+            self._tg_win_startup, self._tg_autoload, self._tg_splash,
+            self._tg_minimize_tray, self._tg_check_updates,
+            self._tg_send_stats,
+            self._cmb_date_fmt, self._cmb_time_fmt, self._cmb_tz,
+            self._cmb_lang,
+        ]
+
+    def _mark_inactive_controls(self) -> None:
+        from ui.widgets.not_active import mark_not_active
+        for w in self._inactive_controls():
+            mark_not_active(w)
 
     # ── Clock tick ────────────────────────────────────────────────────
 
@@ -1050,8 +1073,16 @@ class SettingsGeneral(QWidget):
         # BACKUP
         self._cmb_backup_interval.set_current_text(
             s.get("backup_interval", "Every 24 hours"))
-        self._fld_backup_path.set_text(
-            s.get("path_backup", "C:\\RadioAI\\Backups\\"))
+        # Show the folder the scheduled auto-backup actually writes to
+        # (empty / the old never-used C:\RadioAI\Backups\ default → the
+        # app-data auto folder).
+        from core import backup_restore as _br
+        dest = _br.resolve_auto_backup_dir(s.get("path_backup", ""))
+        self._fld_backup_path.set_text(str(dest))
+        last = _br.latest_auto_backup_time(dest)
+        self._lbl_last_backup.setText(
+            f"Last auto-backup: {last}" if last
+            else "Last auto-backup: none yet")
 
     def _save_left_column(self) -> None:
         """Save just the station-identity + file-paths fields. Returns the
@@ -1121,7 +1152,9 @@ class SettingsGeneral(QWidget):
         self.settings_saved.emit()
         dialogs.info(
             self, "Saved",
-            "Station identity + file paths saved.")
+            "Station name + frequency (headers and reports) and the "
+            "recordings folder saved.\n\nOptions marked “coming soon” are stored but not "
+            "active in this version.")
 
     def _on_save_all(self) -> None:
         try:
@@ -1133,9 +1166,15 @@ class SettingsGeneral(QWidget):
                 f"Could not save preferences:\n{exc}")
             return
         self.settings_saved.emit()
+        try:
+            self._load_settings()   # refresh backup folder / last-backup
+        except Exception:
+            pass
         dialogs.info(
             self, "Saved",
-            "All General Settings preferences saved.")
+            "General Settings saved. The backup schedule applies now; "
+            "“Start in AUTO MODE” applies at the next launch.\n\nOptions marked “coming "
+            "soon” are stored but not active in this version.")
 
     def _on_backup_now(self) -> None:
         """Copy the whole station DB (categories, songs, spots, clocks,
@@ -1175,9 +1214,10 @@ class SettingsGeneral(QWidget):
                 self, "Restore station data?",
                 "This will REPLACE all current songs, categories, "
                 "spots and schedules with the chosen backup.\n\n"
-                "Your current data is saved as a safety copy first. "
-                "RadioAI must restart to apply.",
-                danger=True, yes_label="Restore & Restart"):
+                "Nothing changes now: the backup is staged and applied "
+                "when you close and reopen RadioAI. Your current data "
+                "is saved as a safety copy first.",
+                danger=True, yes_label="Restore on Next Launch"):
             return
         if stage_restore(f):
             dialogs.info(

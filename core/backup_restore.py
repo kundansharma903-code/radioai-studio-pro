@@ -111,19 +111,8 @@ def backup_now(dest_dir) -> Optional[str]:
         dest.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
         out = dest / f"RadioAI_backup_{stamp}.db"
-        tmp = out.with_suffix(".db.partial")
-        s_con = sqlite3.connect(f"file:{src}?mode=ro", uri=True)
-        d_con = sqlite3.connect(str(tmp))
-        try:
-            s_con.backup(d_con)
-        finally:
-            d_con.close()
-            s_con.close()
-        if not is_valid_radioai_db(tmp):
-            tmp.unlink(missing_ok=True)
-            log.error("[backup] snapshot failed validation — not saved")
+        if not _snapshot(src, out):
             return None
-        os.replace(str(tmp), str(out))
         log.info(f"[backup] station backed up -> {out}")
         return str(out)
     except Exception as exc:
@@ -131,19 +120,126 @@ def backup_now(dest_dir) -> Optional[str]:
         return None
 
 
-def latest_auto_backup_time() -> Optional[str]:
-    """'YYYY-MM-DD HH:MM' of the newest auto-backup, or None."""
+def _snapshot(src: Path, out: Path) -> bool:
+    """Online-backup `src` into `out` via a .partial temp file, validate,
+    then atomically rename. False (and nothing left behind) on failure."""
+    tmp = out.with_suffix(".db.partial")
+    s_con = sqlite3.connect(f"file:{src}?mode=ro", uri=True)
+    d_con = sqlite3.connect(str(tmp))
     try:
-        from core.paths import BACKUPS_DIR
-        auto = Path(BACKUPS_DIR) / "auto"
-        files = sorted(auto.glob("radioai_auto_*.db"),
-                       key=lambda p: p.stat().st_mtime, reverse=True)
-        if files:
-            return datetime.fromtimestamp(
-                files[0].stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+        s_con.backup(d_con)
+    finally:
+        d_con.close()
+        s_con.close()
+    if not is_valid_radioai_db(tmp):
+        tmp.unlink(missing_ok=True)
+        log.error("[backup] snapshot failed validation — not saved")
+        return False
+    os.replace(str(tmp), str(out))
+    return True
+
+
+# ── Scheduled auto-backup (General Settings → Backup card) ───────────────
+
+# The old form default — never chosen by an operator, so it means
+# "not set": use the real app-data auto folder instead.
+LEGACY_DEFAULT_BACKUP_PATH = "C:\\RadioAI\\Backups\\"
+
+AUTO_BACKUP_KEEP = 7
+
+_INTERVAL_HOURS = {
+    "Every 6 hours": 6, "Every 12 hours": 12, "Every 24 hours": 24,
+    "Every 3 days": 72, "Every 7 days": 168, "Manual only": None,
+}
+
+
+def default_auto_backup_dir() -> Path:
+    from core.paths import BACKUPS_DIR
+    return Path(BACKUPS_DIR) / "auto"
+
+
+def resolve_auto_backup_dir(path_backup: Optional[str]) -> Path:
+    """`path_backup` setting -> folder. Empty / legacy default -> the
+    app-data auto folder (where the once-per-launch backup also goes)."""
+    raw = (path_backup or "").strip()
+    if not raw or raw.rstrip("/\\").lower() == \
+            LEGACY_DEFAULT_BACKUP_PATH.rstrip("\\").lower():
+        return default_auto_backup_dir()
+    return Path(raw)
+
+
+def interval_hours(label: Optional[str]) -> Optional[int]:
+    """'Every 24 hours' -> 24. 'Manual only' / unknown -> None (off)."""
+    return _INTERVAL_HOURS.get((label or "").strip())
+
+
+def _auto_files(dest: Path) -> list:
+    return sorted(Path(dest).glob("radioai_auto_*.db"),
+                  key=lambda p: p.stat().st_mtime, reverse=True)
+
+
+def auto_backup_due(dest_dir, hours: Optional[int],
+                    now: Optional[datetime] = None) -> bool:
+    """True when `hours` is set and the newest auto-backup in
+    `dest_dir` is at least that old (or there is none)."""
+    if not hours:
+        return False
+    now = now or datetime.now()
+    try:
+        files = _auto_files(Path(dest_dir))
     except Exception:
-        pass
-    return None
+        files = []
+    if not files:
+        return True
+    newest = datetime.fromtimestamp(files[0].stat().st_mtime)
+    return (now - newest).total_seconds() >= hours * 3600
+
+
+def run_auto_backup(dest_dir, keep: int = AUTO_BACKUP_KEEP) -> Optional[str]:
+    """Write ``radioai_auto_YYYYMMDD_HHMM.db`` into `dest_dir` and prune
+    to the newest `keep` auto files there. Safe off the UI thread (pure
+    sqlite3, no Qt). Returns the written path or None."""
+    src = _db_path()
+    if not src.exists():
+        return None
+    try:
+        dest = Path(dest_dir)
+        dest.mkdir(parents=True, exist_ok=True)
+        out = dest / f"radioai_auto_{datetime.now():%Y%m%d_%H%M}.db"
+        if not _snapshot(src, out):
+            return None
+        for old in _auto_files(dest)[keep:]:
+            try:
+                old.unlink()
+            except Exception:
+                pass
+        log.info(f"[backup] scheduled auto-backup -> {out}")
+        return str(out)
+    except Exception as exc:
+        log.error(f"[backup] scheduled auto-backup failed: {exc}",
+                  exc_info=True)
+        return None
+
+
+def latest_auto_backup_time(dest_dir=None) -> Optional[str]:
+    """'YYYY-MM-DD HH:MM' of the newest auto-backup, or None. Looks in
+    `dest_dir` (the configured backup folder) and the default app-data
+    auto folder, and returns the newer."""
+    newest = None
+    dirs = [default_auto_backup_dir()]
+    if dest_dir:
+        dirs.insert(0, Path(dest_dir))
+    for d in dirs:
+        try:
+            files = _auto_files(d)
+            if files:
+                m = files[0].stat().st_mtime
+                newest = m if newest is None else max(newest, m)
+        except Exception:
+            pass
+    if newest is None:
+        return None
+    return datetime.fromtimestamp(newest).strftime("%Y-%m-%d %H:%M")
 
 
 # ── Restore (staged; applied at next boot) ───────────────────────────────
@@ -199,14 +295,39 @@ def apply_staged_restore() -> bool:
         db.parent.mkdir(parents=True, exist_ok=True)
         # Keep the pre-restore DB as a safety copy (never silently lose
         # data — if the operator restores by mistake they can recover).
+        # SQLite backup API, so changes still in the WAL are in the
+        # safety copy (a plain file copy missed them, and the WAL is
+        # deleted just below). If the safety copy fails, ABORT: the
+        # current data is untouched and the restore is not applied.
         if db.exists():
             pre = db.with_suffix(
                 db.suffix + f".pre_restore_"
                 f"{datetime.now():%Y%m%d_%H%M%S}")
             try:
-                shutil.copy2(str(db), str(pre))
-            except Exception:
-                pass
+                s_con = sqlite3.connect(str(db))
+                d_con = sqlite3.connect(str(pre))
+                try:
+                    s_con.backup(d_con)
+                finally:
+                    d_con.close()
+                    s_con.close()
+            except Exception as exc:
+                # e.g. an unreadable/corrupt DB: fall back to copying the
+                # main file WITH its -wal/-shm so nothing is lost.
+                log.warning(f"[restore] backup-API safety copy failed "
+                            f"({exc}); copying db+wal+shm instead")
+                try:
+                    shutil.copy2(str(db), str(pre))
+                    for ext in ("-wal", "-shm"):
+                        side = Path(str(db) + ext)
+                        if side.exists():
+                            shutil.copy2(str(side), str(pre) + ext)
+                except Exception as exc2:
+                    log.error(f"[restore] safety copy failed - restore "
+                              f"ABORTED, current data untouched: {exc2}",
+                              exc_info=True)
+                    _clear_staging()
+                    return False
         # Remove stale WAL/SHM so SQLite doesn't replay them over the
         # freshly restored main file.
         for ext in ("-wal", "-shm"):

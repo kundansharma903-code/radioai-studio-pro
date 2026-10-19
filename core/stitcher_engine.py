@@ -40,6 +40,20 @@ class StitcherEngine:
         self._thread   = None
         self._handle   = 0        # BASS stream handle
         self._temp_path = None    # cleaned up after playback
+        # stop() was called for the current block → on_done is NOT
+        # invoked (the caller cancelled the chain; 2026-10-17 fix — the
+        # finally used to fire on_done anyway and Studio then started a
+        # song after AUTO-off / drain).
+        self._stop_requested = False
+        # Background pre-build cache (2026-10-17): the montage WAV is
+        # built when the tease is armed, well before song EOS, so the
+        # EOS → tease transition has no pydub-build dead air.
+        #   _pre_key   — signature of the sequence being / been built
+        #   _pre_path  — finished WAV (None while building / failed)
+        self._pre_lock = threading.Lock()
+        self._pre_key = None
+        self._pre_path = None
+        self._pre_total_s = 0.0
 
     # ── Public ────────────────────────────────────────────────────────────────
 
@@ -47,6 +61,7 @@ class StitcherEngine:
         if self._running:
             return
         self._running = True
+        self._stop_requested = False
 
         def _run():
             try:
@@ -54,9 +69,10 @@ class StitcherEngine:
             except Exception as e:
                 print(f"[StitcherEngine] error: {e}")
             finally:
+                stopped = self._stop_requested
                 self._cleanup()
                 self._running = False
-                if on_done:
+                if on_done and not stopped:
                     try:
                         on_done()
                     except Exception:
@@ -65,8 +81,74 @@ class StitcherEngine:
         self._thread = threading.Thread(target=_run, daemon=True)
         self._thread.start()
 
+    @staticmethod
+    def _sequence_key(sequence) -> tuple:
+        return tuple(
+            (str(s.get("file_path") or ""),
+             round(float(s.get("seek_sec", 0) or 0), 3),
+             bool(s.get("play_full")))
+            for s in (sequence or []))
+
+    def prebuild(self, sequence) -> None:
+        """Build the montage WAV for ``sequence`` on a background
+        thread so a later ``play_block`` with the SAME sequence plays
+        the cached file immediately. Pure Python/pydub — never touches
+        Qt or the DB. Idempotent per sequence; a new sequence replaces
+        (and deletes) an older cached file."""
+        key = self._sequence_key(sequence)
+        if not key:
+            return
+        with self._pre_lock:
+            if self._pre_key == key:
+                return              # already built / building
+            old = self._pre_path
+            self._pre_key = key
+            self._pre_path = None
+            self._pre_total_s = 0.0
+        self._remove_file(old)
+        steps = [dict(s) for s in sequence]
+
+        def _bg():
+            try:
+                built = self._build_wav(steps, None)
+            except Exception as e:
+                print(f"[StitcherEngine] prebuild error: {e}")
+                built = None
+            with self._pre_lock:
+                if self._pre_key == key and built:
+                    self._pre_path, self._pre_total_s = built
+                    print(f"[StitcherEngine] prebuild ready: "
+                          f"{built[1]:.1f}s")
+                    return
+            if built:               # superseded while building
+                self._remove_file(built[0])
+
+        threading.Thread(target=_bg, daemon=True).start()
+
+    def _take_prebuilt(self, sequence):
+        """(path, total_sec) of a finished pre-build matching
+        ``sequence`` — ownership passes to the caller — else None."""
+        key = self._sequence_key(sequence)
+        with self._pre_lock:
+            if (key and self._pre_key == key and self._pre_path
+                    and os.path.exists(self._pre_path)):
+                out = (self._pre_path, self._pre_total_s)
+                self._pre_key = None
+                self._pre_path = None
+                return out
+        return None
+
+    @staticmethod
+    def _remove_file(path) -> None:
+        if path and os.path.exists(path):
+            try:
+                os.remove(path)
+            except Exception:
+                pass
+
     def stop(self):
         self._running = False
+        self._stop_requested = True
         if self._handle:
             try:
                 BassChannel.Stop(self._handle)
@@ -154,12 +236,38 @@ class StitcherEngine:
     # ── Internal ──────────────────────────────────────────────────────────────
 
     def _build_and_play(self, sequence, target_vol, on_step):
+        pre = self._take_prebuilt(sequence)
+        if pre is not None:
+            tmp_path, total_sec = pre
+            self._temp_path = tmp_path
+            print(f"[StitcherEngine] using pre-built mix "
+                  f"({total_sec:.1f}s)")
+            if on_step:
+                for idx, step in enumerate(sequence):
+                    try:
+                        on_step(idx, step)
+                    except Exception:
+                        pass
+        else:
+            built = self._build_wav(sequence, on_step)
+            if not built:
+                return
+            tmp_path, total_sec = built
+            self._temp_path = tmp_path
+
+        if not self._running:
+            return
+        self._play_wav(tmp_path, total_sec, target_vol)
+
+    def _build_wav(self, sequence, on_step):
+        """pydub pre-mix → temp WAV. Returns (path, total_sec) or None.
+        Thread-agnostic: no Qt, no DB, no shared engine state."""
         from pydub import AudioSegment
 
         steps = [s for s in sequence
                  if s.get("file_path") and os.path.exists(s["file_path"])]
         if not steps:
-            return
+            return None
 
         print("[StitcherEngine] building pre-mix...")
         final = AudioSegment.empty()
@@ -193,7 +301,7 @@ class StitcherEngine:
 
         if len(final) == 0:
             print("[StitcherEngine] pre-mix empty, nothing to play")
-            return
+            return None
 
         total_sec = len(final) / 1000.0
         print(f"[StitcherEngine] pre-mix ready: {total_sec:.1f}s ({len(steps)} parts)")
@@ -201,17 +309,16 @@ class StitcherEngine:
         # Export to temp WAV
         fd, tmp_path = tempfile.mkstemp(suffix=".wav", prefix="stitcher_")
         os.close(fd)
-        self._temp_path = tmp_path
 
         try:
             final.export(tmp_path, format="wav")
         except Exception as e:
             print(f"[StitcherEngine] export error: {e}")
-            return
+            self._remove_file(tmp_path)
+            return None
+        return tmp_path, total_sec
 
-        if not self._running:
-            return
-
+    def _play_wav(self, tmp_path, total_sec, target_vol):
         # Load and play via BASS
         from core.audio._bass import bass_file_arg
         fname, uflag = bass_file_arg(tmp_path)

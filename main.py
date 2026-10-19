@@ -47,6 +47,38 @@ from core.audio_engine import bass_init, bass_free
 from core.database import Database
 from core.settings import Settings
 
+
+def configured_output_device(settings) -> int:
+    """BASS device index for Output 1 from Settings → Soundcard
+    (``audio_output_1`` — saved as the BASS_GetDeviceInfo index string).
+    -1 (system default) when unset / '(none)' / not a positive int."""
+    try:
+        raw = str(settings.get("audio_output_1", "") or "").strip()
+    except Exception:
+        return -1
+    if not raw.isdigit():
+        return -1
+    dev = int(raw)
+    return dev if dev > 0 else -1
+
+
+def _bass_init_configured_device(settings) -> bool:
+    """bass_init() on the operator-selected output device; if that
+    fails, fall back to the default device and log it LOUDLY so a dead
+    soundcard routing never silently takes the station off air."""
+    dev = configured_output_device(settings)
+    if dev == -1:
+        return bass_init()
+    log.info(f"BASS: initialising on configured output device {dev} "
+             f"(audio_output_1)")
+    if bass_init(device=dev):
+        return True
+    log.error(
+        f"!!! BASS init on configured output device {dev} FAILED — "
+        f"falling back to the SYSTEM DEFAULT device. Check Settings → "
+        f"Soundcard (audio_output_1). !!!")
+    return bass_init()
+
 log = get_logger("main")
 
 
@@ -517,7 +549,7 @@ def main():
     # ── Step 3: Initializing audio engine ────────────────────────────
     splash.set_status("Initializing audio engine...", step=3)
     splash.dwell(STEP_DWELL_MS)
-    if not bass_init():
+    if not _bass_init_configured_device(settings):
         log.warning(
             "BASS audio init failed — playback will be unavailable")
     else:

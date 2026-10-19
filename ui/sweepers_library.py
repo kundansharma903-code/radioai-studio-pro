@@ -871,6 +871,9 @@ class SweepersLibrary(QWidget):
     studio_clicked     = pyqtSignal()
     sweeper_selected   = pyqtSignal(int)
     add_sweeper_clicked = pyqtSignal()      # for future 108:2 dialog hook
+    # Emitted after any save / delete so Studio's Libraries panel
+    # (Sweepers tile) can reload. Wired in MainWindow.
+    library_changed     = pyqtSignal()
 
     # 15s preview cap matches the Jingles Library convention. Long
     # enough to hear the sweeper, short enough that an accidental
@@ -1387,6 +1390,7 @@ class SweepersLibrary(QWidget):
         self._selected_id = int(sweeper_id)
         self._load_sweepers()
         self._on_row_clicked(int(sweeper_id))
+        self.library_changed.emit()
 
     def _on_mass_import(self):
         log.info("[sweepers] Mass Import — TODO")
@@ -1453,6 +1457,7 @@ class SweepersLibrary(QWidget):
         self._selected_id = None
         self._load_sweepers()      # re-selects the first row if any remain
         self._refresh_details()
+        self.library_changed.emit()
 
     def _on_export_playlister(self):
         log.info("[sweepers] Export to Playlister — TODO")

@@ -105,6 +105,7 @@ class _FakeSweeperEngine:
             "song":      dict(song_info),
             "sweeper":   dict(sweeper_info),
             "deck":      deck_handle,
+            "on_start":  on_start,
         })
 
     def cancel(self):
@@ -398,6 +399,14 @@ def test_overlay_writes_sweeper_row_to_broadcast_log(qapp, db):
     ).fetchone()["n"]
 
     studio._compute_next_song(after_id=None)
+
+    # 2026-10-17: the row is written only when the overlay ACTUALLY
+    # starts (engine on_start), not at schedule time.
+    mid = db._conn().execute(
+        "SELECT COUNT(*) AS n FROM broadcast_log WHERE entry_type='sweeper'"
+    ).fetchone()["n"]
+    assert mid == before
+    swe.scheduled[-1]["on_start"]()
 
     after = db._conn().execute(
         "SELECT COUNT(*) AS n FROM broadcast_log WHERE entry_type='sweeper'"

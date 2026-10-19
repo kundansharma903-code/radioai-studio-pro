@@ -295,6 +295,9 @@ def test_static_next_advances_past_played_middle(qapp, db):
     """after_id found → forward walk skips already-aired songs."""
     studio = _make_studio(db, scheduler=None)
     _static_q(studio, 10, 11, 12, 13)
+    # Synthetic ids (not in the songs table) — bypass the 2026-10-17
+    # deleted/disabled-song check, which would treat them as deleted.
+    studio._song_is_airable = lambda s: True
     studio._played_song_ids = {10, 11, 12}
     nxt = studio._compute_next_song(after_id=11)
     assert nxt is not None and nxt["id"] == 13

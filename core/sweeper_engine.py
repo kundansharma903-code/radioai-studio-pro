@@ -35,9 +35,19 @@ class SweeperEngine:
     POLL_MS = 100
 
     def __init__(self):
-        self._handle  = 0
+        # Each schedule_for_song() gets its OWN cancel Event + handle slot
+        # (a small dict).  The old shared Event was set by cancel() and
+        # immediately clear()ed by the next schedule, so the previous
+        # watcher kept running; both threads also shared self._handle and
+        # the old thread's ``finally`` could free the NEW sweeper.
+        self._lock    = threading.Lock()
+        self._current = None          # {"cancel": Event, "handle": int}
         self._thread  = None
-        self._cancel  = threading.Event()
+
+    @property
+    def _handle(self):
+        cur = self._current
+        return int(cur["handle"]) if cur else 0
 
     # ── Public ────────────────────────────────────────────────────────────────
 
@@ -52,9 +62,13 @@ class SweeperEngine:
         sweeper_info : dict
             file_path, duration_ms, position, sweeper_volume, position_offset.
         deck_handle : int
-            The BASS stream handle of the currently playing deck song.
+            The raw BASS stream handle of the deck song (use
+            ``AudioEngine.bass_handle(cid)`` — NOT the engine channel id).
         on_start : callable, optional
+            Called on the watcher thread once the sweeper actually plays.
         on_end : callable, optional
+            Called on the watcher thread when this schedule finishes
+            (only if it had started).
         """
         self.cancel()
 
@@ -66,8 +80,12 @@ class SweeperEngine:
         if not sw_path or not os.path.exists(sw_path):
             return
 
-        sw_vol = int(sweeper_info.get("sweeper_volume", 100) or 100)
-        self._cancel.clear()
+        raw_vol = sweeper_info.get("sweeper_volume", 100)
+        sw_vol = 100 if raw_vol is None else max(0, min(100, int(raw_vol)))
+        state = {"cancel": threading.Event(), "handle": 0}
+        with self._lock:
+            self._current = state
+        cancel_ev = state["cancel"]
 
         def _fire():
             from core.audio._bass import bass_file_arg
@@ -81,7 +99,15 @@ class SweeperEngine:
                 print(f"[SweeperEngine] stream error {err}: {e}")
                 return 0
 
-            self._handle = handle
+            with self._lock:
+                if cancel_ev.is_set():
+                    # Cancelled while the stream was being created.
+                    try:
+                        BassStream.Free(handle)
+                    except Exception:
+                        pass
+                    return 0
+                state["handle"] = handle
             from core.audio_engine import _get_dll, BASS_ATTRIB_VOL
             dll = _get_dll()
             dll.BASS_ChannelSetAttribute(handle, BASS_ATTRIB_VOL,
@@ -91,27 +117,28 @@ class SweeperEngine:
             return handle
 
         def _watcher():
+            started = False
             try:
-                if trigger_ms <= 0:
-                    # Immediate — fire now
-                    h = _fire()
-                else:
+                if trigger_ms > 0:
                     # Wait for deck to reach trigger position
                     time.sleep(0.5)  # give BASS time to latch
-                    while not self._cancel.is_set():
-                        if deck_handle:
-                            pos_s = BassChannel.GetPositionSeconds(deck_handle)
-                            pos_ms = int(pos_s * 1000)
-                            if pos_ms >= trigger_ms:
-                                break
-                            state = BassChannel.IsActive(deck_handle)
-                            if state in (_ch.ACTIVE_STOPPED, 0):
-                                return
+                    while not cancel_ev.is_set():
+                        if not deck_handle:
+                            return          # nothing to time against
+                        pos_s = BassChannel.GetPositionSeconds(deck_handle)
+                        pos_ms = int(pos_s * 1000)
+                        if pos_ms >= trigger_ms:
+                            break
+                        state_ = BassChannel.IsActive(deck_handle)
+                        if state_ in (_ch.ACTIVE_STOPPED, 0):
+                            return
                         time.sleep(self.POLL_MS / 1000.0)
 
-                    if self._cancel.is_set():
-                        return
-                    h = _fire()
+                if cancel_ev.is_set():
+                    return
+                if not _fire():
+                    return
+                started = True
 
                 if on_start:
                     try:
@@ -120,9 +147,9 @@ class SweeperEngine:
                         pass
 
                 # Wait for sweeper to finish
-                while not self._cancel.is_set() and self._handle:
-                    state = BassChannel.IsActive(self._handle)
-                    if state in (_ch.ACTIVE_STOPPED, 0):
+                while not cancel_ev.is_set() and state["handle"]:
+                    st = BassChannel.IsActive(state["handle"])
+                    if st in (_ch.ACTIVE_STOPPED, 0):
                         break
                     time.sleep(0.15)
 
@@ -131,8 +158,11 @@ class SweeperEngine:
             except Exception as e:
                 print(f"[SweeperEngine] error: {e}")
             finally:
-                self._free_handle()
-                if on_end:
+                self._free_state(state)
+                with self._lock:
+                    if self._current is state:
+                        self._current = None
+                if started and on_end:
                     try:
                         on_end()
                     except Exception:
@@ -142,15 +172,22 @@ class SweeperEngine:
         self._thread.start()
 
     def cancel(self):
-        self._cancel.set()
-        self._free_handle()
+        """Stop the current overlay (pending or playing). Only ever frees
+        the handle owned by the schedule being cancelled."""
+        with self._lock:
+            state = self._current
+            self._current = None
+        if state is not None:
+            state["cancel"].set()
+            self._free_state(state)
 
     @property
     def is_playing(self):
-        if not self._handle:
+        h = self._handle
+        if not h:
             return False
         try:
-            return BassChannel.IsActive(self._handle) == _ch.ACTIVE_PLAYING
+            return BassChannel.IsActive(h) == _ch.ACTIVE_PLAYING
         except Exception:
             return False
 
@@ -175,7 +212,7 @@ class SweeperEngine:
         elif pos == "Bridge at End":
             half = sw_dur // 2 if sw_dur > 0 else 4000
             trigger = max(0, song_dur - half)
-        elif pos == "Custom":
+        elif pos in ("Custom", "Custom Position"):
             trigger = int(offset * 1000) if offset else 0
         elif pos == "Independent":
             trigger = 0
@@ -183,18 +220,27 @@ class SweeperEngine:
             half = sw_dur // 2 if sw_dur > 0 else 4000
             trigger = max(0, song_dur - half)
 
-        if offset and pos != "Custom":
+        if offset and pos not in ("Custom", "Custom Position"):
             trigger = max(0, trigger + int(offset * 1000))
 
         return trigger
 
     # ── Cleanup ───────────────────────────────────────────────────────────────
 
-    def _free_handle(self):
-        if self._handle:
+    def _free_state(self, state):
+        """Stop + free the handle owned by ``state`` (idempotent)."""
+        with self._lock:
+            h = int(state.get("handle") or 0)
+            state["handle"] = 0
+        if h:
             try:
-                BassChannel.Stop(self._handle)
-                BassStream.Free(self._handle)
+                BassChannel.Stop(h)
+                BassStream.Free(h)
             except Exception:
                 pass
-            self._handle = 0
+
+    def _free_handle(self):
+        """Back-compat: free whatever the current schedule owns."""
+        cur = self._current
+        if cur is not None:
+            self._free_state(cur)

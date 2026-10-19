@@ -281,10 +281,38 @@ def _fetch_scheduled_plays(db: Database, campaign_id: int,
         slot_order = int(r["slot_order"] or 0)
         idx = (slot_order % spot_max) + 1
         by_dow.setdefault(dow, []).append((idx, str(r["break_time"] or "")))
+    # Clip to the campaign's own start/end dates — a day outside the
+    # contract window has nothing scheduled (NULL/''/'Never' = open).
+    c_start, c_end = _campaign_window(db, campaign_id)
     out: dict[date, list[tuple[int, str]]] = {}
     for d in _date_range(start, end):
-        out[d] = list(by_dow.get(d.weekday(), []))
+        if (c_start and d < c_start) or (c_end and d > c_end):
+            out[d] = []
+        else:
+            out[d] = list(by_dow.get(d.weekday(), []))
     return out
+
+
+def _campaign_window(db: Database, campaign_id: int):
+    """(start_date, end_date) of a campaign as ``date`` or None (open)."""
+    try:
+        row = db._conn().execute(
+            "SELECT start_date, end_date FROM campaigns WHERE id = ?",
+            [int(campaign_id)]).fetchone()
+    except Exception:
+        return None, None
+    if row is None:
+        return None, None
+
+    def _p(v):
+        s = str(v or "").strip()
+        if not s or s.lower() == "never":
+            return None
+        try:
+            return date.fromisoformat(s[:10])
+        except ValueError:
+            return None
+    return _p(row["start_date"]), _p(row["end_date"])
 
 
 def _fetch_actual_plays(db: Database, campaign_id: int,

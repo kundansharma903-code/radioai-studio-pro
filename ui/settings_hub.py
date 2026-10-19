@@ -361,9 +361,9 @@ class SettingsHub(QWidget):
              "⚙", AMBER, AMBER_LIGHT, "settings_general"),
             ("Soundcard Settings",
              "DEVICES · CHANNELS · LEVELS · ROUTING",
-             "Pick input/output audio devices, calibrate VU meters, "
-             "configure on-air vs monitor signal paths, set sample "
-             "rate, bit depth, and buffer size.",
+             "Pick the main on-air output device and set up the "
+             "aircheck recorder. Monitor / cue / jingle outputs and "
+             "levels are coming soon.",
              "♫", CYAN, CYAN_LIGHT, "settings_soundcard"),
             ("Studio Settings",
              "AUTO · MIX · SEPARATION · AI ENGINE",

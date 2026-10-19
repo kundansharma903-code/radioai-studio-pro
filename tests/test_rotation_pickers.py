@@ -61,8 +61,11 @@ def test_pick_jingle_random_any(seeded_db):
     assert result["item_id"] is not None
 
 
-def test_pick_jingle_specific_returns_that_pad(seeded_db):
-    """selection_mode='specific' resolves to the row with item_id."""
+def test_pick_jingle_specific_never_resolves_to_a_pad(seeded_db):
+    """selection_mode='specific' resolves ONLY against the master
+    `jingles` library. (Updated 2026-10-17: this used to assert the
+    buggy fallback to a `jingle_pads` row with the same id — an
+    unrelated pad aired whenever the pinned jingle was disabled.)"""
     sch = SchedulerEngine(db=seeded_db)
     pads = list(seeded_db.get_jingle_pads_active())
     if not pads:
@@ -71,8 +74,7 @@ def test_pick_jingle_specific_returns_that_pad(seeded_db):
     slot = {"slot_type": "Jingle", "selection_mode": "specific",
             "item_id": int(target["id"]), "category_id": None}
     result = sch._pick_jingle(slot)
-    assert result is not None
-    assert result["item_id"] == int(target["id"])
+    assert result is None or result.get("_source") != "pad"
 
 
 # ── Sweeper picker ─────────────────────────────────────────────────────

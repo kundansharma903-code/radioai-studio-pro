@@ -819,6 +819,8 @@ class _ScheduleGrid(QWidget):
     _CELL_TEXT_PAD = 4         # inset from the cell's rounded border
 
     selection_changed = pyqtSignal()
+    # Delete / Backspace on a selection → unassign those cells.
+    delete_requested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1035,6 +1037,10 @@ class _ScheduleGrid(QWidget):
     def keyPressEvent(self, e: QKeyEvent) -> None:
         if e.key() == Qt.Key.Key_Escape:
             self.clear_selection(); e.accept(); return
+        if e.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+            if self._sel:
+                self.delete_requested.emit()
+            e.accept(); return
         if (e.key() == Qt.Key.Key_A
                 and e.modifiers() & Qt.KeyboardModifier.ControlModifier):
             self.select_all(); e.accept(); return
@@ -1154,6 +1160,7 @@ class _ScheduleCard(QWidget):
     mode_changed = pyqtSignal(str)
     clear_clicked = pyqtSignal()
     selection_changed = pyqtSignal()
+    delete_cells_requested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1182,6 +1189,7 @@ class _ScheduleCard(QWidget):
         self._grid = _ScheduleGrid(self)
         self._grid.move(16, 100)
         self._grid.selection_changed.connect(self.selection_changed.emit)
+        self._grid.delete_requested.connect(self.delete_cells_requested.emit)
 
     # Public passthrough ─────────────────────────────────────────────────
     @property
@@ -1332,12 +1340,22 @@ class AutoSchedule(QWidget):
         self._btn_auto.clicked.connect(
             lambda: self.screen_requested.emit("auto_program_settings"))
 
+        # Unassign just the selected grid cells (also: Delete key on
+        # the grid). Previously the only way out was Clear-all.
+        self._btn_clear_cells = _ActionRowButton(
+            "✕", "Clear Selected Cells", COL_ROSE, self)
+        self._btn_clear_cells.move(56, 832)
+        self._btn_clear_cells.set_enabled(False)
+        self._btn_clear_cells.clicked.connect(self._on_clear_selected_clicked)
+
         # ── Right grid card ────────────────────────────────────────────
         self._card = _ScheduleCard(self)
         self._card.move(360, 240)
         self._card.mode_changed.connect(self._on_mode_changed)
         self._card.clear_clicked.connect(self._on_clear_clicked)
         self._card.selection_changed.connect(self._on_selection_changed)
+        self._card.delete_cells_requested.connect(
+            self._on_clear_selected_clicked)
 
         # ── 1Hz tick for header time ──────────────────────────────────
         self._tick = QTimer(self)
@@ -1446,6 +1464,7 @@ class AutoSchedule(QWidget):
         self._btn_delete.set_enabled(has_clock)
         self._btn_edit.set_enabled(has_clock)
         self._btn_dup.set_enabled(has_clock)
+        self._btn_clear_cells.set_enabled(bool(sel_cells))
 
     # ── Actions ──────────────────────────────────────────────────────────
 
@@ -1485,6 +1504,35 @@ class AutoSchedule(QWidget):
         log.info(
             f"[auto_sched] SET clock={cid} cells={len(sel)} → "
             f"wrote {ok}/{len(targets)} (mode={self._card.mode()})")
+        if ok < len(targets):
+            dialogs.warning(
+                self, "Some cells not assigned",
+                f"Only {ok} of {len(targets)} cells were assigned — the "
+                f"rest failed to save (see log). Try again.")
+
+    def _on_clear_selected_clicked(self) -> None:
+        """Unassign the selected cells (mode expansion applies, like
+        SET). Drops the Auto-Grid claim too so the cell is no longer
+        shown as builder-owned."""
+        sel = self._card.grid.selected_cells
+        if not sel:
+            return
+        targets = self._expand_targets(sel)
+        ok = 0
+        for d, h in sorted(targets):
+            try:
+                self._db.clear_auto_schedule_cell(int(d), int(h))
+                self._db.remove_auto_grid_cell_record(int(d), int(h))
+                self._card.grid.set_assignment(d, h, None)
+                ok += 1
+            except Exception as exc:
+                log.warning(f"clear_auto_schedule_cell({d},{h}): {exc}")
+        log.info(f"[auto_sched] CLEAR cells → {ok}/{len(targets)}")
+        if ok < len(targets):
+            dialogs.warning(
+                self, "Some cells not cleared",
+                f"Only {ok} of {len(targets)} cells were cleared — the "
+                f"rest failed (see log). Try again.")
 
     def _on_clear_clicked(self) -> None:
         if not dialogs.confirm(
@@ -1497,6 +1545,8 @@ class AutoSchedule(QWidget):
             n = self._db.clear_all_auto_schedule()
         except Exception as exc:
             log.warning(f"clear_all_auto_schedule failed: {exc}")
+            dialogs.warning(self, "Clear failed",
+                            f"The schedule was NOT cleared: {exc}")
             return
         self._card.grid.set_grid({})
         log.info(f"[auto_sched] cleared schedule ({n} rows)")
@@ -1533,6 +1583,24 @@ class AutoSchedule(QWidget):
                 f"Remove this clock from every schedule cell first, then "
                 f"the delete will go through.")
             return
+        # Force-clock overrides count as "in use" too (deleting would
+        # silently disable an upcoming holiday override).
+        try:
+            forced = [f for f in (self._db.list_force_clocks() or [])
+                      if f["clock_id"] is not None
+                      and int(f["clock_id"]) == int(cid)]
+        except Exception as exc:
+            log.debug(f"list_force_clocks failed: {exc}")
+            forced = []
+        if forced:
+            sample = ", ".join(
+                f"{f['name']} ({f['override_date']})" for f in forced[:3])
+            dialogs.warning(
+                self, "Clock is in use",
+                f"'{name}' is the target of {len(forced)} force-clock "
+                f"override{'s' if len(forced) != 1 else ''} ({sample}).\n\n"
+                f"Remove those overrides in Force Clocks first.")
+            return
         if not dialogs.confirm(
                 self, "Delete clock?",
                 f"Delete '{name}'?",
@@ -1547,7 +1615,10 @@ class AutoSchedule(QWidget):
         except ValueError as exc:
             dialogs.info(self, "Cannot delete", str(exc)); return
         except Exception as exc:
-            log.warning(f"delete_clock failed: {exc}"); return
+            log.warning(f"delete_clock failed: {exc}")
+            dialogs.warning(self, "Delete failed",
+                            f"'{name}' was NOT deleted: {exc}")
+            return
         self._clocks_panel.select_clock(None)
         self._reload_clocks_and_grid()
         log.info(f"[auto_sched] deleted clock {cid}")

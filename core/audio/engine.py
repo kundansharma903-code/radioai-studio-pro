@@ -157,6 +157,10 @@ class AudioEngine(QObject):
         self._lock = threading.Lock()
         # Monotonic, never-reused. Starts at 1 — 0 is sentinel for "invalid".
         self._next_id: int = 1
+        # Eviction protection (2026-10-17): callable returning channel
+        # ids that must never be evicted at MAX_CHANNELS (Studio's
+        # on-air deck + fading out-going deck). None → no protection.
+        self._protect_provider = None
         # ── Phase 5 mixer routing ───────────────────────────────────────
         # Forced off if bassmix.dll absent. The engine eagerly creates
         # the mixer stream when routing is on, so the first load_file
@@ -252,7 +256,16 @@ class AudioEngine(QObject):
         # the lock internally — calling it from inside another lock would
         # deadlock.
         while len(self._channels) >= self.MAX_CHANNELS:
-            self._evict_oldest()
+            if not self._evict_oldest():
+                # Every channel is protected (on-air deck / fading
+                # out-going deck). Refuse the new load rather than
+                # cutting air.
+                log.error(
+                    f"channel cap reached ({self.MAX_CHANNELS}) and every "
+                    f"channel is protected; refusing to load {path!r}")
+                raise AudioEngineError(
+                    "channel cap reached; all channels protected "
+                    "(on-air) — new load refused")
 
         with self._lock:
             flags = BASS_STREAM_PRESCAN
@@ -454,6 +467,19 @@ class AudioEngine(QObject):
         """Return current state, or 'stopped' if the channel is unknown."""
         ch = self._channels.get(channel_id)
         return ch.state if ch else "stopped"
+
+    def bass_handle(self, channel_id) -> int:
+        """Raw BASS stream handle for ``channel_id`` (0 if unknown).
+
+        Channel ids are the engine's own never-reused counter — NOT BASS
+        handles. Code that must poll BASS directly (SweeperEngine's
+        overlay watcher) needs the real handle; passing the id instead
+        made every positioned overlay sweeper silently never fire."""
+        try:
+            ch = self._channels.get(int(channel_id))
+        except (TypeError, ValueError):
+            return 0
+        return int(ch.handle) if ch is not None and ch.handle else 0
 
     def active_channels(self) -> list[int]:
         with self._lock:
@@ -887,6 +913,14 @@ class AudioEngine(QObject):
             raise ChannelError(f"channel {channel_id} not found")
         return ch
 
+    def set_eviction_protect_provider(self, provider) -> None:
+        """Register a zero-arg callable returning an iterable of channel
+        ids that the MAX_CHANNELS eviction policy must never evict
+        (e.g. the on-air deck and a fading out-going deck). The oldest
+        UNPROTECTED channel is evicted instead; if every channel is
+        protected, load_file() raises AudioEngineError."""
+        self._protect_provider = provider
+
     def _evict_oldest(self) -> int:
         """Evict the oldest channel to make room (Phase A3 / Q1).
 
@@ -903,7 +937,17 @@ class AudioEngine(QObject):
         with self._lock:
             if not self._channels:
                 return 0
-            oldest_id = next(iter(self._channels))
+            protected = set()
+            if self._protect_provider is not None:
+                try:
+                    protected = {int(c) for c in
+                                 (self._protect_provider() or ()) if c}
+                except Exception as exc:
+                    log.warning(f"protect provider failed: {exc}")
+            oldest_id = next(
+                (cid for cid in self._channels if cid not in protected), 0)
+            if not oldest_id:
+                return 0
 
         log.warning(
             f"channel cap reached ({self.MAX_CHANNELS}); "

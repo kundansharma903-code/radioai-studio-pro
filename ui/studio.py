@@ -2433,6 +2433,10 @@ class _LibrariesPanel(QWidget):
 
     def _on_type_clicked(self, name: str) -> None:
         if name == self._active_type:
+            # Re-click on the ACTIVE tile = refresh (picks up rows added
+            # / edited / deleted in the Jingles / Sweepers / Spots
+            # libraries since the tile was opened).
+            self.library_type_changed.emit(name)
             return
         for k, tile in self._type_tiles.items():
             tile.set_active(k == name)
@@ -2456,6 +2460,16 @@ class _LibrariesPanel(QWidget):
     def selected_row_index(self) -> int:
         """Current library-table selection. -1 when nothing is picked."""
         return self._selected_idx
+
+    def row_data(self, idx: int) -> Optional[dict]:
+        """Rich dict for VISIBLE row ``idx`` (post search/filter), or
+        None. Row indices from the table are view indices -- never index
+        an unfiltered cache with them."""
+        if 0 <= int(idx) < len(self._rows):
+            data = self._rows[int(idx)].data
+            if data:
+                return dict(data)
+        return None
 
     def _on_row_double_clicked(self, idx: int) -> None:
         self.song_double_clicked.emit(int(idx))
@@ -3098,9 +3112,13 @@ class _NextBreakPanel(QWidget):
         self.setFixedSize(420, 264)
         self._countdown_s = 0
         self._countdown_label = "00:00"
-        self._break_type = "Commercial"
-        self._break_dur = "2:30"
-        self._spots = 5
+        # Real values arrive via set_break_meta (Studio
+        # refresh_next_break_meta); never show invented numbers.
+        self._break_type = "—"
+        self._break_dur = "—"
+        self._spots = 0
+        # No cue/preview output exists → Preview is disabled.
+        self._preview_enabled = False
 
         self._font_h        = inter(13, QFont.Weight.Black, letter_spacing=1.4)
         self._font_status   = inter(9, QFont.Weight.Bold, letter_spacing=1.6)
@@ -3133,9 +3151,29 @@ class _NextBreakPanel(QWidget):
             pt = e.position().toPoint()
             if self._skip_rect.contains(pt):
                 self.skip_clicked.emit()
-            elif self._preview_rect.contains(pt):
+            elif (self._preview_rect.contains(pt)
+                    and self._preview_enabled):
                 self.preview_clicked.emit()
         super().mousePressEvent(e)
+
+    def event(self, e) -> bool:
+        # Tooltip for the disabled Preview button (custom-painted, so
+        # no per-button QWidget tooltip).
+        from PyQt6.QtCore import QEvent
+        if e.type() == QEvent.Type.ToolTip:
+            from PyQt6.QtWidgets import QToolTip
+            pt = e.pos()
+            if self._preview_rect.contains(pt) and not self._preview_enabled:
+                QToolTip.showText(e.globalPos(), "Coming soon", self)
+                return True
+            if self._skip_rect.contains(pt):
+                QToolTip.showText(e.globalPos(),
+                                  "Skip the next scheduled break", self)
+                return True
+            QToolTip.hideText()
+            e.ignore()
+            return True
+        return super().event(e)
 
     def paintEvent(self, e: QPaintEvent) -> None:
         p = QPainter(self); p.setClipRect(e.rect())
@@ -3198,13 +3236,15 @@ class _NextBreakPanel(QWidget):
         p.setPen(QColor(RED_LIGHT)); p.setFont(self._font_btn)
         p.drawText(skip, Qt.AlignmentFlag.AlignCenter, "×  Skip Break")
 
-        # ▶ Preview button (cyan outline)
+        # ▶ Preview button (cyan outline; dimmed while disabled)
         prev = QRectF(self._preview_rect)
-        p.fillRect(prev, _qcolor_a(CYAN, 0.18))
+        on = self._preview_enabled
+        p.fillRect(prev, _qcolor_a(CYAN, 0.18 if on else 0.05))
         p.setBrush(Qt.BrushStyle.NoBrush)
-        p.setPen(QPen(_qcolor_a(CYAN, 0.50)))
+        p.setPen(QPen(_qcolor_a(CYAN, 0.50 if on else 0.18)))
         p.drawRoundedRect(prev.adjusted(0.5, 0.5, -0.5, -0.5), 8, 8)
-        p.setPen(QColor(CYAN_LIGHT)); p.setFont(self._font_btn)
+        p.setPen(QColor(CYAN_LIGHT) if on else QColor(TEXT_DIM))
+        p.setFont(self._font_btn)
         p.drawText(prev, Qt.AlignmentFlag.AlignCenter, "▶  Preview")
         p.end()
 
@@ -3791,6 +3831,10 @@ class Studio(QWidget):
     # (deck_cid, fade_ms).
     _sweeper_duck_requested   = pyqtSignal(int, int, int)
     _sweeper_unduck_requested = pyqtSignal(int, int)
+    # Emitted from the SweeperEngine watcher THREAD when an overlay
+    # sweeper ACTUALLY starts playing (not when it is merely scheduled).
+    # The main-thread slot writes broadcast_log. Arg: the overlay item.
+    _sweeper_overlay_started = pyqtSignal(object)
 
     DEFAULT_VOLUME = 85
     FADE_OUT_MS = 3000
@@ -4056,6 +4100,8 @@ class Studio(QWidget):
         # main thread. Qt auto-selects a queued connection.
         self._sweeper_duck_requested.connect(self._apply_sweeper_duck)
         self._sweeper_unduck_requested.connect(self._apply_sweeper_unduck)
+        self._sweeper_overlay_started.connect(
+            self._on_sweeper_overlay_started)
         # Played-songs tracking — tracks song ids that have been
         # dispatched (play-started) since Studio launch. Used by the
         # Up Coming panel's fallback path to filter out songs that
@@ -4092,6 +4138,14 @@ class Studio(QWidget):
             if hasattr(self._engine, "fade_completed"):
                 self._engine.fade_completed.connect(
                     self._on_engine_fade_completed)
+            # Channel-cap eviction must never cut the on-air deck or
+            # the fading out-going deck (2026-10-17).
+            if hasattr(self._engine, "set_eviction_protect_provider"):
+                try:
+                    self._engine.set_eviction_protect_provider(
+                        self._eviction_protected_cids)
+                except Exception as exc:
+                    log.debug(f"[studio] eviction protect wiring: {exc}")
 
         # Scheduler signal connections (PRESERVED)
         if self._scheduler is not None:
@@ -4102,6 +4156,11 @@ class Studio(QWidget):
                 self._on_scheduler_next_break_in)
             self._scheduler.started.connect(self._update_status_pills)
             self._scheduler.stopped.connect(self._update_status_pills)
+            # Scheduler errors used to go nowhere — surface them in the
+            # Problems panel (2026-10-17).
+            if hasattr(self._scheduler, "error_occurred"):
+                self._scheduler.error_occurred.connect(
+                    self._on_scheduler_error)
             # Phase B: refresh Up Coming preview whenever the scheduler
             # state changes meaningfully. Belt + suspenders alongside
             # the 1Hz live AT tick — covers manual mutations the timer
@@ -4410,6 +4469,7 @@ class Studio(QWidget):
                 "FROM songs "
                 "WHERE file_path IS NOT NULL AND file_path != '' "
                 "AND duration_ms > 5000 "
+                "AND COALESCE(is_enabled, 1) = 1 "
                 "ORDER BY id LIMIT 60"
             ).fetchall()
         except Exception as exc:
@@ -4625,6 +4685,12 @@ class Studio(QWidget):
                 f"to natural EOS (no overlap)")
             self._fade_triggered_for_cid = cid  # latch — don't re-eval
             return
+        # AutoMix trigger (Studio Settings): "At end of song" / "Manual
+        # only" → no early fade; the song plays to EOS.
+        mode = self._automix_mode()
+        if mode in ("eos", "manual"):
+            self._fade_triggered_for_cid = cid  # latch — don't re-eval
+            return
         # Threshold: per-song mix_point_ms wins; else fade_out_start
         # seconds before end. 0 + no mix point disables the fade.
         mp_ms = 0
@@ -4632,6 +4698,8 @@ class Studio(QWidget):
             mp_ms = int((self._current_track or {}).get("mix_point_ms")
                          or 0)
         except (TypeError, ValueError):
+            mp_ms = 0
+        if mode == "fade_start":
             mp_ms = 0
         if 0 < mp_ms < self._current_duration_ms:
             threshold_ms = mp_ms
@@ -4772,6 +4840,7 @@ class Studio(QWidget):
         path = nxt.get("file_path")
         if not path or not os.path.exists(path):
             return False
+        self._hydrate_cue_points(nxt)
         try:
             new_cid = self._engine.load_file(path)
         except Exception as exc:
@@ -4779,6 +4848,7 @@ class Studio(QWidget):
             return False
         try:
             self._engine.set_volume(new_cid, self._master_volume)
+            self._apply_cue_in(new_cid, nxt)
             self._engine.play(new_cid)
         except Exception as exc:
             log.warning(f"[studio] crossfade play: {exc}")
@@ -4898,6 +4968,11 @@ class Studio(QWidget):
         def _alert() -> None:
             if not (alert or must_alert):
                 return
+            # Non-blocking record first — the Problems panel never holds
+            # the deck. The dialog itself is only ever shown AFTER the
+            # next / fallback track has started (or on Stop, where the
+            # deck is idle by the operator's own choice).
+            self._add_problem(f"Unplayable track: {title}")
             try:
                 dialogs.warning(
                     self, "Track could not be played",
@@ -4908,7 +4983,7 @@ class Studio(QWidget):
             except Exception:
                 pass
 
-        if not action.startswith("skip"):
+        if action.startswith("stop"):
             _alert()
 
         if action.startswith("stop"):
@@ -4933,15 +5008,20 @@ class Studio(QWidget):
                     qsong.insert(0, song)
                 except Exception:
                     pass
-            self._current_track = None
-            self._apply_idle_state()
-            self._update_status_pills()
-            return
+            # Then keep the station on air: fall through to the skip
+            # path below (going idle here was dead air until the
+            # operator noticed — 2026-10-17).
 
         if action.startswith("play default"):
             from core.settings import Settings
             fb_path = (
                 Settings().get("default_fallback_path", "") or "")
+            if not fb_path or not os.path.exists(fb_path):
+                log.warning(
+                    f"[studio] fallback 'Play default fallback track' "
+                    f"but default_fallback_path is "
+                    f"{'not set' if not fb_path else 'missing on disk'} "
+                    f"({fb_path!r}) — treating as Skip")
             if fb_path and os.path.exists(fb_path):
                 try:
                     cid = self._engine.load_file(fb_path)
@@ -4952,6 +5032,7 @@ class Studio(QWidget):
                     self._current_track = {"title": "(Fallback track)",
                                              "file_path": fb_path}
                     self._update_status_pills()
+                    self._run_later(_alert)
                     return
                 except Exception as exc:
                     log.warning(
@@ -4995,6 +5076,113 @@ class Studio(QWidget):
     # PRESERVED: queue → deck (verbatim from legacy)
     # ────────────────────────────────────────────────────────────────────
 
+    # ────────────────────────────────────────────────────────────────────
+    # Song airability + cue hydration (2026-10-17 playback fixes)
+    # ────────────────────────────────────────────────────────────────────
+
+    def _song_db_row(self, song: Optional[dict]) -> Optional[dict]:
+        """Fresh ``songs`` row for a deck SONG, as a plain dict.
+
+        None  → not a song / no id / lookup unavailable (fake DB) —
+                callers treat that as "no information" (fail open).
+        {}    → the song row no longer exists (deleted)."""
+        if not song:
+            return None
+        t = song.get("_item_type") or song.get("item_type") or "song"
+        if str(t).strip().lower() != "song":
+            return None
+        try:
+            sid = int(song.get("id") or 0)
+        except (TypeError, ValueError):
+            return None
+        if sid <= 0 or getattr(self, "_db", None) is None:
+            return None
+        try:
+            row = self._db.get_song(sid)
+        except Exception as exc:
+            log.debug(f"[studio] get_song({sid}) failed: {exc}")
+            return None
+        if row is None:
+            return {}
+        if isinstance(row, dict):
+            return dict(row)
+        import sqlite3 as _sq
+        if isinstance(row, _sq.Row):
+            return {k: row[k] for k in row.keys()}
+        return None
+
+    def _song_is_airable(self, song: Optional[dict]) -> bool:
+        """False when a deck song was deleted or disabled since it was
+        queued (manual queue / tease pins / fallback queue)."""
+        row = self._song_db_row(song)
+        if row is None:
+            return True
+        title = (song or {}).get("title")
+        if not row:
+            log.warning(f"[studio] song id={song.get('id')} {title!r} "
+                        f"no longer exists — skipped")
+            return False
+        en = row.get("is_enabled", 1)
+        if (isinstance(en, (int, float)) and not isinstance(en, bool)
+                and int(en) == 0):
+            log.warning(f"[studio] song id={song.get('id')} {title!r} "
+                        f"is disabled — skipped")
+            return False
+        return True
+
+    def _hydrate_cue_points(self, song: Optional[dict]) -> None:
+        """Copy the song's CURRENT cue data (mix point, cue-in) from the
+        DB onto the deck dict at load time. Scheduler / library / queue
+        dicts don't carry these keys, so without this the per-song mix
+        point never drove the transition. Absent → keys untouched and
+        the global fade_out_start fallback applies."""
+        row = self._song_db_row(song)
+        if not row:
+            return
+        for k in ("mix_point_ms", "start_point_ms"):
+            v = row.get(k)
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                song[k] = int(v)
+
+    def _apply_cue_in(self, cid: int, song: Optional[dict]) -> None:
+        """Seek a freshly loaded deck channel to the song's cue-in
+        (start_point_ms) before play. No-op when unset/invalid."""
+        try:
+            sp = int((song or {}).get("start_point_ms") or 0)
+        except (TypeError, ValueError):
+            sp = 0
+        if sp <= 0 or self._engine is None:
+            return
+        try:
+            dur = int(self._engine.get_duration_ms(cid) or 0)
+        except Exception:
+            dur = 0
+        if dur and sp >= dur - 1000:
+            log.warning(f"[studio] cue-in {sp}ms beyond duration {dur}ms "
+                        f"— ignored")
+            return
+        try:
+            self._engine.seek_to_ms(cid, sp)
+            log.info(f"[studio] cue-in seek ch={cid} start_point_ms={sp}")
+        except Exception as exc:
+            log.debug(f"[studio] cue-in seek failed: {exc}")
+
+    def _automix_mode(self) -> str:
+        """Studio Settings → AutoMix trigger, normalised:
+          'mix_point'  — "At song MIX POINT marker" (default / unknown)
+          'fade_start' — "At fade-out start" (ignore per-song mix point)
+          'eos'        — "At end of song" (no early crossfade)
+          'manual'     — "Manual only" (no automatic fade/crossfade;
+                          EOS advance still follows the AUTO toggle)"""
+        t = (getattr(self, "_cfg_automix_trigger", "") or "").strip().lower()
+        if t.startswith("manual"):
+            return "manual"
+        if t.startswith("at end"):
+            return "eos"
+        if "fade-out start" in t or "fade out start" in t:
+            return "fade_start"
+        return "mix_point"
+
     def _on_queue_song_play(self, song: dict) -> None:
         if self._engine is None:
             log.warning("[studio] no engine — playback unavailable")
@@ -5025,6 +5213,9 @@ class Studio(QWidget):
                 pass
             self._playback_cid = None
 
+        # Per-song cue data read fresh from the DB at load time.
+        self._hydrate_cue_points(song)
+
         try:
             cid = self._engine.load_file(path)
         except Exception as exc:
@@ -5037,6 +5228,7 @@ class Studio(QWidget):
             return
 
         self._engine.set_volume(cid, self._master_volume)
+        self._apply_cue_in(cid, song)
         self._engine.play(cid)
         self._skip_streak = 0
 
@@ -5108,6 +5300,27 @@ class Studio(QWidget):
         was_manual = 0 if clock_id is not None else 1
         song_id = (int(song.get("id"))
                    if (item_type == "song" and song.get("id")) else None)
+        # Jingles / Station IDs: Final Log resolves the name through
+        # jingle_id. Pad-sourced items carry a jingle_pads id (different
+        # table) → no FK, name travels as item_name instead.
+        jingle_id = None
+        if (item_type in ("jingle", "station_id") and song.get("id")
+                and song.get("_source") != "pad"):
+            try:
+                jingle_id = int(song.get("id"))
+            except (TypeError, ValueError):
+                jingle_id = None
+        item_name = (None if item_type == "song"
+                     else ((song.get("title") or "").strip() or None))
+        # Spots: carry the campaign FK so Play Report / contract limits
+        # count Break-slot spots too (2026-10-17).
+        campaign_id = None
+        if item_type == "spot":
+            try:
+                campaign_id = int(song.get("_campaign_id")
+                                  or song.get("id") or 0) or None
+            except (TypeError, ValueError):
+                campaign_id = None
         now_dt = _dt.now()
         if item_type == "song" and song_id is not None:
             last = self._recent_song_logs.get(song_id)
@@ -5120,11 +5333,14 @@ class Studio(QWidget):
             self._db.log_play(
                 entry_type=item_type,
                 song_id=song_id,
+                campaign_id=campaign_id,
                 duration_ms=int(self._current_duration_ms),
                 deck="A",
                 was_manual=was_manual,
                 clock_id=int(clock_id) if clock_id is not None else None,
                 slot_idx=int(slot_idx) if slot_idx is not None else None,
+                jingle_id=jingle_id,
+                item_name=item_name,
             )
             if item_type == "song" and song_id is not None:
                 self._recent_song_logs[song_id] = now_dt
@@ -5156,11 +5372,18 @@ class Studio(QWidget):
         item_type = (song.get("_item_type") or "song").strip().lower()
         if item_type != "song":
             return
+        mode = self._automix_mode()
+        if mode in ("eos", "manual"):
+            log.info(f"[studio] mix-point sync not armed cid={cid} — "
+                     f"automix_trigger={self._cfg_automix_trigger!r}")
+            return
         # Per-song mix point wins
         mp_ms = 0
         try:
             mp_ms = int(song.get("mix_point_ms") or 0)
         except (TypeError, ValueError):
+            mp_ms = 0
+        if mode == "fade_start":
             mp_ms = 0
         if mp_ms <= 0 or mp_ms >= self._current_duration_ms:
             # Fallback — N seconds before file end. 0 = no fade trigger.
@@ -5509,6 +5732,13 @@ class Studio(QWidget):
                         f"or invalid: {fp!r}. Cursor advanced; "
                         f"check this row in the library editor.")
                     continue
+                # Campaign limits (2026-10-17): a Break-slot spot whose
+                # campaign may not air now (inactive/expired/daily cap/
+                # min gap/max per break) is skipped like a missing file.
+                if (item_type == "spot" and item.get("campaign_id")
+                        and not self._campaign_may_air(
+                            int(item["campaign_id"]), "break-slot")):
+                    continue
                 song = {
                     "id":          item.get("item_id"),
                     "title":       item.get("title"),
@@ -5519,6 +5749,9 @@ class Studio(QWidget):
                     "_clock_id":   item.get("clock_id"),
                     "_slot_idx":   item.get("slot_idx"),
                     "_item_type":  item_type,
+                    "_campaign_id": item.get("campaign_id"),
+                    # "pad" → item_id is a jingle_pads.id, not jingles.id
+                    "_source":     item.get("_source"),
                 }
                 log.info(f"[studio] scheduler picked {item_type} item_id="
                          f"{song['id']} clock_id={song['_clock_id']} "
@@ -5562,6 +5795,8 @@ class Studio(QWidget):
             sid = s.get("id")
             if sid == after_id or sid in played:
                 continue
+            if not self._song_is_airable(s):
+                continue  # deleted / disabled since the queue loaded
             return s
         if idx >= 0:
             return None            # end of static playlist — legacy stop
@@ -5684,6 +5919,9 @@ class Studio(QWidget):
                     f"[studio] mix-point sync SKIPPED cid={channel_id} — "
                     f"{(self._current_track or {}).get('_item_type')!r} "
                     f"plays to natural EOS (no overlap)")
+                self._fade_triggered_for_cid = channel_id
+                return
+            if self._automix_mode() in ("eos", "manual"):
                 self._fade_triggered_for_cid = channel_id
                 return
             crossfade_ms = max(
@@ -5897,9 +6135,11 @@ class Studio(QWidget):
                 "position":          item.get("position")
                                       or item.get("_position")
                                       or "Bridge at End",
-                "sweeper_volume":    int(item.get("volume_sweeper_pct")
-                                          or item.get("sweeper_volume")
-                                          or 100),
+                # NOT an `or` chain: a deliberate 0% must stay 0.
+                "sweeper_volume":    int(next(
+                    (v for v in (item.get("volume_sweeper_pct"),
+                                 item.get("sweeper_volume"))
+                     if v is not None and v != ""), 100)),
                 "position_offset":   float(item.get("offset_seconds")
                                             or item.get("position_offset")
                                             or 0.0),
@@ -5930,8 +6170,29 @@ class Studio(QWidget):
                     lambda c=duck_cid, f=fade_ms:
                     self._sweeper_unduck_requested.emit(c, f))
 
+            # The SweeperEngine polls BASS directly → it needs the REAL
+            # stream handle, not AudioEngine's internal channel id.
+            deck_handle = self._playback_cid
+            if self._engine is not None and hasattr(self._engine,
+                                                    "bass_handle"):
+                deck_handle = int(self._engine.bass_handle(
+                    self._playback_cid) or 0)
+                if not deck_handle:
+                    log.warning("[studio] sweeper skipped — no BASS "
+                                f"handle for cid={self._playback_cid}")
+                    return
+            # Log only once the overlay REALLY starts (watcher thread →
+            # queued signal → main-thread slot). Chains the duck hook.
+            log_item = dict(item)
+            duck_start = on_start
+
+            def on_start(_d=duck_start, _it=log_item):
+                self._sweeper_overlay_started.emit(_it)
+                if _d is not None:
+                    _d()
+
             self._sweeper_engine.schedule_for_song(
-                song_info, sweeper_info, self._playback_cid,
+                song_info, sweeper_info, deck_handle,
                 on_start=on_start, on_end=on_end)
             log.info(
                 f"[studio] sweeper overlay scheduled: "
@@ -5939,15 +6200,23 @@ class Studio(QWidget):
                 f"file={(sweeper_info['file_path'] or '')[-32:]!r} "
                 f"position={sweeper_info['position']!r} "
                 f"vol={sweeper_info['sweeper_volume']}% "
-                f"duck={'off' if on_start is None else f'{duck_pct}%'}"
-                f"{'' if on_start is None else f' fade={fade_ms}ms'}")
+                f"duck={'off' if duck_start is None else f'{duck_pct}%'}"
+                f"{'' if duck_start is None else f' fade={fade_ms}ms'}")
         except Exception as exc:
             log.warning(f"[studio] sweeper overlay failed: {exc}",
                         exc_info=True)
             return
-        # Log to broadcast_log so History panel reflects the play.
-        # Manual sweepers carry no clock metadata; auto-dispatched ones
-        # have item['clock_id']/['slot_idx'] populated by the scheduler.
+
+    def _on_sweeper_overlay_started(self, item) -> None:
+        """MAIN THREAD — an overlay sweeper actually started playing.
+
+        Log to broadcast_log so History / Final Log reflect the play.
+        Manual sweepers carry no clock metadata; auto-dispatched ones
+        have item['clock_id']/['slot_idx'] populated by the scheduler."""
+        item = item or {}
+        name = (item.get("title") or item.get("name") or "").strip()
+        if not name and item.get("item_id") is not None:
+            name = f"Sweeper #{item.get('item_id')}"
         try:
             self._db.log_play(
                 entry_type="sweeper",
@@ -5958,6 +6227,7 @@ class Studio(QWidget):
                 clock_id=int(item["clock_id"]) if item.get("clock_id") else None,
                 slot_idx=int(item["slot_idx"]) if item.get("slot_idx")
                                                    is not None else None,
+                item_name=name or None,
             )
         except Exception as exc:
             log.warning(f"[studio] sweeper log_play failed: {exc}")
@@ -6081,6 +6351,7 @@ class Studio(QWidget):
         item = {
             "item_type":          "sweeper",
             "item_id":            int(row["id"]),
+            "title":              row["name"]        if "name"        in keys else "",
             "file_path":          row["file_path"]   if "file_path"   in keys else "",
             "duration_ms":        row["duration_ms"] if "duration_ms" in keys else 0,
             "position":           row["position"]    if "position"    in keys else None,
@@ -6111,10 +6382,53 @@ class Studio(QWidget):
             log.error(f"[studio] spot_due handler crashed: "
                       f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}")
 
+    def _campaign_may_air(self, campaign_id: int, where: str,
+                          scheduled: bool = False) -> bool:
+        """Campaign contract gate (2026-10-17): is_active, date window,
+        contracted_plays_per_day, min_gap_minutes, max_per_break — see
+        Database.campaign_air_check. Operator-forced plays (Libraries
+        panel) bypass it until they air (the override is consumed at
+        the play point). A DB without the helper / a failing check
+        never blocks (fail-open: a broken check must not cause dead air
+        on paid spots that ARE allowed)."""
+        override = getattr(self, "_spot_limit_override", None)
+        if override and int(campaign_id) in override:
+            return True
+        check = getattr(self._db, "campaign_air_check", None)
+        if not callable(check):
+            return True
+        try:
+            ok, reason = check(int(campaign_id), scheduled=scheduled)
+        except TypeError:
+            # Test doubles / older helper without the kwarg.
+            try:
+                ok, reason = check(int(campaign_id))
+            except Exception as exc:
+                log.debug(f"[studio] campaign_air_check({campaign_id}): {exc}")
+                return True
+        except Exception as exc:
+            log.debug(f"[studio] campaign_air_check({campaign_id}): {exc}")
+            return True
+        if not ok:
+            log.info(f"[studio] spot {campaign_id} NOT aired ({where}): "
+                     f"{reason}")
+        return bool(ok)
+
     def _do_scheduler_spot_due(self, campaign_id: int,
                                _policy_exempt: bool = False) -> None:
         if self._engine is None:
             log.warning(f"[studio] spot_due {campaign_id} — no engine")
+            return
+        # Campaign limits — checked on arrival AND again when a queued
+        # spot is drained from _pending_spots / the break-policy pool
+        # (every drain re-enters here), so a campaign deactivated or
+        # expired while waiting never plays.
+        # spot_due comes from the operator's programming grid → the grid
+        # wins over play limits (see Database.campaign_air_check).
+        if not self._campaign_may_air(campaign_id, "spot_due",
+                                      scheduled=True):
+            if self._playback_cid is None:
+                self._continue_chain_if_idle()
             return
         # Break Policy valve (2026-07-04): when the policy is ON, a due
         # spot is HELD for the next break window instead of queueing/
@@ -6137,6 +6451,17 @@ class Studio(QWidget):
                 f"({entry['category'] or 'others'}) held for the "
                 f"{nxt_txt} break window "
                 f"({len(self._break_pool)} in pool)")
+            return
+        # Stitcher tease on air (deck channel None, station NOT idle):
+        # queue the spot — the tease-done chain fires it (2026-10-17).
+        if getattr(self, "_stitcher_tease_playing", False):
+            self._pending_spots.append(int(campaign_id))
+            log.info(f"[studio] spot {campaign_id} queued — stitcher "
+                     f"tease on air (pos {len(self._pending_spots)})")
+            try:
+                self._load_upcoming_queue()
+            except Exception as exc:
+                log.debug(f"[studio] upcoming refresh after spot enqueue: {exc}")
             return
         # Deferred dispatch — when a song or another spot/SOTG is
         # currently playing on the deck, do NOT interrupt. Append the
@@ -6248,6 +6573,9 @@ class Studio(QWidget):
         # would see misleading metadata. Same call the deck path does
         # in _on_queue_song_play.
         self._apply_playing_state(self._current_track)
+        _ovr = getattr(self, "_spot_limit_override", None)
+        if _ovr:
+            _ovr.discard(int(campaign_id))     # operator force consumed
         try:
             self._db.log_play(
                 entry_type="spot",
@@ -6255,6 +6583,10 @@ class Studio(QWidget):
                 duration_ms=int(self._current_duration_ms),
                 deck="A",
                 was_manual=0,
+                # Keeps the client's name readable if the campaign is
+                # later deleted (FK gets NULLed) — proof of play.
+                item_name=(campaign_name if campaign_name != "—"
+                           else None),
             )
         except Exception as exc:
             log.warning(f"[studio] broadcast_log write failed: {exc}")
@@ -6334,6 +6666,10 @@ class Studio(QWidget):
                     if (self._sotg_active_aid is not None
                             and self._sotg_active_aid == aid):
                         continue
+                    # Already deferred in the FIFO — the 5s tick must not
+                    # queue the same drop again (it aired N times).
+                    if self._sotg_is_queued(aid):
+                        continue
                     self._do_sotg_fire(r)
                     # Fire only one per tick — multiple drops at the
                     # same minute don't make sense; if you want them
@@ -6342,7 +6678,9 @@ class Studio(QWidget):
                 # Past miss threshold → stamp MISSED
                 if delta_s < -self._SOTG_MISS_THRESHOLD_S:
                     aid = int(r.get("assignment_id") or 0)
-                    if aid > 0:
+                    # A drop waiting in the FIFO is not missed — it airs
+                    # when the current item ends.
+                    if aid > 0 and not self._sotg_is_queued(aid):
                         try:
                             self._db.mark_sotg_assignment_missed(aid)
                             log.info(
@@ -6385,6 +6723,23 @@ class Studio(QWidget):
                     int(assignment.get("assignment_id") or 0))
             except Exception:
                 pass
+            return
+
+        aid_in = int(assignment.get("assignment_id") or 0)
+        if aid_in > 0 and self._sotg_is_queued(aid_in):
+            log.info(f"[studio] sotg aid={aid_in} already queued — "
+                     f"not queued twice")
+            return
+        # Stitcher tease on air — the deck channel is None but the
+        # station is NOT idle. Queue; the tease-done chain fires it.
+        if getattr(self, "_stitcher_tease_playing", False):
+            self._pending_sotgs.append(dict(assignment))
+            log.info(f"[studio] sotg aid={aid_in} deferred — stitcher "
+                     f"tease on air (queue_pos={len(self._pending_sotgs)})")
+            try:
+                self._load_upcoming_queue()
+            except Exception as exc:
+                log.debug(f"[studio] upcoming refresh after sotg enqueue: {exc}")
             return
 
         # Paid spot in progress (or pending) — always wins. Append the
@@ -6455,6 +6810,24 @@ class Studio(QWidget):
         the next tick (status is the source of truth)."""
         file_path = assignment.get("file_path") or ""
         aid = int(assignment.get("assignment_id") or 0)
+        # Re-check the DB status right before air: a drop that already
+        # FIRED (or was MISSED / cancelled) while it waited in the FIFO
+        # must not air again. Unknown row / lookup failure → play.
+        if aid > 0:
+            try:
+                row = self._db.get_sotg_assignment_by_id(aid)
+            except Exception:
+                row = None
+            st = (row.get("status") or "").strip().upper() \
+                if isinstance(row, dict) else ""
+            if st and st not in ("READY", "CONFLICT"):
+                log.info(f"[studio] sotg aid={aid} status={st} — "
+                         f"not played again")
+                if self._playback_cid is None:
+                    anchor = self._pre_sotg_song_id
+                    self._run_later(
+                        lambda a=anchor: self._continue_break_chain(a))
+                return
         try:
             cid = self._engine.load_file(file_path)
         except Exception as exc:
@@ -6600,6 +6973,34 @@ class Studio(QWidget):
         return pool
 
     def _arm_stitcher_tease(self) -> None:
+        """Arm (top up) the tease pins, then pre-build the montage WAV
+        in the background so song EOS → tease has no build gap."""
+        self._arm_stitcher_tease_pins()
+        try:
+            self._prebuild_stitcher_tease()
+        except Exception as exc:
+            log.debug(f"[stitcher] prebuild request failed: {exc}")
+
+    def _prebuild_stitcher_tease(self) -> None:
+        """Ask the StitcherEngine to build the montage for the current
+        pins on its own thread (pure pydub — no Qt/DB off-thread). At
+        EOS ``_maybe_play_tease_first`` assembles the same sequence and
+        the engine plays the cached file; if pins changed or the build
+        isn't finished it builds inline exactly as before."""
+        eng = self._stitcher_engine
+        if (eng is None or not self._teased_songs
+                or self._stitcher_tease_playing
+                or not hasattr(eng, "prebuild")):
+            return
+        cfg = self._db.get_stitcher_config()
+        if not int(cfg.get("module_enabled") or 0):
+            return
+        from core.stitcher_engine import StitcherEngine
+        seq = StitcherEngine.assemble_sequence(cfg, self._teased_songs)
+        if seq:
+            eng.prebuild(seq)
+
+    def _arm_stitcher_tease_pins(self) -> None:
         """Pin the up-to-3 songs that will air AFTER the pending break
         and keep them for (a) the tease montage and (b) post-break
         dispatch. Source order (operator directive 2026-07-04 — spots
@@ -6808,12 +7209,71 @@ class Studio(QWidget):
 
     def _on_stitcher_tease_done(self) -> None:
         """Main-thread continuation after the tease block ends —
-        fire the pending chain (SOTG > Spot), else resume the queue."""
+        fire the pending chain (SOTG > Spot), else resume the queue.
+
+        Stale completions (2026-10-17): when the tease was stopped by a
+        drain (AUTO off / stop-next) the flag is already False — the
+        chain must NOT continue, or a song starts after the operator
+        took control. Likewise with AUTO off."""
+        was_playing = bool(self._stitcher_tease_playing)
         self._stitcher_tease_playing = False
         # The montage itself is the start of the break.
         self._tease_waiting_for_break = False
+        if not was_playing:
+            log.info("[stitcher] tease done after stop/drain — "
+                     "break chain not continued")
+            return
+        if not self._auto_advance_enabled:
+            log.info("[stitcher] tease done with AUTO off — "
+                     "break chain not continued")
+            if self._playback_cid is None:
+                self._current_track = None
+                self._apply_idle_state()
+                self._update_status_pills()
+            return
         log.info("[stitcher] tease done → firing break chain")
         self._continue_break_chain(self._pre_spot_song_id)
+
+    def _sotg_is_queued(self, aid: int) -> bool:
+        """True when SOTG assignment ``aid`` already waits in the FIFO."""
+        try:
+            aid = int(aid)
+        except (TypeError, ValueError):
+            return False
+        for a in self._pending_sotgs or []:
+            try:
+                if int(a.get("assignment_id") or 0) == aid:
+                    return True
+            except (TypeError, ValueError):
+                continue
+        return False
+
+    def _eviction_protected_cids(self) -> list:
+        """AudioEngine eviction protect-set: on-air + fading deck."""
+        return [c for c in (self._playback_cid, self._fading_cid)
+                if c is not None]
+
+    _MAX_PROBLEMS = 8
+
+    def _add_problem(self, text: str) -> None:
+        """Non-blocking operator notice in the Problems panel (newest
+        last, de-duplicated by text, capped)."""
+        panel = getattr(self, "_problems", None)
+        if panel is None or not text:
+            return
+        try:
+            from datetime import datetime as _dt
+            text = str(text).strip()[:140]
+            items = [i for i in list(panel._items or [])
+                     if i.split(" ", 1)[-1] != text]
+            items.append(f"{_dt.now().strftime('%H:%M')} {text}")
+            panel.set_problems(items[-self._MAX_PROBLEMS:])
+        except Exception as exc:
+            log.debug(f"[studio] problems panel update failed: {exc}")
+
+    def _on_scheduler_error(self, message: str) -> None:
+        log.warning(f"[studio] scheduler error: {message}")
+        self._add_problem(f"Scheduler: {message}")
 
     def _continue_chain_if_idle(self) -> None:
         """A break item was dropped before reaching the deck. When the
@@ -6861,6 +7321,8 @@ class Studio(QWidget):
         while self._teased_songs:
             s = self._teased_songs.pop(0)
             fp = s.get("file_path")
+            if not self._song_is_airable(s):
+                continue  # deleted / disabled since it was pinned
             if fp and os.path.exists(fp):
                 log.info(
                     f"[stitcher] playing promised post-break song "
@@ -6875,6 +7337,80 @@ class Studio(QWidget):
     def _on_scheduler_next_break_in(self, seconds: int) -> None:
         if hasattr(self, "_next_break") and self._next_break is not None:
             self._next_break.set_countdown(seconds)
+            # Meta follows the countdown: recompute only when the next
+            # break changes (or every 30 ticks as a backstop) — the
+            # signal is 1 Hz and the meta needs a few DB reads.
+            tick = getattr(self, "_nb_meta_tick", 0) + 1
+            self._nb_meta_tick = tick
+            prev = getattr(self, "_nb_meta_prev_s", None)
+            self._nb_meta_prev_s = seconds
+            jumped = prev is not None and seconds > prev + 1  # new break
+            if tick % 30 == 1 or jumped:
+                self.refresh_next_break_meta()
+
+    def _next_break_meta(self) -> Optional[dict]:
+        """Real type / duration / spot count of the scheduler's next
+        unfired break (same filtered source as dispatch)."""
+        sch = getattr(self, "_scheduler", None)
+        if sch is None or not hasattr(sch, "next_break_info"):
+            return None
+        info = sch.next_break_info()
+        if not info:
+            return None
+        cats, total_ms = [], 0
+        for cid in info["campaign_ids"]:
+            try:
+                full = self._db.get_campaign(int(cid)) or {}
+            except Exception:
+                full = {}
+            cat = (full.get("category") or "Commercial").strip()
+            if cat not in cats:
+                cats.append(cat)
+            try:
+                for sf in self._db.get_spot_files(int(cid)):
+                    keys = sf.keys() if hasattr(sf, "keys") else []
+                    act = sf["is_active"] if "is_active" in keys else 1
+                    if int(act or 0):
+                        total_ms += int((sf["duration_ms"]
+                                         if "duration_ms" in keys else 0)
+                                        or 0)
+                        break
+            except Exception:
+                pass
+        s = total_ms // 1000
+        return {
+            "key":      info["break_time"],
+            "type":     cats[0] if len(cats) == 1 else "Mixed",
+            "duration": f"{s // 60}:{s % 60:02d}" if total_ms else "—",
+            "spots":    len(info["campaign_ids"]),
+        }
+
+    def refresh_next_break_meta(self) -> None:
+        """Push real break meta into the Next Break panel (replaces the
+        hardcoded 'Commercial · 2:30 · 5'). Safe to call any time."""
+        panel = getattr(self, "_next_break", None)
+        if panel is None:
+            return
+        try:
+            meta = self._next_break_meta()
+        except Exception as exc:
+            log.debug(f"[studio] next-break meta failed: {exc}")
+            return
+        if meta is None:
+            panel.set_break_meta("No break", "—", 0)
+        else:
+            panel.set_break_meta(meta["type"], meta["duration"],
+                                 meta["spots"])
+
+    def on_campaigns_changed(self) -> None:
+        """Spots & Commercials edited a campaign/schedule. The scheduler
+        reload is async (next tick); refresh the panel now and again
+        shortly after the reload has landed."""
+        self.refresh_next_break_meta()
+        try:
+            QTimer.singleShot(2500, self.refresh_next_break_meta)
+        except Exception:
+            pass
 
     def _on_active_clock_changed(self, clock_id: int, name: str) -> None:
         """Scheduler resolved a different clock for the current cell —
@@ -7056,6 +7592,8 @@ class Studio(QWidget):
         Latent broadcast-critical bug fix — prior wiring routed
         bottom-transport stop to cleanup_all, which would mid-show-cut
         any jingle pad active at that instant."""
+        # A pending/playing overlay belongs to the deck song → kill it.
+        self._cancel_sweeper_overlay("deck stop")
         if self._playback_cid is None or self._engine is None:
             return
         try:
@@ -7074,6 +7612,18 @@ class Studio(QWidget):
         self._update_status_pills()
         log.info("[studio] deck stop (jingle pads untouched)")
 
+    def _cancel_sweeper_overlay(self, reason: str = "") -> None:
+        """Cancel any pending or playing overlay sweeper (Stop / Esc /
+        AUTO-off). Safe when no SweeperEngine is wired."""
+        eng = getattr(self, "_sweeper_engine", None)
+        if eng is None:
+            return
+        try:
+            eng.cancel()
+            log.info(f"[studio] sweeper overlay cancelled ({reason})")
+        except Exception as exc:
+            log.debug(f"[studio] sweeper cancel failed: {exc}")
+
     def _on_auto_pill_clicked(self) -> None:
         """Phase C — AUTO header pill toggles BOTH scheduler.start/stop
         AND ``_auto_advance_enabled``. Operator's mental model: AUTO
@@ -7087,6 +7637,8 @@ class Studio(QWidget):
         even without an engine attached."""
         if self._scheduler is None:
             self._auto_advance_enabled = not self._auto_advance_enabled
+            if not self._auto_advance_enabled:
+                self._cancel_sweeper_overlay("AUTO off")
             log.info(f"[studio] AUTO pill (no scheduler) → "
                      f"_auto_advance_enabled={self._auto_advance_enabled}")
             self._update_status_pills()
@@ -7108,6 +7660,7 @@ class Studio(QWidget):
                 # deferred dispatches firing during Live-Assist would
                 # surprise the operator.
                 self._drain_pending_dispatches(reason="AUTO off")
+                self._cancel_sweeper_overlay("AUTO off")
                 log.info("[studio] AUTO pill → scheduler.stop() + Live-Assist")
             else:
                 self._scheduler.start()
@@ -7220,6 +7773,7 @@ class Studio(QWidget):
         log.info("[studio] MixFade button — no bound behavior (cosmetic)")
 
     def _on_stop_all_clicked(self) -> None:
+        self._cancel_sweeper_overlay("stop all")
         if self._engine is not None:
             try:
                 self._engine.cleanup_all()
@@ -7410,19 +7964,36 @@ class Studio(QWidget):
         self.breadcrumb_clicked.emit("final_log_creator")
 
     def _on_break_skip(self) -> None:
-        """Next Break "Skip Break" button. No existing skip-break handler
-        exists on Studio/scheduler to bind to, so this is a minimal safe
-        stub (logged, no dispatch mutation). NEEDS behavior: should tell
-        the scheduler/break planner to drop the upcoming break — must be
-        designed against the pending-dispatch FIFO, not bolted on here."""
-        log.info("[studio] Skip Break — no bound behavior yet (needs-behavior)")
+        """Next Break "Skip Break" (2026-10-17): after operator confirm,
+        mark every campaign of the scheduler's next NOT-YET-FIRED break
+        as fired, so it never dispatches. Spots already waiting in
+        _pending_spots / the break-policy pool are NOT touched (that
+        break is already in progress)."""
+        sch = getattr(self, "_scheduler", None)
+        info = (sch.next_break_info()
+                if sch is not None and hasattr(sch, "next_break_info")
+                else None)
+        if not info:
+            log.info("[studio] Skip Break — no upcoming break to skip")
+            return
+        names = ", ".join(info.get("campaign_names") or []) or "—"
+        if not dialogs.confirm(
+                self, "Skip Break",
+                f"Skip the {info['break_time']} break?\n\n"
+                f"These spots will NOT air: {names}",
+                danger=True, yes_label="Skip Break"):
+            return
+        skipped = sch.skip_next_break()
+        if skipped:
+            log.warning(
+                f"[studio] operator SKIPPED break {skipped['break_time']} "
+                f"campaigns={skipped['campaign_ids']} ({names})")
+        self.refresh_next_break_meta()
 
     def _on_break_preview(self) -> None:
-        """Next Break "Preview" button. No existing break-preview handler
-        to bind to; minimal safe stub (logged, no audio side effects).
-        NEEDS behavior: should audition the break contents on a preview
-        channel — deliberate follow-up."""
-        log.info("[studio] Break Preview — no bound behavior yet (needs-behavior)")
+        """Next Break "Preview" — no cue/preview output channel exists,
+        so the button is disabled in the panel ("Coming soon")."""
+        log.info("[studio] Break Preview — not available (coming soon)")
 
     # ────────────────────────────────────────────────────────────────────
     # Phase A — InstantJingleEngine wiring
@@ -7562,7 +8133,7 @@ class Studio(QWidget):
                 log.warning(f"[studio] fade_stop_pad failed: {exc}")
         loop = (pad.get("behaviour") == "loop")
         try:
-            self._instant_jingle_engine.play_pad(
+            started = self._instant_jingle_engine.play_pad(
                 pad_id,
                 pad["file_path"],
                 volume=int(pad.get("volume") or 100),
@@ -7570,12 +8141,36 @@ class Studio(QWidget):
             )
         except Exception as exc:
             log.warning(f"[studio] play_pad failed: {exc}")
+            return
+        if started:
+            self._log_instant_jingle_play(pad)
+
+    def _log_instant_jingle_play(self, pad: dict) -> None:
+        """broadcast_log row for an Instant Jingle pad play (they used to
+        air unlogged). Pads live in ``jingle_pads`` — a different id
+        space from ``jingles`` — so jingle_id stays NULL and the label
+        travels as item_name for Final Log / History."""
+        try:
+            self._db.log_play(
+                entry_type="jingle",
+                song_id=None,
+                duration_ms=int(pad.get("duration_ms") or 0),
+                deck="A",
+                was_manual=1,
+                item_name=(pad.get("label") or "").strip()
+                          or f"Pad #{pad.get('id')}",
+            )
+        except Exception as exc:
+            log.warning(f"[studio] instant jingle log_play failed: {exc}")
 
     def _on_jingle_stop_all(self) -> None:
         """Esc handler — emergency dump of every jingle pad. AudioEngine's
         cleanup_all is broader (kills deck + spots too); this is the
         narrow IJE-only stop the operator wants when a wrong jingle is
         on air."""
+        # Esc is the operator's "kill the extra audio" key — a wrong
+        # overlay sweeper is exactly that, so cancel it too.
+        self._cancel_sweeper_overlay("Esc")
         if self._instant_jingle_engine is None:
             return
         try:
@@ -7835,16 +8430,10 @@ class Studio(QWidget):
         # ── Spots ───────────────────────────────────────────────────
         upcoming_spots: list[dict] = []
         try:
-            rows = self._db._conn().execute(
-                "SELECT cs.campaign_id, cs.break_time, cs.priority, "
-                "       cs.slot_order, c.name "
-                "FROM campaign_schedule cs "
-                "LEFT JOIN campaigns c ON c.id = cs.campaign_id "
-                "WHERE cs.day_of_week = ? "
-                "  AND c.is_active = 1 "
-                "ORDER BY cs.break_time, cs.slot_order",
-                [int(weekday)]
-            ).fetchall()
+            # Same filtered source as dispatch (is_active + start/end
+            # date window) — an expired campaign must not be previewed
+            # as "airing in 45s" (2026-10-17).
+            rows = list(self._db.get_active_breaks_for_day(int(weekday)))
         except Exception as exc:
             log.debug(f"[studio] campaign_schedule peek failed: {exc}")
             rows = []
@@ -7854,8 +8443,8 @@ class Studio(QWidget):
                 bt = (r["break_time"] if "break_time" in r.keys() else "") or ""
                 if not bt:
                     continue
-                # Parse "HH:MM" → today's datetime
-                hh, mm = bt.split(":", 1)
+                # Parse "HH:MM" / "HH:MM:SS" → today's datetime
+                hh, mm = bt.split(":")[:2]
                 break_dt = now.replace(
                     hour=int(hh), minute=int(mm),
                     second=0, microsecond=0)
@@ -7869,7 +8458,9 @@ class Studio(QWidget):
                 upcoming_spots.append({
                     "campaign_id": cid,
                     "break_time":  bt,
-                    "name":        (r["name"] if "name" in r.keys() else "") or "",
+                    "name":        (r["campaign_name"] if "campaign_name" in r.keys()
+                                    else (r["name"] if "name" in r.keys() else ""))
+                                   or "",
                     "priority":    (r["priority"] if "priority" in r.keys() else "") or "",
                     "delta_s":     int(delta),
                 })
@@ -8063,7 +8654,8 @@ class Studio(QWidget):
         # Idle deck has no EOS to drain the FIFO — kick the first spot
         # directly through the original dispatcher (policy-exempt so it
         # doesn't re-pool).
-        if self._playback_cid is None and self._pending_spots:
+        if (self._playback_cid is None and self._pending_spots
+                and not getattr(self, "_stitcher_tease_playing", False)):
             first = self._pending_spots.pop(0)
             log.info(f"[break-policy] deck idle — firing spot {first} "
                      f"directly")
@@ -8120,11 +8712,14 @@ class Studio(QWidget):
         self._break_pool.clear()
         # Tease pin dies with the break it promised.
         self._teased_songs.clear()
-        if self._stitcher_tease_playing and self._stitcher_engine:
-            try:
-                self._stitcher_engine.stop()
-            except Exception:
-                pass
+        if self._stitcher_tease_playing:
+            if self._stitcher_engine:
+                try:
+                    self._stitcher_engine.stop()
+                except Exception:
+                    pass
+            # Cleared unconditionally — a late on_done then sees a
+            # stale completion and does not continue the chain.
             self._stitcher_tease_playing = False
         log.info(
             f"[studio] {reason} dropped {n_spots} pending spot(s) "
@@ -8258,18 +8853,22 @@ class Studio(QWidget):
         """
         active = self._libraries.active_library_type() \
             if hasattr(self, "_libraries") else "Songs"
+        # ``idx`` is a VIEW row (search may be active) -- resolve through
+        # the row's own data, never by indexing an unfiltered cache.
         if active == "Sweepers":
-            if 0 <= idx < len(self._library_sweepers):
-                sw = self._library_sweepers[idx]
+            sw = self._library_entry_for_row(idx, self._library_sweepers)
+            if sw is not None:
                 self._on_play_sweeper_overlay(int(sw.get("id") or 0))
             return
         if active == "Jingles":
-            if 0 <= idx < len(self._library_jingles):
-                self._on_play_library_jingle(self._library_jingles[idx])
+            j = self._library_entry_for_row(idx, self._library_jingles)
+            if j is not None:
+                self._on_play_library_jingle(j)
             return
         if active == "Spots":
-            if 0 <= idx < len(self._library_spots):
-                campaign_id = int(self._library_spots[idx].get("id") or 0)
+            sp = self._library_entry_for_row(idx, self._library_spots)
+            if sp is not None:
+                campaign_id = int(sp.get("id") or 0)
                 if campaign_id:
                     log.info(
                         f"[studio] manual spot play from Libraries panel "
@@ -8279,12 +8878,36 @@ class Studio(QWidget):
                     # mirrors what scheduled spots do. Operator clicks
                     # → spot fires now if the deck is idle, or queues
                     # for next song-end if a track is on air.
+                    # Operator force → bypass contract limits for this
+                    # play (consumed when it airs).
+                    if not hasattr(self, "_spot_limit_override"):
+                        self._spot_limit_override = set()
+                    self._spot_limit_override.add(int(campaign_id))
                     self._do_scheduler_spot_due(campaign_id,
                                                 _policy_exempt=True)
             return
-        # Songs (and the placeholder types) reuse the existing deck path.
-        if 0 <= idx < len(self._queue_songs):
-            self._on_queue_song_play(self._queue_songs[idx])
+        # Songs (and the placeholder types): play the LIBRARY row that
+        # was double-clicked (this used to play self._queue_songs[idx] --
+        # the Up Coming queue -- i.e. an unrelated song).
+        data = (self._libraries.row_data(idx)
+                if hasattr(self, "_libraries") else None)
+        if data:
+            self._on_queue_song_play(data)
+
+    def _library_entry_for_row(self, idx: int,
+                               cache: list) -> Optional[dict]:
+        """Map a VISIBLE Libraries-table row to its cache entry by id
+        (search-safe). Falls back to positional lookup only when the row
+        carries no data (legacy rows)."""
+        data = (self._libraries.row_data(idx)
+                if hasattr(self, "_libraries") else None)
+        if data and data.get("id") is not None:
+            want = int(data.get("id") or 0)
+            return next((e for e in cache
+                         if int(e.get("id") or 0) == want), None)
+        if 0 <= idx < len(cache):
+            return cache[idx]
+        return None
 
     def _on_play_library_jingle(self, jingle: dict) -> None:
         """Fire a master-library jingle through the IJE. The library
@@ -8360,6 +8983,7 @@ class Studio(QWidget):
                 # (it expects "artist" + "title"). Showing position
                 # as the artist-line keeps the table glanceable.
                 display.append({
+                    **cache[-1],     # row data -> search-safe lookup
                     "title":  r["name"]     if "name"     in keys else "—",
                     "artist": (r["position"] if "position" in keys else "—")
                               or "—",
@@ -8392,6 +9016,7 @@ class Studio(QWidget):
                     "volume":      85,
                 })
                 display.append({
+                    **cache[-1],     # row data -> search-safe lookup
                     "title":  r["name"]     if "name"     in keys else "—",
                     "artist": (r["category"] if "category" in keys else "—")
                               or "—",
@@ -8426,6 +9051,7 @@ class Studio(QWidget):
                 end = (r["end_date"] if "end_date" in keys else "") or "Never"
                 fcount = int(r["file_count"] or 0) if "file_count" in keys else 0
                 display.append({
+                    **cache[-1],     # row data -> search-safe lookup
                     "title":  r["name"] if "name" in keys else "—",
                     "artist": f"{fcount} file{'s' if fcount != 1 else ''}  ·  ends {end}",
                 })
@@ -8584,11 +9210,27 @@ class Studio(QWidget):
         showEvent in the Lifecycle section silently replaced it, so
         this refresh never ran. That showEvent now calls it."""
         try:
-            if (hasattr(self, "_libraries")
-                    and self._libraries.active_library_type() == "Songs"):
-                self._load_library_songs(self._library_current_category_id)
+            if hasattr(self, "_libraries"):
+                # Reload WHICHEVER tile is active -- Jingles / Sweepers /
+                # Spots used to stay frozen at their first load.
+                self._on_library_type_changed(
+                    self._libraries.active_library_type())
         except Exception as exc:
             log.debug(f"[studio] showEvent library refresh: {exc}")
+
+    def refresh_library_panel(self, kind: str = "") -> None:
+        """Public hook (MainWindow) -- a library (Jingles / Sweepers /
+        Spots) changed elsewhere. Reload the panel if that tile (or no
+        specific kind) is active; otherwise the next tile click loads
+        fresh data anyway."""
+        try:
+            if not hasattr(self, "_libraries"):
+                return
+            active = self._libraries.active_library_type()
+            if not kind or kind == active:
+                self._on_library_type_changed(active)
+        except Exception as exc:
+            log.debug(f"[studio] library panel refresh failed: {exc}")
 
     # ────────────────────────────────────────────────────────────────────
     # Libraries panel — Action Stack (ADD / INSERT / REPLACE / DELETE / PREPAIR)
@@ -8616,8 +9258,8 @@ class Studio(QWidget):
             data = self._libraries.selected_song_data()
             return dict(data) if data else None
         if active == "Sweepers":
-            if 0 <= idx < len(self._library_sweepers):
-                sw = self._library_sweepers[idx]
+            sw = self._library_entry_for_row(idx, self._library_sweepers)
+            if sw is not None:
                 return {
                     "id":          int(sw.get("id") or 0),
                     "artist":      "SWEEPER",
@@ -8627,8 +9269,8 @@ class Studio(QWidget):
                 }
             return None
         if active == "Jingles":
-            if 0 <= idx < len(self._library_jingles):
-                j = self._library_jingles[idx]
+            j = self._library_entry_for_row(idx, self._library_jingles)
+            if j is not None:
                 return {
                     "id":          int(j.get("id") or 0),
                     "artist":      "JINGLE",
@@ -8639,8 +9281,8 @@ class Studio(QWidget):
                 }
             return None
         if active == "Spots":
-            if 0 <= idx < len(self._library_spots):
-                sp = self._library_spots[idx]
+            sp = self._library_entry_for_row(idx, self._library_spots)
+            if sp is not None:
                 return {
                     "id":          int(sp.get("id") or 0),
                     "artist":      "SPOT",
@@ -8878,6 +9520,15 @@ class Studio(QWidget):
         if not self._manual_queue:
             return None
         item = dict(self._manual_queue.pop(0))
+        # Deleted / disabled since it was queued → skip to the next one.
+        while not self._song_is_airable(item):
+            if not self._manual_queue:
+                try:
+                    QTimer.singleShot(0, self._load_upcoming_queue)
+                except Exception:
+                    pass
+                return None
+            item = dict(self._manual_queue.pop(0))
         log.info(f"[studio] manual queue → {item.get('_item_type')} "
                  f"{item.get('title')!r} ({len(self._manual_queue)} more)")
         try:
@@ -9160,19 +9811,16 @@ class Studio(QWidget):
         if self._db is None:
             return
         try:
-            now = datetime.now()
-            row = self._db.get_active_clock(int(now.weekday()),
-                                            int(now.hour))
-            if row is None:
+            # Shared resolver: force override first, then the grid —
+            # same rule dispatch uses (core.clock_resolver).
+            from core.clock_resolver import resolve_clock
+            res = resolve_clock(self._db, datetime.now())
+            if res is None:
                 new_id = -1
                 new_name = ""
             else:
-                try:
-                    new_id = int(row["id"])
-                    new_name = str(row["name"] or "")
-                except (KeyError, IndexError, TypeError, ValueError):
-                    new_id = -1
-                    new_name = ""
+                new_id = int(res["id"])
+                new_name = res["name"]
         except Exception as exc:
             log.debug(f"[studio] active-clock check failed: {exc}")
             return
@@ -9275,6 +9923,13 @@ class Studio(QWidget):
         # logic, and subsequent showEvents will diff against the last
         # displayed value and force-refresh if it changed.
         if hasattr(self, "_db"):
+            # Fallback queue reloaded on every show so songs deleted /
+            # disabled in the library since boot can't air from it.
+            if hasattr(self, "_queue_songs"):
+                try:
+                    self._queue_songs = self._load_queue_from_db()
+                except Exception as exc:
+                    log.debug(f"[studio] fallback queue reload: {exc}")
             self._force_studio_refresh()
             self._maybe_auto_start_scheduler()
             self._refresh_library_on_show()
@@ -9297,8 +9952,8 @@ class Studio(QWidget):
             return
         try:
             now = datetime.now()
-            row = self._db.get_active_clock(int(now.weekday()),
-                                             int(now.hour))
+            from core.clock_resolver import resolve_clock
+            row = resolve_clock(self._db, now)   # force → grid
         except Exception as exc:
             log.debug(f"[studio] auto-start active-clock lookup failed: "
                       f"{exc}")
@@ -9313,11 +9968,7 @@ class Studio(QWidget):
             log.warning(f"[studio] auto-start failed: {exc}")
             return
         self._auto_advance_enabled = True
-        try:
-            cid = int(row["id"]) if "id" in row.keys() else "?"
-            cname = row["name"] if "name" in row.keys() else ""
-        except Exception:
-            cid, cname = "?", ""
+        cid, cname = row.get("id", "?"), row.get("name", "")
         log.info(
             f"[studio] auto-started scheduler on showEvent — "
             f"clock id={cid} name={cname!r} (weekday={now.weekday()}, "

@@ -78,7 +78,8 @@ def _clock_label(db, cat_ids: list[int]) -> str:
 
 def _get_or_make_auto_clock(db, cat_ids: list[int]) -> int:
     """Permanent clock per category-set. Slots are re-saved on every
-    build (idempotent) so template/jingle changes propagate; the id
+    build (idempotent) so template/jingle changes propagate — UNLESS the
+    operator hand-edited the clock (see _is_builder_owned); the id
     never changes, keeping Rotation AI decisions valid."""
     key = "+".join(str(c) for c in sorted(int(c) for c in cat_ids))
     clock_id = db.get_auto_grid_clock_id(key)
@@ -100,9 +101,41 @@ def _get_or_make_auto_clock(db, cat_ids: list[int]) -> int:
             db._conn().commit()
         except Exception:
             pass
-    db.save_clock_slots(clock_id, _template_slots(
-        db, sorted(int(c) for c in cat_ids)))
+    template = _template_slots(db, sorted(int(c) for c in cat_ids))
+    if _is_builder_owned(db, clock_id, sorted(int(c) for c in cat_ids)):
+        db.save_clock_slots(clock_id, template)
+    else:
+        log.info(f"[auto-grid] clock {clock_id} {label!r} was hand-edited "
+                 f"in Clock Editor — keeping the operator's slots")
     return int(clock_id)
+
+
+def _slot_sig(slots) -> list:
+    out = []
+    for sl in slots:
+        st = (sl["slot_type"] or "").strip().lower()
+        cat = sl["category_id"]
+        out.append((st, int(cat) if cat else None))
+    return out
+
+
+def _is_builder_owned(db, clock_id: int, cat_ids: list[int]) -> bool:
+    """True when the clock's slots are empty or still exactly one of the
+    builder's own templates (with or without the jingle slot) — i.e. it
+    is safe to refresh. Any other shape means the operator edited the
+    AUTO clock in the Clock Editor: those slots are sacred, like manual
+    grid cells. (Re-saving every build_grid used to wipe them at the
+    next boot / midnight.)"""
+    try:
+        cur = db.get_clock_slots(int(clock_id)) or []
+    except Exception:
+        return True
+    if not cur:
+        return True
+    base: list = []
+    for cid in cat_ids:
+        base += [("sweeper", None), ("song", int(cid))]
+    return _slot_sig(cur) in (base, base + [("jingle", None)])
 
 
 def build_grid(db) -> dict:

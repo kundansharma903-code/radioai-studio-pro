@@ -162,14 +162,15 @@ def test_row_double_click_in_sweeper_mode_routes_to_overlay(
 
 
 def test_row_double_click_in_song_mode_uses_legacy_deck_path(qapp, db):
-    """Default (Songs) tile: double-click routes to _queue_songs (existing
-    behaviour). The sweeper overlay path must NOT fire."""
+    """Default (Songs) tile: double-click plays the LIBRARY row that was
+    clicked (updated 2026-10-17 — it used to assert the buggy
+    ``_queue_songs[idx]`` i.e. the Up Coming queue). The sweeper
+    overlay path must NOT fire."""
     swe = _FakeSweeperEngine()
     studio = _make_studio(db, sweeper_engine=swe)
     panel = studio._libraries
     assert panel.active_library_type() == "Songs"
-    # _queue_songs is populated by Studio init from real DB songs.
-    if not studio._queue_songs:
+    if not panel._rows:
         pytest.skip("dev DB has no songs to drive this test")
     # Patch _on_queue_song_play to record the call instead of touching
     # the audio engine (engine=None in test ctor anyway).
@@ -178,7 +179,7 @@ def test_row_double_click_in_song_mode_uses_legacy_deck_path(qapp, db):
 
     studio._on_library_song_double_clicked(0)
 
-    assert captured and captured[0] is studio._queue_songs[0]
+    assert captured and captured[0]["id"] == panel.row_data(0)["id"]
     assert len(swe.scheduled) == 0   # overlay must not fire in Songs mode
     studio.deleteLater()
 
@@ -193,7 +194,9 @@ def test_library_type_changed_signal_fires(qapp, db):
 
     panel._on_type_clicked("Sweepers")
     panel._on_type_clicked("Songs")
-    panel._on_type_clicked("Songs")     # idempotent — no second emit
+    # Re-click on the ACTIVE tile now re-emits so the host reloads the
+    # tile (updated 2026-10-17 — it used to assert a dead re-click).
+    panel._on_type_clicked("Songs")
 
-    assert captured == ["Sweepers", "Songs"]
+    assert captured == ["Sweepers", "Songs", "Songs"]
     studio.deleteLater()
